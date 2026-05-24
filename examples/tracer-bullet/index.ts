@@ -7,14 +7,16 @@
  *   bun install && bun run start
  *
  * Requires AWS creds + Bedrock model access in REGION (see README). `guard` is a
- * no-op until you set GUARDRAIL_ID.
+ * no-op until GUARDRAIL_ID is set; `record` prints to console unless TELEMETRY=otel.
  */
 import { runAgent } from "./loop";
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
 import { BedrockContentGuard } from "./adapters/bedrock-guard";
 import { NoopContentGuard } from "./adapters/noop-guard";
-import type { InferenceProvider, SandboxProvider, ContentGuard } from "./ports";
+import { ConsoleTelemetrySink } from "./adapters/console-telemetry";
+import { OtelTelemetrySink } from "./adapters/otel-telemetry";
+import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 
 const REGION = process.env.REGION ?? "eu-west-2";
 const MODEL_ID = process.env.MODEL_ID ?? "amazon.nova-lite-v1:0";
@@ -52,10 +54,23 @@ function makeGuard(): ContentGuard {
   return new BedrockContentGuard(id, process.env.GUARDRAIL_VERSION ?? "DRAFT", REGION);
 }
 
+function makeTelemetry(): TelemetrySink {
+  const sink = process.env.TELEMETRY ?? "console";
+  switch (sink) {
+    case "console":
+      return new ConsoleTelemetrySink();
+    case "otel":
+      return new OtelTelemetrySink(); // console span exporter, or OTLP if endpoint set
+    default:
+      throw new Error(`unknown TELEMETRY: ${sink}`);
+  }
+}
+
 runAgent({
   inference: makeInference(),
   sandbox: makeSandbox(),
   guard: makeGuard(),
+  telemetry: makeTelemetry(),
   task: TASK,
 }).catch((err) => {
   console.error("\n— failed —");

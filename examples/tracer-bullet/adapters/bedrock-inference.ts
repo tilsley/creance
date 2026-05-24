@@ -17,9 +17,11 @@ import type {
 
 export class BedrockInferenceProvider implements InferenceProvider {
   readonly name = "bedrock";
+  readonly model: string;
   private client: BedrockRuntimeClient;
 
   constructor(private modelId: string, region: string) {
+    this.model = modelId;
     this.client = new BedrockRuntimeClient({ region });
   }
 
@@ -52,7 +54,11 @@ export class BedrockInferenceProvider implements InferenceProvider {
         });
       }
     }
-    return { text, toolCalls };
+    return {
+      text,
+      toolCalls,
+      usage: { inputTokens: resp.usage?.inputTokens, outputTokens: resp.usage?.outputTokens },
+    };
   }
 }
 

@@ -52,10 +52,12 @@ For **external services** (GitHub, OAuth providers), a **credential broker / tok
 vault** mints scoped third-party creds — see Tools & integrations below, ADR-0007.
 
 ### 5. Observability & tracing (the black box) — *record*
-**ADOT (OpenTelemetry) collectors** emit spans for every reason/tool-call/error
-with `agent_id`, `run_id`, `tokens_spent`, `tool_calls`. Traces → **OpenSearch**;
-raw prompt/completion payloads → **S3**. Enables step-by-step replay of
-non-deterministic agent loops.
+Apps emit **OTLP** spans (the `record` control / `TelemetrySink` port) for every
+reason/tool-call/error with `agent_id`, `run_id`, `tokens_spent`, `tool_calls`.
+**Topology:** app → in-cluster **ADOT Collector** (DaemonSet; optional gateway for
+tail-sampling = cost control) → **OpenSearch** (traces) + **S3** (raw payloads).
+App code is identical dev↔prod — only the OTLP endpoint changes (ADR-0003); the
+collector is infra. Enables step-by-step replay of non-deterministic agent loops.
 
 ### 6. Safety / Guardrails (the filter) — *guard*
 Is the *content* safe / allowed / grounded? (vs `gate` = actor/action authz.)

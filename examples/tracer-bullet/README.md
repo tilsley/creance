@@ -71,11 +71,13 @@ aws bedrock list-inference-profiles --region eu-west-2   # needs a current AWS C
 ## Structure (ports & adapters — ADR-0003)
 
 ```
-ports.ts                        # InferenceProvider, SandboxProvider, ContentGuard — no SDK types
-adapters/bedrock-inference.ts   # think → Bedrock Converse
-adapters/agentcore-sandbox.ts   # do    → AgentCore Code Interpreter
-adapters/bedrock-guard.ts       # guard → Bedrock Guardrails (ApplyGuardrail)
-adapters/noop-guard.ts          # guard → pass-through (default; no guardrail needed)
+ports.ts                        # Inference / Sandbox / ContentGuard / TelemetrySink — no SDK types
+adapters/bedrock-inference.ts   # think  → Bedrock Converse
+adapters/agentcore-sandbox.ts   # do     → AgentCore Code Interpreter
+adapters/bedrock-guard.ts       # guard  → Bedrock Guardrails (ApplyGuardrail)
+adapters/noop-guard.ts          # guard  → pass-through (default)
+adapters/console-telemetry.ts   # record → console (default)
+adapters/otel-telemetry.ts      # record → OpenTelemetry (console exporter / OTLP)
 loop.ts                         # the L1 agent loop — imports ONLY ports.ts
 index.ts                        # wires config → adapters → loop (the swap seam)
 ```
@@ -109,8 +111,27 @@ bun run start
 Swap the implementation (Llama Guard, Presidio, LLM-as-judge…) by adding an
 adapter behind `ContentGuard` — the loop never changes.
 
+## Record (observability) — ADR-0003
+
+Every step is wrapped in a span (`agent.run` → `guard.screen` / `inference.generate`
+/ `sandbox.run_code`), tagged with token usage, guard verdicts, and durations.
+
+- **Default** (`TELEMETRY=console`): structured `📊` lines — no deps, no infra.
+- **`TELEMETRY=otel`**: real OpenTelemetry spans. With no endpoint → console span
+  exporter; set `OTEL_EXPORTER_OTLP_ENDPOINT` to ship OTLP:
+  ```bash
+  docker run -d -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 TELEMETRY=otel bun run start
+  # → trace waterfall at http://localhost:16686
+  ```
+
+OTel is itself the neutral layer (API = port, exporter = adapter). In production
+the same code points OTLP at the in-cluster **ADOT collector → OpenSearch + S3** —
+no app change, only the endpoint. The collector is infra, not app code
+(see `infra/lib/data-log-stack.ts`).
+
 ## Maps to the model
 
-`think` = Inference primitive · `do` = Sandbox primitive · `guard` = the
-content-safety control (ADR-0008). A hand-rolled L1 loop
-([docs/runtime.md](../../docs/runtime.md)); `gate` and `record` controls come next.
+`think` = Inference primitive · `do` = Sandbox primitive · `guard` + `record` =
+controls. A hand-rolled L1 loop ([docs/runtime.md](../../docs/runtime.md)); `gate`
+is the only building block not yet wired.

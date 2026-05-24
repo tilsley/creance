@@ -1,12 +1,13 @@
 /**
  * The L1 agent loop — depends ONLY on the ports (ADR-0003). It has no idea
- * whether `think` is Bedrock or Ollama, `do` is AgentCore or local, or `guard`
- * is Bedrock Guardrails or a no-op.
+ * whether `think` is Bedrock or Ollama, `do` is AgentCore or local, `guard` is
+ * Bedrock Guardrails or a no-op, or where `record` sends its spans.
  */
 import type {
   InferenceProvider,
   SandboxProvider,
   ContentGuard,
+  TelemetrySink,
   Message,
   ToolDef,
   ToolResult,
@@ -29,60 +30,86 @@ export interface RunOpts {
   inference: InferenceProvider;
   sandbox: SandboxProvider;
   guard: ContentGuard;
+  telemetry: TelemetrySink;
   task: string;
   maxSteps?: number;
 }
 
-export async function runAgent({ inference, sandbox, guard, task, maxSteps = 8 }: RunOpts): Promise<void> {
-  console.log(`▶ inference=${inference.name}  sandbox=${sandbox.name}  guard=${guard.name}`);
+export async function runAgent({ inference, sandbox, guard, telemetry, task, maxSteps = 8 }: RunOpts): Promise<void> {
+  const runId = crypto.randomUUID();
+  console.log(`▶ inference=${inference.name}  sandbox=${sandbox.name}  guard=${guard.name}  record=${telemetry.name}`);
   console.log(`▶ task: ${task}\n`);
 
-  // guard: screen the input before it ever reaches the model
-  const inputCheck = await guard.screen(task, "input");
-  if (inputCheck.blocked) {
-    console.log("🛡 guard blocked the input — aborting");
-    return;
-  }
+  await telemetry.run({ "run.id": runId, "agent.task": task }, async () => {
+    // guard: screen the input before it reaches the model
+    const inputCheck = await telemetry.step("guard.screen", { "guard.direction": "input" }, async (span) => {
+      const v = await guard.screen(task, "input");
+      span.setAttrs({ "guard.intervened": v.intervened, "guard.blocked": v.blocked });
+      return v;
+    });
+    if (inputCheck.blocked) {
+      console.log("🛡 guard blocked the input — aborting");
+      return;
+    }
 
-  const session = await sandbox.startSession();
-  console.log(`✓ sandbox session: ${session.id}\n`);
+    const session = await telemetry.step("sandbox.start", {}, () => sandbox.startSession());
+    console.log(`✓ sandbox session: ${session.id}\n`);
 
-  const messages: Message[] = [{ role: "user", text: inputCheck.text }];
+    const messages: Message[] = [{ role: "user", text: inputCheck.text }];
 
-  try {
-    for (let step = 1; step <= maxSteps; step++) {
-      const turn = await inference.generate(messages, [runCodeTool]); // think
-      messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls });
-      if (turn.text) console.log(`🧠 ${turn.text}`);
+    try {
+      for (let step = 1; step <= maxSteps; step++) {
+        const turn = await telemetry.step(
+          "inference.generate",
+          { "gen_ai.system": inference.name, "gen_ai.request.model": inference.model },
+          async (span) => {
+            const t = await inference.generate(messages, [runCodeTool]); // think
+            span.setAttrs({
+              "gen_ai.usage.input_tokens": t.usage?.inputTokens,
+              "gen_ai.usage.output_tokens": t.usage?.outputTokens,
+              "gen_ai.tool_calls": t.toolCalls.length,
+            });
+            return t;
+          },
+        );
+        messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls });
+        if (turn.text) console.log(`🧠 ${turn.text}`);
 
-      if (turn.toolCalls.length === 0) {
-        console.log("\n✅ done");
-        return;
-      }
-
-      const results: ToolResult[] = [];
-      for (const call of turn.toolCalls) {
-        if (call.name !== "run_code") continue;
-        const code = String(call.input.code ?? "");
-        console.log(`\n🛠  run_code:\n${indent(code)}`);
-
-        let output = await session.runCode(code); // do
-
-        // guard: screen untrusted tool output before it re-enters model context
-        const verdict = await guard.screen(output, "input");
-        if (verdict.intervened) {
-          console.log("🛡 guard intervened on tool output");
-          output = verdict.text;
+        if (turn.toolCalls.length === 0) {
+          console.log("\n✅ done");
+          return;
         }
 
-        console.log(`📤 output:\n${indent(output)}\n`);
-        results.push({ toolCallId: call.id, output });
+        const results: ToolResult[] = [];
+        for (const call of turn.toolCalls) {
+          if (call.name !== "run_code") continue;
+          const code = String(call.input.code ?? "");
+          console.log(`\n🛠  run_code:\n${indent(code)}`);
+
+          let output = await telemetry.step("sandbox.run_code", { "code.bytes": code.length }, () =>
+            session.runCode(code),
+          ); // do
+
+          // guard: screen untrusted tool output before it re-enters model context
+          const verdict = await telemetry.step("guard.screen", { "guard.direction": "output" }, async (span) => {
+            const v = await guard.screen(output, "input");
+            span.setAttrs({ "guard.intervened": v.intervened });
+            return v;
+          });
+          if (verdict.intervened) {
+            console.log("🛡 guard intervened on tool output");
+            output = verdict.text;
+          }
+
+          console.log(`📤 output:\n${indent(output)}\n`);
+          results.push({ toolCallId: call.id, output });
+        }
+        messages.push({ role: "tool", results });
       }
-      messages.push({ role: "tool", results });
+      console.log("\n⚠ hit step limit");
+    } finally {
+      await telemetry.step("sandbox.stop", {}, () => session.close());
+      console.log(`✓ session stopped: ${session.id}`);
     }
-    console.log("\n⚠ hit step limit");
-  } finally {
-    await session.close();
-    console.log(`✓ session stopped: ${session.id}`);
-  }
+  });
 }

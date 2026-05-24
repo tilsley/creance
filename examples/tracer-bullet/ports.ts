@@ -31,11 +31,13 @@ export interface ToolDef {
 export interface AssistantTurn {
   text?: string;
   toolCalls: ToolCall[];
+  usage?: { inputTokens?: number; outputTokens?: number };
 }
 
 // --- think: the Inference primitive port -------------------------------------
 export interface InferenceProvider {
   readonly name: string;
+  readonly model: string;
   /** Given the conversation so far + available tools, produce the next turn. */
   generate(messages: Message[], tools: ToolDef[]): Promise<AssistantTurn>;
 }
@@ -69,4 +71,20 @@ export interface ContentGuard {
   readonly name: string;
   /** Screen content crossing a trust boundary. `input` also covers untrusted ingress. */
   screen(text: string, direction: GuardDirection): Promise<GuardVerdict>;
+}
+
+// --- record: the Observability Control port (ADR-0003) -----------------------
+// Modelled after OTel spans, but neutral: the loop never imports @opentelemetry.
+// A handle lets callers attach attributes discovered *during* the operation
+// (e.g. token usage known only after the call returns).
+export interface TelemetrySpan {
+  setAttrs(attrs: Record<string, unknown>): void;
+}
+
+export interface TelemetrySink {
+  readonly name: string;
+  /** Root span for one agent run. */
+  run<T>(attrs: Record<string, unknown>, fn: (span: TelemetrySpan) => Promise<T>): Promise<T>;
+  /** Child span for one step (think / do / guard). Nests under the active run. */
+  step<T>(name: string, attrs: Record<string, unknown>, fn: (span: TelemetrySpan) => Promise<T>): Promise<T>;
 }
