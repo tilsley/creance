@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "description": "A cloud-native, multi-tenant agent operating system on AWS + EKS",
   "workspaces": [
-    "infra"
+    "infra",
+    "examples/*"
   ]
 }
