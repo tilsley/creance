@@ -68,9 +68,24 @@ aws bedrock list-inference-profiles --region eu-west-2   # needs a current AWS C
 ✓ session stopped: 01HX...
 ```
 
-## Where this maps
+## Structure (ports & adapters — ADR-0003)
 
-`think` = the Inference primitive (`inference-gateway` will wrap this);
-`do` = the Sandbox primitive (`sandbox-manager` will own session lifecycle). This
-is a hand-rolled L1 loop ([docs/runtime.md](../../docs/runtime.md)) — no gate /
-record / guard controls yet; those come next.
+```
+ports.ts                        # InferenceProvider, SandboxProvider — no SDK types
+adapters/bedrock-inference.ts   # think → Bedrock Converse
+adapters/agentcore-sandbox.ts   # do    → AgentCore Code Interpreter
+loop.ts                         # the L1 agent loop — imports ONLY ports.ts
+index.ts                        # wires config → adapters → loop (the swap seam)
+```
+
+`loop.ts` has **zero AWS imports** — it can't tell Bedrock from Ollama or
+AgentCore from a local sandbox. Swap by env: `INFERENCE_PROVIDER`,
+`SANDBOX_PROVIDER` (only `bedrock` / `agentcore` implemented today; adding an
+adapter = implementing the port). The same loop is what `inference-gateway` /
+`sandbox-manager` will eventually drive.
+
+## Maps to the model
+
+`think` = Inference primitive · `do` = Sandbox primitive. Still a hand-rolled L1
+loop ([docs/runtime.md](../../docs/runtime.md)) with **no gate / record / guard
+controls yet** — those come next.
