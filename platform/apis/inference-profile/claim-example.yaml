@@ -1,0 +1,23 @@
+# The paved road: what a team applies to self-serve inference with a cost cap.
+#   kubectl apply -f claim-example.yaml
+#
+# Crossplane provisions a tagged Bedrock application inference profile + an AWS
+# Budget + scoped IAM, and writes the profile ARN to the secret below. The
+# inference-gateway then reads that secret (which profile to invoke) and
+# maxDailyCostUSD (the real-time hard cap it enforces — ADR-0004).
+apiVersion: platform.agentos.io/v1alpha1
+kind: InferenceProfile
+metadata:
+  name: claude-sonnet
+  namespace: team-foo
+spec:
+  parameters:
+    team: foo
+    # ARN of a foundation model OR a cross-region inference profile (used as
+    # the Bedrock InferenceProfile modelSource.copyFrom). Cross-region profile
+    # ARN = throughput + model access:
+    model: arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6-v1:0
+    region: us-east-1
+    maxDailyCostUSD: 50
+  writeConnectionSecretToRef:
+    name: team-foo-inference

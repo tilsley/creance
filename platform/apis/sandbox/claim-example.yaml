@@ -1,0 +1,15 @@
+# The paved road: what a team applies to self-serve a sandbox template.
+#   kubectl apply -f claim-example.yaml
+#
+# Crossplane provisions a named AgentCore Code Interpreter config + scoped IAM.
+# sandbox-manager then starts/stops execution SESSIONS against it at runtime
+# (the agent's untrusted code runs in a Firecracker microVM per session) — ADR-0006.
+apiVersion: platform.agentos.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: foo-default
+  namespace: team-foo
+spec:
+  parameters:
+    team: foo
+    networkMode: SANDBOX   # S3-only egress (+DNS). PUBLIC = open; VPC = your VPC.

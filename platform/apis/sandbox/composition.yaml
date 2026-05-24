@@ -1,0 +1,82 @@
+# Composition: maps an XSandbox to AWS managed resources.
+#
+# The CodeInterpreter resource KIND is verified to exist in
+# provider-aws-bedrockagentcore; its FIELD shapes are NOT yet verified — marked
+# TODO (mirror the inference-profile flow: confirm against the provider CRD before
+# relying). IAM kinds/fields ARE verified (see ADR-0006 research).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: sandbox.aws.platform.agentos.io
+spec:
+  compositeTypeRef:
+    apiVersion: platform.agentos.io/v1alpha1
+    kind: XSandbox
+  mode: Pipeline
+  pipeline:
+    - step: compose
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          # 1. Named AgentCore Code Interpreter config (the sandbox template).
+          - name: code-interpreter
+            base:
+              # TODO confirm group/version. Cluster-scoped: bedrockagentcore.aws.upbound.io
+              # Namespaced variant: bedrockagentcore.aws.m.upbound.io
+              apiVersion: bedrockagentcore.aws.upbound.io/v1beta1
+              kind: CodeInterpreter
+              spec:
+                forProvider:
+                  region: us-east-1
+                  # TODO verify field names: name, networkConfiguration(networkMode),
+                  #      executionRoleArn, tags.
+            patches:
+              - fromFieldPath: spec.parameters.networkMode
+                toFieldPath: spec.forProvider.networkConfiguration.networkMode  # TODO verify
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.codeInterpreterId
+
+          # 2. Role sandbox-manager assumes to drive sessions (EKS Pod Identity trust).
+          - name: session-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": { "Service": "pods.eks.amazonaws.com" },
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+
+          # 3. Inline policy: allow Start/Invoke/Stop Code Interpreter sessions.
+          #    TODO scope Resource to status.codeInterpreterId; verify action names.
+          - name: session-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicy
+              spec:
+                forProvider:
+                  roleSelector:
+                    matchControllerRef: true
+                  policy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Action": [
+                          "bedrock-agentcore:StartCodeInterpreterSession",
+                          "bedrock-agentcore:InvokeCodeInterpreter",
+                          "bedrock-agentcore:StopCodeInterpreterSession"
+                        ],
+                        "Resource": "*"
+                      }]
+                    }

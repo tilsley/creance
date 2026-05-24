@@ -1,0 +1,24 @@
+{
+  "name": "@agent-os/infra",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AWS CDK infrastructure for agent-os (SKELETON — stacks are shells)",
+  "bin": {
+    "agent-os": "bin/agent-os.ts"
+  },
+  "scripts": {
+    "synth": "bunx cdk synth",
+    "diff": "bunx cdk diff",
+    "deploy": "bunx cdk deploy",
+    "ls": "bunx cdk list"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.150.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.150.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

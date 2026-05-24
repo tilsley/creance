@@ -1,0 +1,51 @@
+# CompositeResourceDefinition (XRD): the self-service "Sandbox" API.
+# A team creates a Sandbox claim; Crossplane provisions a NAMED AgentCore Code
+# Interpreter *config* (the sandbox template) + scoped IAM. Note: the actual
+# execution *sessions* against this config are runtime — created/torn down by
+# sandbox-manager via the AgentCore data-plane API, NOT by Crossplane (ADR-0006).
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xsandboxes.platform.agentos.io
+spec:
+  group: platform.agentos.io
+  names:
+    kind: XSandbox
+    plural: xsandboxes
+  claimNames:
+    kind: Sandbox
+    plural: sandboxes
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                parameters:
+                  type: object
+                  properties:
+                    team:
+                      type: string
+                      description: Owning team; used for IAM scoping and tags.
+                    networkMode:
+                      type: string
+                      enum: [PUBLIC, SANDBOX, VPC]
+                      default: SANDBOX
+                      description: >-
+                        PUBLIC = open internet; SANDBOX = S3-only egress (+DNS), the
+                        production default; VPC = reach private resources in your VPC.
+                        A microVM boundary stops escape, not exfiltration.
+                  required:
+                    - team
+              required:
+                - parameters
+            status:
+              type: object
+              properties:
+                codeInterpreterId:
+                  type: string

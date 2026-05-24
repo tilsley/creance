@@ -1,0 +1,59 @@
+# CompositeResourceDefinition (XRD): the self-service "InferenceProfile" API.
+# A team creates an InferenceProfile claim (see claim-example.yaml); Crossplane
+# composes the underlying AWS resources (see composition.yaml).
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xinferenceprofiles.platform.agentos.io
+spec:
+  group: platform.agentos.io
+  names:
+    kind: XInferenceProfile
+    plural: xinferenceprofiles
+  claimNames:
+    kind: InferenceProfile
+    plural: inferenceprofiles
+  connectionSecretKeys:
+    - applicationInferenceProfileArn
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                parameters:
+                  type: object
+                  properties:
+                    team:
+                      type: string
+                      description: Owning team; used for cost-allocation tags and IAM scoping.
+                    model:
+                      type: string
+                      description: >-
+                        ARN of a foundation model OR a cross-region inference
+                        profile (maps to the Bedrock InferenceProfile
+                        modelSource.copyFrom). Cross-region = throughput + access.
+                    region:
+                      type: string
+                      default: us-east-1
+                    maxDailyCostUSD:
+                      type: number
+                      description: >-
+                        Hard daily cap. Provisions an AWS Budget AND is read by
+                        the inference-gateway to enforce in real time (ADR-0004).
+                  required:
+                    - team
+                    - model
+                    - maxDailyCostUSD
+              required:
+                - parameters
+            status:
+              type: object
+              properties:
+                applicationInferenceProfileArn:
+                  type: string

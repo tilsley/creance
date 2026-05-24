@@ -1,0 +1,131 @@
+# Composition: maps an XInferenceProfile to AWS managed resources.
+#
+# Resource kinds AND field shapes verified 2026-05-23 against the Upbound
+# providers' own examples/CRDs (provider-aws-bedrock, -budgets, -iam, -eks).
+# Patches are representative; items marked TODO still need wiring decisions
+# (ARN-scoping the policy, the cluster name from platform config).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: inference-profile.aws.platform.agentos.io
+spec:
+  compositeTypeRef:
+    apiVersion: platform.agentos.io/v1alpha1
+    kind: XInferenceProfile
+  mode: Pipeline
+  pipeline:
+    - step: compose
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          # 1. Bedrock APPLICATION inference profile — tagged for cost allocation.
+          - name: application-inference-profile
+            base:
+              apiVersion: bedrock.aws.upbound.io/v1beta1
+              kind: InferenceProfile
+              spec:
+                forProvider:
+                  region: us-east-1
+                  modelSource:
+                    - copyFrom: ""   # foundation-model OR cross-region profile ARN
+                  tags:
+                    managedBy: agent-os
+            patches:
+              - fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.region
+              - fromFieldPath: spec.parameters.model
+                toFieldPath: spec.forProvider.modelSource[0].copyFrom
+              - fromFieldPath: spec.parameters.team
+                toFieldPath: spec.forProvider.tags.team
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.applicationInferenceProfileArn
+
+          # 2. Daily COST budget, filtered to this team's cost-allocation tag.
+          #    NB: the "team" tag must be ACTIVATED in Billing ~24h before it
+          #    filters. Attribution + delayed alert only — NOT enforcement (ADR-0004).
+          - name: daily-budget
+            base:
+              apiVersion: budgets.aws.upbound.io/v1beta2
+              kind: Budget
+              spec:
+                forProvider:
+                  region: us-east-1
+                  budgetType: COST
+                  limitUnit: USD
+                  timeUnit: DAILY
+                  costFilter:
+                    - name: TagKeyValue
+                      values: []
+            patches:
+              - fromFieldPath: spec.parameters.maxDailyCostUSD
+                toFieldPath: spec.forProvider.limitAmount
+                transforms:
+                  - type: convert
+                    convert:
+                      toType: string
+              - fromFieldPath: spec.parameters.team
+                toFieldPath: spec.forProvider.costFilter[0].values[0]
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "user:team$%s"
+
+          # 3. IAM role the gateway assumes (EKS Pod Identity trust).
+          - name: invoke-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": { "Service": "pods.eks.amazonaws.com" },
+                        "Action": ["sts:AssumeRole", "sts:TagSession"]
+                      }]
+                    }
+
+          # 4. Inline policy: allow InvokeModel* — TODO scope Resource to the
+          #    provisioned profile ARN (status.applicationInferenceProfileArn).
+          - name: invoke-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicy
+              spec:
+                forProvider:
+                  roleSelector:
+                    matchControllerRef: true
+                  policy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [{
+                        "Effect": "Allow",
+                        "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                        "Resource": "*"
+                      }]
+                    }
+
+          # 5. Bind the role to the gateway's ServiceAccount in the team namespace.
+          - name: pod-identity
+            base:
+              apiVersion: eks.aws.upbound.io/v1beta1
+              kind: PodIdentityAssociation
+              spec:
+                forProvider:
+                  region: us-east-1
+                  clusterName: agent-os   # TODO: from platform config
+                  serviceAccount: inference-gateway
+                  roleArnSelector:
+                    matchControllerRef: true
+            patches:
+              - fromFieldPath: spec.parameters.team
+                toFieldPath: spec.forProvider.namespace
+              - fromFieldPath: spec.parameters.region
+                toFieldPath: spec.forProvider.region

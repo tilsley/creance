@@ -1,0 +1,9 @@
+{
+  "name": "agent-os",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A cloud-native, multi-tenant agent operating system on AWS + EKS",
+  "workspaces": [
+    "infra"
+  ]
+}
