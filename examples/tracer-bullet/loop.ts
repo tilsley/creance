@@ -1,10 +1,12 @@
 /**
  * The L1 agent loop — depends ONLY on the ports (ADR-0003). It has no idea
- * whether `think` is Bedrock or Ollama, or whether `do` is AgentCore or local.
+ * whether `think` is Bedrock or Ollama, `do` is AgentCore or local, or `guard`
+ * is Bedrock Guardrails or a no-op.
  */
 import type {
   InferenceProvider,
   SandboxProvider,
+  ContentGuard,
   Message,
   ToolDef,
   ToolResult,
@@ -26,18 +28,26 @@ const indent = (s: string) => s.split("\n").map((l) => "    " + l).join("\n");
 export interface RunOpts {
   inference: InferenceProvider;
   sandbox: SandboxProvider;
+  guard: ContentGuard;
   task: string;
   maxSteps?: number;
 }
 
-export async function runAgent({ inference, sandbox, task, maxSteps = 8 }: RunOpts): Promise<void> {
-  console.log(`▶ inference=${inference.name}  sandbox=${sandbox.name}`);
+export async function runAgent({ inference, sandbox, guard, task, maxSteps = 8 }: RunOpts): Promise<void> {
+  console.log(`▶ inference=${inference.name}  sandbox=${sandbox.name}  guard=${guard.name}`);
   console.log(`▶ task: ${task}\n`);
+
+  // guard: screen the input before it ever reaches the model
+  const inputCheck = await guard.screen(task, "input");
+  if (inputCheck.blocked) {
+    console.log("🛡 guard blocked the input — aborting");
+    return;
+  }
 
   const session = await sandbox.startSession();
   console.log(`✓ sandbox session: ${session.id}\n`);
 
-  const messages: Message[] = [{ role: "user", text: task }];
+  const messages: Message[] = [{ role: "user", text: inputCheck.text }];
 
   try {
     for (let step = 1; step <= maxSteps; step++) {
@@ -55,7 +65,16 @@ export async function runAgent({ inference, sandbox, task, maxSteps = 8 }: RunOp
         if (call.name !== "run_code") continue;
         const code = String(call.input.code ?? "");
         console.log(`\n🛠  run_code:\n${indent(code)}`);
-        const output = await session.runCode(code); // do
+
+        let output = await session.runCode(code); // do
+
+        // guard: screen untrusted tool output before it re-enters model context
+        const verdict = await guard.screen(output, "input");
+        if (verdict.intervened) {
+          console.log("🛡 guard intervened on tool output");
+          output = verdict.text;
+        }
+
         console.log(`📤 output:\n${indent(output)}\n`);
         results.push({ toolCallId: call.id, output });
       }

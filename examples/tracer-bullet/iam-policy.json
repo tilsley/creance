@@ -7,9 +7,22 @@
       "Action": [
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ApplyGuardrail",
         "bedrock:ListFoundationModels",
         "bedrock:ListInferenceProfiles",
         "bedrock:GetInferenceProfile"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockGuardrails",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:CreateGuardrail",
+        "bedrock:CreateGuardrailVersion",
+        "bedrock:GetGuardrail",
+        "bedrock:ListGuardrails",
+        "bedrock:DeleteGuardrail"
       ],
       "Resource": "*"
     },

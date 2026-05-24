@@ -2,16 +2,19 @@
  * agent-os — tracer bullet (entry point)
  *
  * Wires config → adapters → the backend-agnostic loop. The ports/adapters seam
- * (ADR-0003) lives here: swap providers by env without touching loop.ts.
+ * (ADR-0003) lives here: swap providers/controls by env without touching loop.ts.
  *
  *   bun install && bun run start
  *
- * Requires AWS creds + Bedrock model access in REGION (see README).
+ * Requires AWS creds + Bedrock model access in REGION (see README). `guard` is a
+ * no-op until you set GUARDRAIL_ID.
  */
 import { runAgent } from "./loop";
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
-import type { InferenceProvider, SandboxProvider } from "./ports";
+import { BedrockContentGuard } from "./adapters/bedrock-guard";
+import { NoopContentGuard } from "./adapters/noop-guard";
+import type { InferenceProvider, SandboxProvider, ContentGuard } from "./ports";
 
 const REGION = process.env.REGION ?? "eu-west-2";
 const MODEL_ID = process.env.MODEL_ID ?? "amazon.nova-lite-v1:0";
@@ -43,16 +46,27 @@ function makeSandbox(): SandboxProvider {
   }
 }
 
-runAgent({ inference: makeInference(), sandbox: makeSandbox(), task: TASK }).catch((err) => {
+function makeGuard(): ContentGuard {
+  const id = process.env.GUARDRAIL_ID;
+  if (!id) return new NoopContentGuard(); // guard off until a guardrail is configured
+  return new BedrockContentGuard(id, process.env.GUARDRAIL_VERSION ?? "DRAFT", REGION);
+}
+
+runAgent({
+  inference: makeInference(),
+  sandbox: makeSandbox(),
+  guard: makeGuard(),
+  task: TASK,
+}).catch((err) => {
   console.error("\n— failed —");
   console.error(err?.name ? `${err.name}: ${err.message}` : err);
   const hints: Record<string, string> = {
     AccessDeniedException:
-      "IAM: needs bedrock:InvokeModel + bedrock-agentcore:Start/Invoke/StopCodeInterpreterSession (see iam-policy.json).",
+      "IAM: needs bedrock:InvokeModel, bedrock:ApplyGuardrail + bedrock-agentcore:Start/Invoke/StopCodeInterpreterSession (see iam-policy.json).",
     ValidationException:
       `MODEL_ID may need a cross-region inference profile id (e.g. eu.anthropic.claude-...). List: aws bedrock list-inference-profiles --region ${REGION}`,
     ResourceNotFoundException:
-      `Model not enabled or legacy. Enable an ACTIVE model in the Bedrock console for ${REGION}, or fix MODEL_ID.`,
+      `Model/guardrail not found or legacy. Enable an ACTIVE model in the Bedrock console for ${REGION}, check GUARDRAIL_ID, or fix MODEL_ID.`,
   };
   if (err?.name && hints[err.name]) console.error(`\nhint: ${hints[err.name]}`);
   process.exit(1);

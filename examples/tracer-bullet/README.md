@@ -71,9 +71,11 @@ aws bedrock list-inference-profiles --region eu-west-2   # needs a current AWS C
 ## Structure (ports & adapters — ADR-0003)
 
 ```
-ports.ts                        # InferenceProvider, SandboxProvider — no SDK types
+ports.ts                        # InferenceProvider, SandboxProvider, ContentGuard — no SDK types
 adapters/bedrock-inference.ts   # think → Bedrock Converse
 adapters/agentcore-sandbox.ts   # do    → AgentCore Code Interpreter
+adapters/bedrock-guard.ts       # guard → Bedrock Guardrails (ApplyGuardrail)
+adapters/noop-guard.ts          # guard → pass-through (default; no guardrail needed)
 loop.ts                         # the L1 agent loop — imports ONLY ports.ts
 index.ts                        # wires config → adapters → loop (the swap seam)
 ```
@@ -84,8 +86,31 @@ AgentCore from a local sandbox. Swap by env: `INFERENCE_PROVIDER`,
 adapter = implementing the port). The same loop is what `inference-gateway` /
 `sandbox-manager` will eventually drive.
 
+## Guard (content safety) — ADR-0008
+
+`guard` is wired in but **off by default** (`NoopContentGuard`). The loop screens
+two boundaries: the **input** task, and each **tool output** before it re-enters
+model context (the injection defense). Turn it on with a Bedrock Guardrail:
+
+```bash
+# 1. add the guardrail IAM (already in iam-policy.json: ApplyGuardrail + create/get/list)
+# 2. create a guardrail:
+aws bedrock create-guardrail --region eu-west-2 \
+  --name agent-os-poc \
+  --blocked-input-messaging "Blocked by agent-os." \
+  --blocked-outputs-messaging "Blocked by agent-os." \
+  --content-policy-config '{"filtersConfig":[{"type":"PROMPT_ATTACK","inputStrength":"HIGH","outputStrength":"NONE"}]}' \
+  --sensitive-information-policy-config '{"piiEntitiesConfig":[{"type":"EMAIL","action":"ANONYMIZE"}]}'
+# 3. point the loop at it:
+export GUARDRAIL_ID=<returned-id>  GUARDRAIL_VERSION=DRAFT
+bun run start
+```
+
+Swap the implementation (Llama Guard, Presidio, LLM-as-judge…) by adding an
+adapter behind `ContentGuard` — the loop never changes.
+
 ## Maps to the model
 
-`think` = Inference primitive · `do` = Sandbox primitive. Still a hand-rolled L1
-loop ([docs/runtime.md](../../docs/runtime.md)) with **no gate / record / guard
-controls yet** — those come next.
+`think` = Inference primitive · `do` = Sandbox primitive · `guard` = the
+content-safety control (ADR-0008). A hand-rolled L1 loop
+([docs/runtime.md](../../docs/runtime.md)); `gate` and `record` controls come next.

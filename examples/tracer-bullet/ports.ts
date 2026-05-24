@@ -52,3 +52,21 @@ export interface SandboxProvider {
   readonly name: string;
   startSession(): Promise<SandboxSession>;
 }
+
+// --- guard: the content-safety Control port (ADR-0008) -----------------------
+export type GuardDirection = "input" | "output";
+
+export interface GuardVerdict {
+  /** The guardrail acted (masked or blocked the content). */
+  intervened: boolean;
+  /** Content was blocked outright (vs. masked). */
+  blocked: boolean;
+  /** Text to use downstream (possibly masked / replaced). */
+  text: string;
+}
+
+export interface ContentGuard {
+  readonly name: string;
+  /** Screen content crossing a trust boundary. `input` also covers untrusted ingress. */
+  screen(text: string, direction: GuardDirection): Promise<GuardVerdict>;
+}
