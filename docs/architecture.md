@@ -244,6 +244,10 @@ a governance chokepoint — vet/allowlist sources, scope the creds it can mint.
   reads) + `agent-controller` (reconciles desired → running agents, operator-style).
   Neither is L0 or the L1 loop; they govern L2. See [primitives.md](primitives.md).
 
+> **The object/resource inventory** — every piece → its k8s objects + AWS
+> resources, with scale + security columns and the local-vs-EKS delta — lives in
+> [resource-model.md](resource-model.md).
+
 ## Repository layout
 
 ```text

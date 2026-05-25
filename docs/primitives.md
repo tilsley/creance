@@ -191,6 +191,7 @@ the roles don't merge:
 ## References
 
 - [architecture.md](architecture.md) — how primitives/controls map to AWS
+- [resource-model.md](resource-model.md) — the object/resource inventory (k8s + AWS) per piece
 - [runtime.md](runtime.md) — the L1 agent contract & invocation
 - ADRs: [0003](decisions/0003-ports-and-adapters.md) (ports/adapters),
   [0004](decisions/0004-cost-governance.md) (cost),
