@@ -1,10 +1,34 @@
-# agent-runtime on a local cluster (colima --kubernetes / k3s).
-# Same manifest applies on EKS — only swap imagePullPolicy: Never (local image)
-# for a real registry image, and the aws-creds Secret for EKS Pod Identity.
+# agent-runtime workload — apply deploy/local/namespace.yaml FIRST.
+# Same manifest applies on EKS — swap imagePullPolicy: Never for a registry image,
+# bind the ServiceAccount to the IAM role via a Pod Identity association, and drop
+# the aws-creds Secret (keyless).
+---
+# ServiceAccount — the workload identity. On EKS, a Pod Identity *association* binds
+# this SA to the `agent-os-runtime` IAM role (CDK StateStack) → keyless DynamoDB +
+# Bedrock access. Locally there's no Pod Identity, so creds come from aws-creds (see
+# README §3) — the one piece that's genuinely EKS-only.
 apiVersion: v1
-kind: Namespace
+kind: ServiceAccount
 metadata:
-  name: agent-os
+  name: agent-runtime
+  namespace: agent-os
+---
+# ConfigMap — non-secret adapter selection (the ports/adapters seam as config).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-runtime-config
+  namespace: agent-os
+data:
+  REGION: eu-west-2
+  INFERENCE_PROVIDER: bedrock
+  MODEL_ID: amazon.nova-lite-v1:0
+  SANDBOX_PROVIDER: local # runs code in-pod; set "agentcore" for real microVM isolation
+  RUN_STORE: dynamodb # durable RunStore — the StateStack table
+  RUNS_TABLE: agent-os-runs
+  TELEMETRY: console
+  GATE: noop # set "local" + a GATE_TOKENS secret to require auth + budget
+  # GUARDRAIL_ID: "<AgentOsBedrock GuardrailId output>"  # set after deploying BedrockStack
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -14,42 +38,39 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: agent-runtime
+    matchLabels: { app: agent-runtime }
   template:
     metadata:
-      labels:
-        app: agent-runtime
+      labels: { app: agent-runtime }
     spec:
+      serviceAccountName: agent-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # the `bun` user in oven/bun
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: agent-runtime
           image: agent-runtime:dev
-          imagePullPolicy: Never # local image in docker (k3s uses docker runtime); not a registry
+          imagePullPolicy: Never # local docker image (k3s docker runtime); not a registry
           ports:
             - containerPort: 3000
-          env:
-            - name: REGION
-              value: eu-west-2
-            # INFERENCE_PROVIDER / SANDBOX_PROVIDER default to bedrock / agentcore
           envFrom:
-            - secretRef:
-                name: aws-creds # local only — EKS would use Pod Identity instead
+            - configMapRef: { name: agent-runtime-config }
+            - secretRef: { name: aws-creds } # local only — EKS uses Pod Identity
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            # readOnlyRootFilesystem: true   # prod: + emptyDir mounts for /tmp & bun cache
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 3000
+            httpGet: { path: /healthz, port: 3000 }
             initialDelaySeconds: 2
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 3000
+            httpGet: { path: /healthz, port: 3000 }
             initialDelaySeconds: 5
           resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
 ---
 apiVersion: v1
 kind: Service
@@ -57,8 +78,26 @@ metadata:
   name: agent-runtime
   namespace: agent-os
 spec:
-  selector:
-    app: agent-runtime
+  selector: { app: agent-runtime }
   ports:
-    - port: 80
-      targetPort: 3000
+    - { port: 80, targetPort: 3000 }
+---
+# HorizontalPodAutoscaler — the pod-level scale lever (nodes scale via Karpenter on
+# EKS). NOTE: needs metrics-server (k3s ships it; EKS needs the add-on).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-runtime
+  namespace: agent-os
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-runtime
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
