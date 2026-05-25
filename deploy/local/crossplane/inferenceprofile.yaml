@@ -11,7 +11,8 @@ spec:
   forProvider:
     region: eu-west-2
     name: agent-os-poc
-    description: Provisioned declaratively by Crossplane (agent-os step 4)
+    # Bedrock description regex forbids parentheses/commas: ([0-9a-zA-Z:.][ _-]?)+
+    description: Provisioned by Crossplane for agent-os step 4
     # copyFrom: a foundation-model OR cross-region inference-profile ARN
     modelSource:
       - copyFrom: arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-lite-v1:0

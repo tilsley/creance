@@ -79,8 +79,15 @@ delete` removes it from AWS. That's the gap closed: the guardrail/profile we mad
 by hand is now a versioned CRD.
 
 ## Status
-- ✅ Crossplane core + `provider-aws-bedrock` installed & Healthy locally; CRD available.
-- ⏳ Live provision pending the scoped role above (keyless on EKS via Pod Identity).
+- ✅ Crossplane core + `provider-aws-bedrock` installed & Healthy; CRD available.
+- ✅ **Live provision verified:** `agent-os-poc` inference profile created in AWS via
+  `kubectl apply` using scoped STS creds (no static keys) — CR SYNCED/READY=True,
+  profile ACTIVE in Bedrock. `kubectl delete` tears it back down (declarative
+  lifecycle). On EKS this same flow runs keyless via Pod Identity.
+
+> Gotcha hit: Bedrock `description` rejects parentheses/commas
+> (regex `([0-9a-zA-Z:.][ _-]?)+`) — Crossplane surfaced the AWS ValidationException
+> in the CR status; fixing the manifest + re-apply converged.
 
 ## Cleanup
 ```bash
