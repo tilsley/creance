@@ -20,21 +20,32 @@ import { providersFromEnv, runOnSession, workspaceTools, type SandboxSession } f
 process.env.SANDBOX_PROVIDER ??= "local";
 
 const REPO_URL = process.env.REPO_URL;
-const PKG = process.env.PACKAGE ?? "chalk";
-const TARGET = process.env.TARGET_VERSION ?? "5.3.0";
+const PKG = process.env.PACKAGE ?? "lodash";
+const TARGET = process.env.TARGET_VERSION ?? "4.17.21";
 
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
-/** A tiny deterministic target when no REPO_URL is given. */
-async function seedFixture(session: SandboxSession, pkg: string): Promise<void> {
-  const ident = pkg.replace(/[^a-z0-9]/gi, "_");
+/**
+ * A tractable, self-verifying fixture: lodash v3 had `_.pluck`, REMOVED in v4
+ * (use `_.map`). With v4 the program throws until the agent fixes it; running
+ * `node src/index.js` is a clear pass/fail signal.
+ */
+async function seedFixture(session: SandboxSession): Promise<void> {
   await session.writeFile(
     "package.json",
-    JSON.stringify({ name: "fixture", version: "1.0.0", type: "commonjs", dependencies: { [pkg]: "^4.0.0" } }, null, 2) + "\n",
+    JSON.stringify(
+      { name: "fixture", version: "1.0.0", type: "commonjs", dependencies: { lodash: "^3.10.1" } },
+      null,
+      2,
+    ) + "\n",
   );
   await session.writeFile(
     "src/index.js",
-    `const ${ident} = require(${JSON.stringify(pkg)});\n// uses the ${pkg} v4 API\nconsole.log(${ident});\n`,
+    `const _ = require("lodash");\n` +
+      `// _.pluck was REMOVED in lodash v4 — should become _.map(arr, "name").\n` +
+      `const names = _.pluck([{ name: "ada" }, { name: "alan" }], "name");\n` +
+      `if (names.join(",") !== "ada,alan") { console.error("FAIL", names); process.exit(1); }\n` +
+      `console.log("OK", names.join(","));\n`,
   );
 }
 
@@ -49,8 +60,8 @@ try {
     const c = await session.runCmd(`git clone --depth 1 ${q(REPO_URL)} .`);
     if (c.exitCode !== 0) throw new Error(`clone failed: ${c.stderr}`);
   } else {
-    console.log(`seeding fixture for ${PKG} …`);
-    await seedFixture(session, PKG);
+    console.log(`seeding lodash fixture …`);
+    await seedFixture(session);
     await session.runCmd("git init -q");
   }
   await session.runCmd("git add -A && git -c user.email=a@b.c -c user.name=dep-migrator commit -q -m baseline");
@@ -81,10 +92,12 @@ try {
     tools: workspaceTools,
     maxSteps: 25,
     systemPrompt:
-      `You are a senior engineer applying a major-version npm upgrade. The version of ${PKG} in package.json is already bumped to ${target}. ` +
-      `Use your tools — list_files / read_file to find every file that imports or configures ${PKG} (source AND config), write_file to apply breaking-change fixes directly, run_cmd to verify (install / typecheck). ` +
-      `Make whatever code changes are needed. When finished, summarise what you changed and why.`,
-    task: `Migrate ${PKG} to ${TARGET} in this repository and make it work.`,
+      `You are a senior engineer applying a major-version npm upgrade. ${PKG} in package.json is already bumped to ${target}. ` +
+      `Use your tools: list_files / read_file to find every file that uses ${PKG}, write_file to apply breaking-change fixes, run_cmd to install and VERIFY. ` +
+      `VERIFY by actually running the program: run \`npm install\`, then \`node src/index.js\` and confirm it exits 0. Do NOT invent npm scripts (like "build") — read package.json first to see what exists. ` +
+      `If a command fails the same way twice, do not repeat it — change approach. ` +
+      `When the program runs successfully, reply with a one-paragraph summary of what you changed, and STOP — make no further tool calls.`,
+    task: `Migrate ${PKG} to ${TARGET} in this repository and make \`node src/index.js\` pass.`,
   });
 
   // 4. emit the diff (the would-be PR contents)

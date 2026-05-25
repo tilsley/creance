@@ -22,7 +22,7 @@ const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}… 
 
 export interface RunResult {
   runId: string;
-  status: "completed" | "blocked" | "max_steps";
+  status: "completed" | "blocked" | "max_steps" | "stuck";
   output?: string;
 }
 
@@ -64,6 +64,7 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
 
     const opening = systemPrompt ? `${systemPrompt}\n\n${inputCheck.text}` : inputCheck.text;
     const messages: Message[] = [{ role: "user", text: opening }];
+    let lastSig = ""; // no-progress guard: identical tool calls two turns running = stuck
 
     for (let step = 1; step <= maxSteps; step++) {
       const turn = await telemetry.step(
@@ -86,6 +87,15 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
         console.log("\n✅ done");
         return { runId, status: "completed", output: turn.text };
       }
+
+      // no-progress guard: if the model proposes the exact same tool calls as the
+      // previous turn, it's looping — stop rather than burn the whole step budget.
+      const sig = JSON.stringify(turn.toolCalls.map((c) => [c.name, c.input]));
+      if (sig === lastSig) {
+        console.log("\n⚠ no progress — identical tool calls repeated; stopping (stuck)");
+        return { runId, status: "stuck", output: turn.text };
+      }
+      lastSig = sig;
 
       const results: ToolResult[] = [];
       for (const call of turn.toolCalls) {
