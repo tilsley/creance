@@ -32,7 +32,7 @@ export class StateStack extends cdk.Stack {
     // the runtime's cloud identity
     const runtimeRole = new iam.Role(this, "AgentRuntimeRole", {
       roleName: "agent-os-runtime",
-      description: "agent-os runtime — least-privilege access to the runs table",
+      description: "agent-os runtime - least-privilege access to the runs table",
       // prod: assumed by the runtime's ServiceAccount via EKS Pod Identity (keyless).
       // local: assumed by the account so we can validate against the real table.
       assumedBy: new iam.CompositePrincipal(
