@@ -10,7 +10,115 @@ baked in and the blueprint's technical errors corrected.
 | Tenancy | Internal, multi-team | Soft isolation + governance; trust operators, not code |
 | Untrusted code | Yes | Runs in AgentCore (managed Firecracker-per-session) — see [isolation.md](isolation.md), ADR-0006 |
 | Sandbox build vs buy | Buy: AWS Bedrock AgentCore | Control plane built on k8s; execution offloaded (ADR-0006) |
-| First milestone | Infra scaffolding only | Docs + skeleton; no running services, no deploy |
+| Build approach | Thin-local first, behind ports | Each primitive/control runs locally now; managed AWS swap-ins documented, not all wired (see Implementation status) |
+
+## Architecture at a glance
+
+**Layered model** — primitives the agent *calls*, controls the platform *enforces*,
+a runtime that composes them, agents on top:
+
+```mermaid
+flowchart TB
+  subgraph L2["L2 · Agents (apps)"]
+    DM["dep-migrator"]
+    EX["examples: tracer-bullet · credential-broker · mcp-gateway"]
+  end
+
+  subgraph L1["L1 · Runtime — agent-runtime service"]
+    API["HTTP: POST /runs (async) · GET /runs/:id · /tenants/:t/budget"]
+    WORK["in-process worker = the agent loop"]
+    API --> WORK
+  end
+
+  subgraph L0P["L0 · Primitives — capabilities the agent calls"]
+    THINK["think · InferenceProvider"]
+    DO["do · SandboxProvider + ToolProvider/MCP"]
+    REM["remember · RunStore"]
+  end
+
+  subgraph L0C["L0 · Controls — enforced around every step"]
+    GATE["gate · identity + budget + CredentialBroker"]
+    REC["record · TelemetrySink"]
+    GUARD["guard · ContentGuard"]
+  end
+
+  L2 --> API
+  WORK --> THINK & DO & REM
+  WORK -. applies .-> GATE & REC & GUARD
+
+  CP["control plane: Crossplane → Bedrock inference profiles · CDK/EKS (skeleton) · k3s (local)"]
+  CP -. provisions .-> L0P
+```
+
+**A run, end to end:**
+
+```mermaid
+sequenceDiagram
+  actor Caller
+  participant API as agent-runtime
+  participant Gate
+  participant Store as RunStore
+  participant Loop as agent loop
+  participant Think as Inference
+  participant Tools as ToolProvider / MCP
+  participant Broker as CredentialBroker
+  participant Guard
+  participant Rec as Telemetry
+
+  Caller->>API: POST /runs  (Bearer token)
+  API->>Gate: authenticate + checkBudget
+  Gate-->>API: Principal {tenant,subject}  (else 401 / 402)
+  API->>Store: create Run (queued)
+  API-->>Caller: 202 {runId}
+
+  Note over API,Loop: worker picks up the run (async)
+  API->>Tools: resolve(principal) — policy filter + inject broker creds
+  Tools->>Broker: issue scoped cred (server-side)
+
+  loop until done or maxSteps
+    Loop->>Guard: screen input / tool output
+    Loop->>Think: generate(messages, tools)
+    Think-->>Loop: text + toolCalls + usage
+    Loop->>Tools: call tool (workspace / http / MCP)
+    Loop->>Store: persist messages (per turn)
+    Loop->>Rec: span per step
+  end
+
+  Loop->>Gate: recordSpend(cost from usage)
+  Loop->>Store: final status + usage + costUsd
+  Caller->>API: GET /runs/{id} → result
+```
+
+## Implementation status — logical design vs. what runs
+
+> **Read the component names below as the *logical* architecture.** The services
+> `inference-gateway`, `sandbox-manager`, `iam-authorizer`, `telemetry-processor`,
+> and `tool-gateway` are **not yet separate services** — today their logic lives
+> **in-process** as adapters inside [`@agent-os/core`](../packages/core), driven by
+> the one running service, **`agent-runtime`**. The split into separate services is
+> designed (their READMEs, the ADRs) but not yet done; the clean in-process
+> composition is an assumption about how it decomposes, not yet tested.
+
+Every primitive and control sits behind a port with a thin-local adapter; the
+managed (mostly AWS) swap-ins are documented, several still unwired:
+
+| Port (capability) | Thin / local — built & run | Managed swap-in — documented |
+|---|---|---|
+| `InferenceProvider` (think) | Ollama | **Bedrock** ✅ |
+| `SandboxProvider` (do) | local temp-dir | **AgentCore Code Interpreter** ✅ |
+| `ToolProvider` (do, tools) | built-in + MCP (stdio/HTTP) | AgentCore Gateway |
+| `RunStore` (remember) | in-memory | DynamoDB / AgentCore Memory |
+| `Gate` (gate) | static tokens + budget | AgentCore Identity / Auth0; Cedar/OPA |
+| `CredentialBroker` (gate) | env grants | AgentCore Identity / Auth0 Token Vault; STS |
+| `ContentGuard` (guard) | noop | **Bedrock Guardrails** ✅ |
+| `TelemetrySink` (record) | console | **OTel/OTLP** ✅ → ADOT/OpenSearch |
+
+✅ = both sides actually run. **Validated end-to-end:** a real agent
+(dep-migrator) migrated a dependency; the budget gate returned `402`; the
+credential broker kept a secret out of the model transcript; the MCP gateway
+discovered + called a tool under per-tenant policy. **Not yet production:**
+in-memory `RunStore`, static gate tokens + broker secrets, in-process
+fire-and-forget worker, no eval harness, EKS/CDK still skeleton.
 
 ## The primitives
 
@@ -36,12 +144,13 @@ runtime. **Egress** is set via AgentCore network mode (sandboxed vs allowlisted)
 Behind the `SandboxProvider` port (ADR-0003), an EKS+gVisor adapter remains
 possible if execution is ever in-sourced.
 
-### 3. State / Memory — *remember* (deferred)
+### 3. State / Memory — *remember*
 Durable, possibly shared state across runs/agents — the agent's long-term memory.
 Irreducible (can't be built on the other primitives — see [primitives.md](primitives.md));
-backed by AgentCore Memory or a datastore (DynamoDB/Postgres/Redis/S3). **Deferred
-for the POC** — distinct from intra-session sandbox state (#2) and the loop's
-working state (L1).
+backed by AgentCore Memory or a datastore (DynamoDB/Postgres/Redis/S3). **First use
+is built:** the `RunStore` persists each run (status + conversation) per turn,
+making runs async + durable. Cross-run/shared memory is still ahead. Distinct from
+intra-session sandbox state (#2) and the loop's working state (L1).
 
 ### 4. Identity & governance (the guardrails) — *gate*
 **EKS Pod Identity** (not IRSA) binds each sandbox's ServiceAccount to a scoped
@@ -133,15 +242,16 @@ a governance chokepoint — vet/allowlist sources, scope the creds it can mint.
 ## Repository layout
 
 ```text
-packages/   # @agent-os/core — runtime: ports (contracts), the L1 loop, adapters
-examples/   # tracer-bullet — minimal runnable agent loop (validated live)
-infra/      # AWS CDK (TypeScript via bun): core-vpc, eks-cluster (control-plane
-            #   host + day-0 Crossplane), bedrock, data-log
-platform/   # Crossplane control plane: XRDs + Compositions
-            #   apis/inference-profile, apis/sandbox (AgentCore CodeInterpreter)
-services/   # inference-gateway, sandbox-manager, tool-gateway, iam-authorizer,
-            #   telemetry-processor
-deploy/     # local/ — k3s (colima/k3d) + local AWS-equivalents (TODO)
+packages/   # @agent-os/core — the platform: ports, the L1 loop, runs, gate,
+            #   credentials, tool-gateway, tools + adapters (where the "services"
+            #   below currently live, in-process)
+services/   # agent-runtime (REAL: async runtime + Dockerfile). inference-gateway,
+            #   sandbox-manager, tool-gateway, iam-authorizer, telemetry-processor
+            #   are README scaffolds — logic lives in core for now
+apps/       # dep-migrator — the first real agent
+examples/   # tracer-bullet · credential-broker · mcp-gateway (runnable, validated)
+infra/      # AWS CDK (TypeScript via bun) — day-0 bootstrap; SKELETON, not deployed
+deploy/     # local/ — k3s manifests (agent-runtime deployed live) + Crossplane
 docs/       # this file, primitives.md, runtime.md, isolation.md, decisions/ (ADRs)
 ```
 
