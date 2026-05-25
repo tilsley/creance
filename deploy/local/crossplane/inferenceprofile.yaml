@@ -1,0 +1,20 @@
+# A Bedrock application inference profile, declared as a Crossplane managed
+# resource (provider-aws-bedrock). Replaces the ad-hoc `aws bedrock create-...`
+# we did by hand: kubectl apply this, Crossplane reconciles it into AWS; delete
+# it, Crossplane deletes the profile. This is the platform/apis/inference-profile
+# XRD's underlying resource (ADR-0005), shown directly here.
+apiVersion: bedrock.aws.upbound.io/v1beta1
+kind: InferenceProfile
+metadata:
+  name: agent-os-poc
+spec:
+  forProvider:
+    region: eu-west-2
+    name: agent-os-poc
+    description: Provisioned declaratively by Crossplane (agent-os step 4)
+    # copyFrom: a foundation-model OR cross-region inference-profile ARN
+    modelSource:
+      - copyFrom: arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-lite-v1:0
+    tags:
+      team: poc
+      managedBy: agent-os

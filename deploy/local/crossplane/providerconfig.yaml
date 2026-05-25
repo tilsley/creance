@@ -1,0 +1,14 @@
+# Crossplane AWS ProviderConfig — points the provider at short-lived creds in a
+# Secret (local only). On EKS this is replaced by Pod Identity / IRSA (keyless).
+# The Secret holds STS assume-role creds (temporary + scoped) — never static keys.
+apiVersion: aws.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: aws-creds
+      key: creds
