@@ -52,12 +52,16 @@ Abstracts the model provider so agents never call it directly.
 - **Status:** in design. See [ADR-0004](decisions/0004-cost-governance.md).
 
 ### 2. Sandbox — *do*  · port `SandboxProvider`
-Isolated execution of untrusted, agent-generated code.
-- **Backing:** **AWS Bedrock AgentCore Code Interpreter** — a Firecracker microVM
-  per session, zero idle.
-- **Component:** `sandbox-manager` (an AgentCore session client). Intra-session
-  state (fs/vars) lives *here*, ephemeral.
-- **Status:** in design. See [ADR-0006](decisions/0006-agentcore-execution-environment.md), [isolation.md](isolation.md).
+A persistent **workspace** for untrusted, agent-generated work: run code, run
+shell commands, read/write/list files — so an agent can clone a repo, edit it,
+install/build (mirrors janey-ops' `WorkspacePort`).
+- **Backing:** **AWS Bedrock AgentCore Code Interpreter** (Firecracker microVM per
+  session, zero idle); a **local** adapter (temp dir + bash) for dev.
+- **Component:** `sandbox-manager`. Intra-session fs/vars live *here*, ephemeral.
+- **Note:** AgentCore egress is network-mode-gated — `git clone` from GitHub needs
+  PUBLIC/VPC mode + git in the image.
+- **Status:** workspace implemented + validated (local incl. real git clone, $0;
+  AgentCore runCmd + file roundtrip, live). See [ADR-0006](decisions/0006-agentcore-execution-environment.md), [isolation.md](isolation.md).
 
 ### 3. State / Memory — *remember*  · port `StateStore` · **DEFERRED (POC)**
 Durable, possibly shared state across runs and across agents — long-term memory.

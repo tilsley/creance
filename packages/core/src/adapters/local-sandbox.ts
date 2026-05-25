@@ -1,35 +1,77 @@
 /**
- * Local adapter for the SandboxProvider port (do) — runs code on the host via a
- * python3 subprocess. Free, no-AWS, for the swappability demo.
+ * Local adapter for the SandboxProvider port (do) — a real workspace on the host:
+ * a temp working dir + bash + file I/O. Free, no-AWS, great for dev.
  *
- * ⚠ DEMO ONLY — NO ISOLATION. This runs model-generated code directly on your
- * machine. It exists to prove the port (same loop, different `do` backend); the
- * whole reason production uses AgentCore (Firecracker per session) is to NOT do
- * this. Never point this at untrusted input outside a throwaway dev box.
- *
- * Note: unlike AgentCore's Jupyter-style sessions, this is plain script
- * execution — it returns stdout/stderr only (no last-expression echo), so the
- * model should `print(...)` its results.
+ * ⚠ DEMO/DEV ONLY — NO ISOLATION. Runs model-generated code/commands directly on
+ * your machine. Production uses AgentCore (Firecracker per session) precisely to
+ * avoid this. Never point it at untrusted input outside a throwaway dev box.
  */
-import type { SandboxProvider, SandboxSession } from "../ports";
+import { mkdtemp, rm, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { Glob } from "bun";
+import type {
+  SandboxProvider,
+  SandboxSession,
+  CmdResult,
+  RunCmdOptions,
+} from "../ports";
 
 export class LocalSandboxProvider implements SandboxProvider {
   readonly name = "local";
 
   async startSession(): Promise<SandboxSession> {
-    const id = "local-" + Math.random().toString(36).slice(2, 10);
+    const workdir = await mkdtemp(join(tmpdir(), "agent-os-"));
+    const abs = (p: string) => join(workdir, p);
+
     return {
-      id,
+      id: `local-${workdir.split(/[-/]/).pop()}`,
+
       async runCode(code: string): Promise<string> {
-        const proc = Bun.spawn(["python3", "-c", code], { stdout: "pipe", stderr: "pipe" });
-        const [out, err] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-        ]);
-        await proc.exited;
-        return (out + err).trim() || "(no output)";
+        const p = Bun.spawn(["python3", "-c", code], { cwd: workdir, stdout: "pipe", stderr: "pipe" });
+        const [o, e] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+        await p.exited;
+        return (o + e).trim() || "(no output)";
       },
-      async close() {},
+
+      async runCmd(cmd: string, opts?: RunCmdOptions): Promise<CmdResult> {
+        const p = Bun.spawn(["bash", "-lc", cmd], {
+          cwd: workdir,
+          env: { ...process.env, ...opts?.env },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: opts?.timeoutMs,
+        });
+        const [stdout, stderr] = await Promise.all([
+          new Response(p.stdout).text(),
+          new Response(p.stderr).text(),
+        ]);
+        const exitCode = await p.exited;
+        return { stdout, stderr, exitCode };
+      },
+
+      readFile: (path: string) => readFile(abs(path), "utf8"),
+
+      async writeFile(path: string, content: string): Promise<void> {
+        await mkdir(dirname(abs(path)), { recursive: true });
+        await writeFile(abs(path), content);
+      },
+
+      async listFiles(): Promise<string[]> {
+        const out: string[] = [];
+        for await (const f of new Glob("**/*").scan({ cwd: workdir, onlyFiles: true })) {
+          if (!f.includes("node_modules/") && !f.startsWith(".git/") && !f.includes("/.git/")) {
+            out.push(f);
+          }
+        }
+        return out;
+      },
+
+      fileExists: (path: string) => Bun.file(abs(path)).exists(),
+
+      async close(): Promise<void> {
+        await rm(workdir, { recursive: true, force: true });
+      },
     };
   }
 }

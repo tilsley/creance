@@ -43,10 +43,31 @@ export interface InferenceProvider {
 }
 
 // --- do: the Sandbox primitive port ------------------------------------------
+// A session is a persistent *workspace* (mirrors janey-ops' WorkspacePort): run
+// code, run shell commands, and read/write/list files. Files persist within the
+// session, so an agent can clone a repo, edit it, run installs/builds, etc.
+export interface CmdResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export interface RunCmdOptions {
+  env?: Record<string, string>;
+  timeoutMs?: number;
+}
+
 export interface SandboxSession {
   readonly id: string;
-  /** Execute code, return its stdout. */
+  /** Run a Python snippet; returns combined stdout. */
   runCode(code: string): Promise<string>;
+  /** Run a shell command in the workspace. */
+  runCmd(cmd: string, opts?: RunCmdOptions): Promise<CmdResult>;
+  readFile(path: string): Promise<string>;
+  writeFile(path: string, content: string): Promise<void>;
+  /** Relative file paths in the workspace (recursive; excludes node_modules/.git). */
+  listFiles(): Promise<string[]>;
+  fileExists(path: string): Promise<boolean>;
   close(): Promise<void>;
 }
 
