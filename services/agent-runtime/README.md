@@ -13,10 +13,27 @@ event-driven — a blocking request/response can't host them.
 
 ## Endpoints
 - `GET  /healthz` → `{ "status": "ok" }`
-- `POST /runs` → body `{ "task": "..." }` → **`202`** `{ runId, status:"queued" }`
-- `GET  /runs/{id}` → the `Run` `{ status, messages, output?, error? }`
+- `POST /runs` → body `{ "task": "..." }` → **`202`** `{ runId, status:"queued", tenant }`
+  Under `GATE=local`, requires `Authorization: Bearer <token>` (→ `401`); rejected
+  with `402` if the tenant is over budget.
+- `GET  /runs/{id}` → the `Run` `{ status, principal, messages, output?, usage, costUsd }`
   (`status`: `queued` | `running` | `completed` | `blocked` | `stuck` | `max_steps` | `failed`).
   The full step trace also goes to the `record` control (console or OTLP).
+- `GET  /tenants/{tenant}/budget` → `{ limitUsd, spentUsd, remainingUsd, ok }`.
+
+## Gate (identity + budget) — [ADR-0009](../../docs/decisions/0009-gate-identity-and-governance.md)
+Default is **open** (`NoopGate`). Opt into auth + per-tenant budget with `GATE=local`:
+```bash
+GATE=local GATE_TOKENS="tok-a:teamA:alice,tok-b:teamB:bob" GATE_BUDGET_USD=1.00 \
+  PORT=3000 bun run start
+
+# 401 without a token; 202 with one; spend is costed from token usage per tenant
+curl -s -X POST localhost:3000/runs -H 'authorization: Bearer tok-a' \
+  -H 'content-type: application/json' -d '{"task":"Use run_code to print 2+2."}'
+```
+`LocalGate` is **dev only** (static tokens, in-memory spend). Swap-ins behind the
+same port: AgentCore Identity / Auth0 Token Vault (human×agent token + downstream
+creds), an AI gateway / Bedrock inference profiles + AWS Budgets (spend).
 
 ## Run
 ```bash

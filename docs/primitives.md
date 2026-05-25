@@ -84,12 +84,21 @@ Durable, possibly shared state across runs and across agents — long-term memor
 Enforced *around* every action — the agent doesn't call these to make progress;
 the platform applies them.
 
-### 4. Identity & governance — *gate*  · ports `TokenProvider` / `PolicyProvider`
-Who/what may do what, with least privilege.
-- **Backing:** EKS Pod Identity + STS + IAM (Crossplane-provisioned). Scoped,
-  temporary **human × agent** session tokens (intersection of the human's perms
-  and the agent's limits). Per-team namespaces + quotas + budgets.
-- **Component:** `iam-authorizer`. Enforces budgets with the gateway ([ADR-0004](decisions/0004-cost-governance.md)).
+### 4. Identity & governance — *gate*  · port `Gate` (→ `CredentialBroker` / `PolicyProvider`)
+Who/what may do what, with least privilege. A genuinely new problem: an agent
+action carries **two identities at once** — the human who initiated it and the
+agent that executes it (see [ADR-0009](decisions/0009-gate-identity-and-governance.md)).
+- **First use (thin, now):** the runtime authenticates `POST /runs` → a
+  `Principal {tenant, subject}`, attaches it to the `Run`, and enforces a
+  per-tenant budget costed from token usage. `LocalGate` adapter (dev) →
+  `NoopGate` (default open).
+- **Backing / swap-ins:** EKS Pod Identity + STS + IAM (Crossplane) for
+  AWS-downstream creds; AgentCore Identity / Auth0 Token Vault for the human×agent
+  token + third-party OAuth ([ADR-0007](decisions/0007-tools-and-external-auth.md));
+  an AI gateway / Bedrock inference profiles + AWS Budgets for spend
+  ([ADR-0004](decisions/0004-cost-governance.md)); Cedar/OPA for policy.
+- **Component:** `iam-authorizer`. Still ahead: real credential brokering, a
+  policy engine, mid-run budget hard-stop.
 
 ### 5. Observability — *record*  · port `TelemetrySink`
 Structural tracking of non-deterministic agent loops.

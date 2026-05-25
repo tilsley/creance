@@ -9,6 +9,7 @@ export * from "./loop";
 export * from "./config";
 export * from "./tools";
 export * from "./runs"; // State primitive (remember): persisted runs
+export * from "./gate"; // gate control: identity + budget
 
 // think
 export * from "./adapters/bedrock-inference";
@@ -19,6 +20,9 @@ export * from "./adapters/local-sandbox";
 // guard
 export * from "./adapters/bedrock-guard";
 export * from "./adapters/noop-guard";
+// gate
+export * from "./adapters/local-gate";
+export * from "./adapters/noop-gate";
 // record
 export * from "./adapters/console-telemetry";
 export * from "./adapters/otel-telemetry";

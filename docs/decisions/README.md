@@ -14,3 +14,4 @@ consequences. Format follows Michael Nygard's template. ADRs are immutable once
 | [0006](0006-agentcore-execution-environment.md) | AgentCore as execution environment; k8s as control plane | Accepted |
 | [0007](0007-tools-and-external-auth.md) | Tools & external auth — AgentCore Gateway + Identity, behind ports | Accepted |
 | [0008](0008-guard-content-safety-primitive.md) | Guard (content safety) is a third cross-cutting control | Accepted |
+| [0009](0009-gate-identity-and-governance.md) | Gate (identity & governance) — port + thin local adapter, managed swap-ins | Accepted |

@@ -7,7 +7,8 @@
  *
  * Tenant/principal/spend fields are added by the `gate` control (#3) later.
  */
-import type { Message } from "./ports";
+import type { Message, TokenUsage } from "./ports";
+import type { Principal } from "./gate";
 
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "blocked" | "stuck";
 
@@ -15,9 +16,14 @@ export interface Run {
   id: string;
   status: RunStatus;
   task: string;
+  /** Who the run acts as (gate, ADR-0009). Absent under the open NoopGate. */
+  principal?: Principal;
   messages: Message[];
   output?: string;
   error?: string;
+  /** Accumulated token usage + costed spend (gate budget accounting). */
+  usage?: TokenUsage;
+  costUsd?: number;
   createdAt: string;
   updatedAt: string;
 }

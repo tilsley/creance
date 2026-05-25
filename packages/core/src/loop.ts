@@ -15,6 +15,7 @@ import type {
   TelemetrySink,
   Message,
   ToolResult,
+  TokenUsage,
 } from "./ports";
 import { runCodeTool, type AgentTool } from "./tools";
 
@@ -24,6 +25,8 @@ export interface RunResult {
   runId: string;
   status: "completed" | "blocked" | "max_steps" | "stuck";
   output?: string;
+  /** Token usage accumulated across the run — gate budget accounting (ADR-0009). */
+  usage?: TokenUsage;
 }
 
 export interface RunOnSessionOpts {
@@ -55,6 +58,7 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
   console.log(`▶ task: ${truncate(task, 200)}\n`);
 
   return telemetry.run({ "run.id": runId, "agent.task": truncate(task, 500) }, async (): Promise<RunResult> => {
+    const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
     const inputCheck = await telemetry.step("guard.screen", { "guard.direction": "input" }, async (span) => {
       const v = await guard.screen(task, "input");
       span.setAttrs({ "guard.intervened": v.intervened, "guard.blocked": v.blocked });
@@ -62,7 +66,7 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
     });
     if (inputCheck.blocked) {
       console.log("🛡 guard blocked the input — aborting");
-      return { runId, status: "blocked" };
+      return { runId, status: "blocked", usage };
     }
 
     const opening = systemPrompt ? `${systemPrompt}\n\n${inputCheck.text}` : inputCheck.text;
@@ -83,13 +87,15 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
           return t;
         },
       );
+      usage.inputTokens! += turn.usage?.inputTokens ?? 0;
+      usage.outputTokens! += turn.usage?.outputTokens ?? 0;
       messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls });
       await opts.onProgress?.(messages);
       if (turn.text) console.log(`🧠 ${turn.text}`);
 
       if (turn.toolCalls.length === 0) {
         console.log("\n✅ done");
-        return { runId, status: "completed", output: turn.text };
+        return { runId, status: "completed", output: turn.text, usage };
       }
 
       // no-progress guard: if the model proposes the exact same tool calls as the
@@ -97,7 +103,7 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
       const sig = JSON.stringify(turn.toolCalls.map((c) => [c.name, c.input]));
       if (sig === lastSig) {
         console.log("\n⚠ no progress — identical tool calls repeated; stopping (stuck)");
-        return { runId, status: "stuck", output: turn.text };
+        return { runId, status: "stuck", output: turn.text, usage };
       }
       lastSig = sig;
 
@@ -126,7 +132,7 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
       messages.push({ role: "tool", results });
     }
     console.log("\n⚠ hit step limit");
-    return { runId, status: "max_steps" };
+    return { runId, status: "max_steps", usage };
   });
 }
 

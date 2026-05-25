@@ -28,10 +28,15 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
 export interface AssistantTurn {
   text?: string;
   toolCalls: ToolCall[];
-  usage?: { inputTokens?: number; outputTokens?: number };
+  usage?: TokenUsage;
 }
 
 // --- think: the Inference primitive port -------------------------------------

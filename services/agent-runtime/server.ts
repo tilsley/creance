@@ -1,30 +1,45 @@
 /**
- * agent-runtime — the L1 runtime as an HTTP service (the "front door"), now ASYNC.
+ * agent-runtime — the L1 runtime as an HTTP service (the "front door"), async +
+ * gated.
  *
- * A run is a first-class, persisted entity (the State primitive — see core/runs):
- *   POST /runs  {"task":"..."}  -> 202 { runId, status:"queued" }   (returns immediately)
- *   an in-process worker executes it, persisting conversation + status each turn
- *   GET  /runs/{id}             -> the Run { status, messages, output?, error? }
- *   GET  /healthz               -> { status: "ok" }
+ * A run is a first-class, persisted entity (the State primitive — core/runs),
+ * scoped by the `gate` control (identity + budget — ADR-0009):
+ *   POST /runs  {"task":"..."}  -> 202 { runId, status:"queued", tenant }
+ *     Authorization: Bearer <token>  (under GATE=local; open under the default)
+ *   GET  /runs/{id}                 -> the Run { status, messages, output?, usage, costUsd }
+ *   GET  /tenants/{tenant}/budget   -> { limitUsd, spentUsd, remainingUsd, ok }
+ *   GET  /healthz                   -> { status: "ok" }
  *
- * Why async: real agent runs are long-lived (minutes) and event-driven — a
- * blocking request/response can't host them. Durability comes from the RunStore:
- * state is persisted per turn, so a run is inspectable mid-flight (and, with a
- * persistent store, recoverable). Swappable later: in-process worker → SQS +
- * worker deployment; InMemoryRunStore → DynamoDB; all behind the same ports.
+ * An in-process worker executes runs, persisting state each turn; spend is costed
+ * from token usage and recorded against the tenant after each run.
  *
- *   bun run start            (PORT, INFERENCE_PROVIDER, SANDBOX_PROVIDER, ... via env)
+ *   GATE=local GATE_TOKENS="tok:teamA:alice" GATE_BUDGET_USD=1.00 bun run start
  */
-import { runOnSession, providersFromEnv, workspaceTools, InMemoryRunStore, type Run, type RunStore } from "@agent-os/core";
+import {
+  runOnSession,
+  providersFromEnv,
+  workspaceTools,
+  estimateCostUsd,
+  UnauthorizedError,
+  InMemoryRunStore,
+  type Run,
+  type RunStore,
+} from "@agent-os/core";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
+const { gate } = providers;
 const store: RunStore = new InMemoryRunStore();
 const port = Number(process.env.PORT ?? 3000);
 
-/** The worker: execute a queued run, persisting state as it goes. */
+const bearer = (req: Request): string | undefined =>
+  req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+
+/** The worker: execute a queued run, persisting state + accounting spend. */
 async function processRun(id: string): Promise<void> {
-  if (!(await store.get(id))) return;
-  const run = await store.update(id, { status: "running" });
+  const existing = await store.get(id);
+  if (!existing) return;
+  const tenant = existing.principal?.tenant ?? "default";
+  await store.update(id, { status: "running" });
   const session = await providers.sandbox.startSession();
   try {
     const result = await runOnSession({
@@ -32,13 +47,15 @@ async function processRun(id: string): Promise<void> {
       guard: providers.guard,
       telemetry: providers.telemetry,
       session,
-      task: run.task,
+      task: existing.task,
       tools: workspaceTools,
       onProgress: (messages) => {
         store.update(id, { messages }).catch(() => {}); // durable per-turn state
       },
     });
-    await store.update(id, { status: result.status, output: result.output });
+    const costUsd = estimateCostUsd(providers.inference.model, result.usage);
+    await gate.recordSpend(tenant, costUsd); // budget accounting (ADR-0009)
+    await store.update(id, { status: result.status, output: result.output, usage: result.usage, costUsd });
   } catch (e: any) {
     await store.update(id, { status: "failed", error: e?.message ?? String(e) });
   } finally {
@@ -56,6 +73,17 @@ const server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/runs") {
+      // gate: authenticate the caller, then pre-check the tenant's budget
+      let principal;
+      try {
+        principal = await gate.authenticate(bearer(req));
+      } catch (e) {
+        if (e instanceof UnauthorizedError) return Response.json({ error: "unauthorized" }, { status: 401 });
+        throw e;
+      }
+      const budget = await gate.checkBudget(principal.tenant);
+      if (!budget.ok) return Response.json({ error: "budget exceeded", budget }, { status: 402 });
+
       let body: any;
       try {
         body = await req.json();
@@ -67,16 +95,21 @@ const server = Bun.serve({
         return Response.json({ error: "missing 'task' (string)" }, { status: 400 });
       }
       const now = new Date().toISOString();
-      const run: Run = { id: crypto.randomUUID(), status: "queued", task, messages: [], createdAt: now, updatedAt: now };
+      const run: Run = { id: crypto.randomUUID(), status: "queued", task, principal, messages: [], createdAt: now, updatedAt: now };
       await store.create(run);
       void processRun(run.id); // fire-and-forget worker (in-process for now)
-      return Response.json({ runId: run.id, status: run.status }, { status: 202 });
+      return Response.json({ runId: run.id, status: run.status, tenant: principal.tenant }, { status: 202 });
     }
 
-    const match = url.pathname.match(/^\/runs\/([^/]+)$/);
-    if (req.method === "GET" && match) {
-      const run = await store.get(match[1]!);
+    const runMatch = url.pathname.match(/^\/runs\/([^/]+)$/);
+    if (req.method === "GET" && runMatch) {
+      const run = await store.get(runMatch[1]!);
       return run ? Response.json(run) : Response.json({ error: "run not found" }, { status: 404 });
+    }
+
+    const budgetMatch = url.pathname.match(/^\/tenants\/([^/]+)\/budget$/);
+    if (req.method === "GET" && budgetMatch) {
+      return Response.json(await gate.checkBudget(budgetMatch[1]!));
     }
 
     return new Response("not found", { status: 404 });
@@ -84,7 +117,7 @@ const server = Bun.serve({
 });
 
 console.log(
-  `agent-runtime listening on :${server.port}  (async; store=${store.name}; ` +
+  `agent-runtime listening on :${server.port}  (async; store=${store.name}; gate=${gate.name}; ` +
     `inference=${providers.inference.name} sandbox=${providers.sandbox.name} ` +
     `guard=${providers.guard.name} record=${providers.telemetry.name})`,
 );
