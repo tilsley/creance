@@ -7,6 +7,7 @@
 export * from "./ports";
 export * from "./loop";
 export * from "./config";
+export * from "./tools";
 
 // think
 export * from "./adapters/bedrock-inference";

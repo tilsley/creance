@@ -5,6 +5,7 @@
   "description": "A cloud-native, multi-tenant agent operating system on AWS + EKS",
   "workspaces": [
     "packages/*",
+    "apps/*",
     "infra",
     "examples/*",
     "services/*"

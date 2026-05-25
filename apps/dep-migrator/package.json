@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/dep-migrator",
+  "private": true,
+  "type": "module",
+  "description": "Agent: migrate a major npm dependency upgrade in a repo — a slice on @agent-os/core",
+  "scripts": {
+    "start": "bun run migrate.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}
