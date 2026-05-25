@@ -11,7 +11,9 @@
  */
 import { runAgent } from "./loop";
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
+import { OllamaInferenceProvider } from "./adapters/ollama-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
+import { LocalSandboxProvider } from "./adapters/local-sandbox";
 import { BedrockContentGuard } from "./adapters/bedrock-guard";
 import { NoopContentGuard } from "./adapters/noop-guard";
 import { ConsoleTelemetrySink } from "./adapters/console-telemetry";
@@ -31,7 +33,8 @@ function makeInference(): InferenceProvider {
   switch (provider) {
     case "bedrock":
       return new BedrockInferenceProvider(MODEL_ID, REGION);
-    // case "ollama": return new OllamaInferenceProvider(...);  // future adapter
+    case "ollama":
+      return new OllamaInferenceProvider(process.env.OLLAMA_MODEL ?? "llama3.1", process.env.OLLAMA_HOST);
     default:
       throw new Error(`unknown INFERENCE_PROVIDER: ${provider}`);
   }
@@ -42,7 +45,8 @@ function makeSandbox(): SandboxProvider {
   switch (provider) {
     case "agentcore":
       return new AgentCoreSandboxProvider(INTERPRETER_ID, REGION, process.env.AGENTCORE_ENDPOINT);
-    // case "local": return new LocalSandboxProvider(...);       // future adapter
+    case "local":
+      return new LocalSandboxProvider(); // ⚠ DEMO ONLY — runs code on host, no isolation
     default:
       throw new Error(`unknown SANDBOX_PROVIDER: ${provider}`);
   }

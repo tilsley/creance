@@ -73,7 +73,9 @@ aws bedrock list-inference-profiles --region eu-west-2   # needs a current AWS C
 ```
 ports.ts                        # Inference / Sandbox / ContentGuard / TelemetrySink — no SDK types
 adapters/bedrock-inference.ts   # think  → Bedrock Converse
+adapters/ollama-inference.ts    # think  → Ollama (local, free)
 adapters/agentcore-sandbox.ts   # do     → AgentCore Code Interpreter
+adapters/local-sandbox.ts       # do     → local python3 (DEMO ONLY — no isolation)
 adapters/bedrock-guard.ts       # guard  → Bedrock Guardrails (ApplyGuardrail)
 adapters/noop-guard.ts          # guard  → pass-through (default)
 adapters/console-telemetry.ts   # record → console (default)
@@ -87,6 +89,29 @@ AgentCore from a local sandbox. Swap by env: `INFERENCE_PROVIDER`,
 `SANDBOX_PROVIDER` (only `bedrock` / `agentcore` implemented today; adding an
 adapter = implementing the port). The same loop is what `inference-gateway` /
 `sandbox-manager` will eventually drive.
+
+## Swapping providers (the point of the ports)
+
+Every primitive/control is chosen by env — `loop.ts` never changes:
+
+| env | default | options |
+|---|---|---|
+| `INFERENCE_PROVIDER` | `bedrock` | `bedrock`, `ollama` |
+| `SANDBOX_PROVIDER` | `agentcore` | `agentcore`, `local` |
+| `GUARDRAIL_ID` | unset → `noop` | a Bedrock guardrail id |
+| `TELEMETRY` | `console` | `console`, `otel` |
+
+**Fully local — `$0`, no AWS, no IAM** (swap both `think` + `do`):
+```bash
+brew install ollama && ollama serve &
+ollama pull llama3.1          # or qwen2.5 — must be a tool-capable model
+INFERENCE_PROVIDER=ollama OLLAMA_MODEL=llama3.1 SANDBOX_PROVIDER=local \
+  TASK="Use run_code to print the 25th Fibonacci number." bun run start
+```
+
+⚠ `SANDBOX_PROVIDER=local` runs model-generated code on your host with **no
+isolation** — demo only. Production uses AgentCore (Firecracker) precisely to
+avoid this; the point here is that swapping is a one-env-var change, loop untouched.
 
 ## Guard (content safety) — ADR-0008
 
