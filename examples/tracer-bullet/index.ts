@@ -9,16 +9,21 @@
  * Requires AWS creds + Bedrock model access in REGION (see README). `guard` is a
  * no-op until GUARDRAIL_ID is set; `record` prints to console unless TELEMETRY=otel.
  */
-import { runAgent } from "./loop";
-import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
-import { OllamaInferenceProvider } from "./adapters/ollama-inference";
-import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
-import { LocalSandboxProvider } from "./adapters/local-sandbox";
-import { BedrockContentGuard } from "./adapters/bedrock-guard";
-import { NoopContentGuard } from "./adapters/noop-guard";
-import { ConsoleTelemetrySink } from "./adapters/console-telemetry";
-import { OtelTelemetrySink } from "./adapters/otel-telemetry";
-import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
+import {
+  runAgent,
+  BedrockInferenceProvider,
+  OllamaInferenceProvider,
+  AgentCoreSandboxProvider,
+  LocalSandboxProvider,
+  BedrockContentGuard,
+  NoopContentGuard,
+  ConsoleTelemetrySink,
+  OtelTelemetrySink,
+  type InferenceProvider,
+  type SandboxProvider,
+  type ContentGuard,
+  type TelemetrySink,
+} from "@agent-os/core";
 
 const REGION = process.env.REGION ?? "eu-west-2";
 const MODEL_ID = process.env.MODEL_ID ?? "amazon.nova-lite-v1:0";

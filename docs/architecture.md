@@ -133,6 +133,8 @@ a governance chokepoint — vet/allowlist sources, scope the creds it can mint.
 ## Repository layout
 
 ```text
+packages/   # @agent-os/core — runtime: ports (contracts), the L1 loop, adapters
+examples/   # tracer-bullet — minimal runnable agent loop (validated live)
 infra/      # AWS CDK (TypeScript via bun): core-vpc, eks-cluster (control-plane
             #   host + day-0 Crossplane), bedrock, data-log
 platform/   # Crossplane control plane: XRDs + Compositions

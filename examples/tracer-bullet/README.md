@@ -70,25 +70,26 @@ aws bedrock list-inference-profiles --region eu-west-2   # needs a current AWS C
 
 ## Structure (ports & adapters — ADR-0003)
 
+The runtime lives in **`@agent-os/core`** (`packages/core/`); this example is just
+the wiring:
+
 ```
-ports.ts                        # Inference / Sandbox / ContentGuard / TelemetrySink — no SDK types
-adapters/bedrock-inference.ts   # think  → Bedrock Converse
-adapters/ollama-inference.ts    # think  → Ollama (local, free)
-adapters/agentcore-sandbox.ts   # do     → AgentCore Code Interpreter
-adapters/local-sandbox.ts       # do     → local python3 (DEMO ONLY — no isolation)
-adapters/bedrock-guard.ts       # guard  → Bedrock Guardrails (ApplyGuardrail)
-adapters/noop-guard.ts          # guard  → pass-through (default)
-adapters/console-telemetry.ts   # record → console (default)
-adapters/otel-telemetry.ts      # record → OpenTelemetry (console exporter / OTLP)
-loop.ts                         # the L1 agent loop — imports ONLY ports.ts
-index.ts                        # wires config → adapters → loop (the swap seam)
+examples/tracer-bullet/
+  index.ts          # config → pick adapters → runAgent   (the only code here)
+  iam-policy.json   # AWS perms the run needs
+
+packages/core/src/   →   @agent-os/core
+  ports.ts                                # Inference / Sandbox / ContentGuard / TelemetrySink
+  loop.ts                                 # the L1 agent loop — imports ONLY ports.ts
+  adapters/{bedrock,ollama}-inference.ts  # think
+  adapters/{agentcore,local}-sandbox.ts   # do
+  adapters/{bedrock,noop}-guard.ts        # guard
+  adapters/{console,otel}-telemetry.ts    # record
 ```
 
 `loop.ts` has **zero AWS imports** — it can't tell Bedrock from Ollama or
-AgentCore from a local sandbox. Swap by env: `INFERENCE_PROVIDER`,
-`SANDBOX_PROVIDER` (only `bedrock` / `agentcore` implemented today; adding an
-adapter = implementing the port). The same loop is what `inference-gateway` /
-`sandbox-manager` will eventually drive.
+AgentCore from a local sandbox. The same `@agent-os/core` will back the real
+`inference-gateway` / `sandbox-manager` services — one contract, not a copy per app.
 
 ## Swapping providers (the point of the ports)
 

@@ -52,6 +52,8 @@ agent-os/
 │   ├── architecture.md          # refined architecture; the 4 primitives + decisions
 │   ├── isolation.md             # the sandbox-isolation analysis (the hard part)
 │   └── decisions/               # ADRs
+├── packages/core/               # @agent-os/core — runtime: ports, loop, adapters
+├── examples/tracer-bullet/      # runnable agent loop (think+do+guard+record) — LIVE
 ├── infra/                       # AWS CDK skeleton (TypeScript, run via bun) — SHELLS ONLY
 │   ├── bin/agent-os.ts
 │   └── lib/*-stack.ts
