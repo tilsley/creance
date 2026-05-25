@@ -238,6 +238,11 @@ a governance chokepoint — vet/allowlist sources, scope the creds it can mint.
 - **Provision vs. enforce.** Crossplane provisions infra (attribution + delayed
   Budget alerts); the inference-gateway enforces real-time cost caps. The CRD's
   `maxDailyCostUSD` is the single declarative source for both (ADR-0004).
+- **Two control planes (don't conflate).** Crossplane is the control plane for
+  *infra*; the **agent control plane** (planned, #5) is the control plane for
+  *agents* — `agent-registry` (catalog: definitions, versions, config the runtime
+  reads) + `agent-controller` (reconciles desired → running agents, operator-style).
+  Neither is L0 or the L1 loop; they govern L2. See [primitives.md](primitives.md).
 
 ## Repository layout
 

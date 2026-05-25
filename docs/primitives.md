@@ -170,6 +170,24 @@ L1 contract: [runtime.md](runtime.md).
 Specific agents and products built on the runtime. Out of platform scope; they
 consume L0/L1.
 
+## Agent control plane (planned, #5)
+
+Lifecycle + catalog of L2 agents — the **control plane for agents**, the sibling of
+Crossplane (the control plane for *infra*). **Not L0** (the loop never calls it to
+make progress) and **not the L1 loop** (it operates on the *population* of agents,
+not one run). It *governs* L2 and is *read by* L1. Two components, kept distinct so
+the roles don't merge:
+
+- **`agent-registry`** — the source of truth: what agents exist, their versions,
+  config, owning tenant, which model/tools each needs. The L1 runtime reads it to
+  resolve "this request → which agent + version + config".
+- **`agent-controller`** — reconciles desired → running agents (operator-style on
+  an `Agent` resource). The analogue of a k8s Deployment controller.
+
+> Registry = declarative truth; controller = makes reality match it. Start with the
+> registry (catalog-first); carve out the controller when reconciliation is real.
+> To be formalized in an ADR when #5 is built.
+
 ## References
 
 - [architecture.md](architecture.md) — how primitives/controls map to AWS
