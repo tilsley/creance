@@ -16,3 +16,4 @@ consequences. Format follows Michael Nygard's template. ADRs are immutable once
 | [0008](0008-guard-content-safety-primitive.md) | Guard (content safety) is a third cross-cutting control | Accepted |
 | [0009](0009-gate-identity-and-governance.md) | Gate (identity & governance) — port + thin local adapter, managed swap-ins | Accepted |
 | [0010](0010-credential-broker.md) | CredentialBroker — thin local broker + authenticated tool (implements 0007) | Accepted |
+| [0011](0011-tool-mcp-gateway.md) | Tool/MCP gateway — client-side ToolProvider; AgentCore Gateway as swap-in (implements 0007) | Accepted |

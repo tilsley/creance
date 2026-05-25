@@ -62,6 +62,12 @@ install/build (mirrors janey-ops' `WorkspacePort`).
   PUBLIC/VPC mode + git in the image.
 - **Status:** workspace implemented + validated (local incl. real git clone, $0;
   AgentCore runCmd + file roundtrip, live). See [ADR-0006](decisions/0006-agentcore-execution-environment.md), [isolation.md](isolation.md).
+- **Tools (do's second face) — `ToolProvider`:** the runtime assembles each run's
+  toolset from sources (built-in workspace/http + **MCP servers**), namespaced and
+  governed by a per-tenant allowlist, with `CredentialBroker` creds injected. **MCP
+  is the protocol** for plugging in arbitrary tools without an adapter each
+  ([ADR-0011](decisions/0011-tool-mcp-gateway.md)); AgentCore Gateway is the hosted
+  swap-in.
 
 ### 3. State / Memory — *remember*  · port `RunStore` (→ `StateStore`)
 Durable, possibly shared state across runs and across agents — long-term memory.

@@ -1,0 +1,13 @@
+{
+  "name": "@agent-os/mcp-gateway-demo",
+  "private": true,
+  "type": "module",
+  "description": "Demonstrates the tool/MCP gateway: an agent uses tools discovered from an MCP server, governed per-tenant (ADR-0011)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

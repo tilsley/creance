@@ -18,8 +18,6 @@
 import {
   runOnSession,
   providersFromEnv,
-  workspaceTools,
-  httpRequestTool,
   estimateCostUsd,
   UnauthorizedError,
   InMemoryRunStore,
@@ -28,7 +26,7 @@ import {
 } from "@agent-os/core";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
-const { gate, credentials } = providers;
+const { gate, toolProvider } = providers;
 const store: RunStore = new InMemoryRunStore();
 const port = Number(process.env.PORT ?? 3000);
 
@@ -43,6 +41,9 @@ async function processRun(id: string): Promise<void> {
   const tenant = principal.tenant;
   await store.update(id, { status: "running" });
   const session = await providers.sandbox.startSession();
+  // resolve this run's toolset through the gateway (built-in + MCP servers,
+  // per-tenant policy, broker creds injected; ADR-0011)
+  const toolset = await toolProvider.resolve({ principal, session });
   try {
     const result = await runOnSession({
       inference: providers.inference,
@@ -50,9 +51,7 @@ async function processRun(id: string): Promise<void> {
       telemetry: providers.telemetry,
       session,
       task: existing.task,
-      // workspace + an authenticated outbound tool scoped to this run's principal
-      // (creds applied server-side by the broker; ADR-0010)
-      tools: (s) => [...workspaceTools(s), httpRequestTool(credentials, principal)],
+      tools: () => toolset.tools,
       onProgress: (messages) => {
         store.update(id, { messages }).catch(() => {}); // durable per-turn state
       },
@@ -63,6 +62,7 @@ async function processRun(id: string): Promise<void> {
   } catch (e: any) {
     await store.update(id, { status: "failed", error: e?.message ?? String(e) });
   } finally {
+    await toolset.close().catch(() => {});
     await session.close().catch(() => {});
   }
 }

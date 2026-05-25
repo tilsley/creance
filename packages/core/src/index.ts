@@ -8,6 +8,7 @@ export * from "./ports";
 export * from "./loop";
 export * from "./config";
 export * from "./tools";
+export * from "./tool-gateway"; // #4: assemble per-run toolset from sources
 export * from "./runs"; // State primitive (remember): persisted runs
 export * from "./gate"; // gate control: identity + budget
 export * from "./credentials"; // gate control: downstream credential broker
@@ -26,6 +27,8 @@ export * from "./adapters/local-gate";
 export * from "./adapters/noop-gate";
 export * from "./adapters/local-credential-broker";
 export * from "./adapters/noop-credential-broker";
+// tools (#4): MCP gateway
+export * from "./adapters/mcp-tool-provider";
 // record
 export * from "./adapters/console-telemetry";
 export * from "./adapters/otel-telemetry";

@@ -48,6 +48,18 @@ CRED_BROKER_CONFIG='{"teamA":{"github":{"scheme":"bearer","token":"...","baseUrl
 See [`examples/credential-broker`](../../examples/credential-broker) for a runnable
 demo that proves the secret never reaches the model.
 
+### Tool/MCP gateway — [ADR-0011](../../docs/decisions/0011-tool-mcp-gateway.md)
+Tools aren't hardcoded — each run's toolset is assembled by a `ToolProvider` from
+built-in tools **plus configured MCP servers**, namespaced (`server__tool`) and
+governed by a per-tenant allowlist. Add servers with `MCP_SERVERS`:
+```bash
+MCP_SERVERS='{"github":{"transport":"http","url":"https://api.githubcopilot.com/mcp/","tenants":["teamA"],"credentialTarget":"github"}}' \
+  bun run start
+```
+`credentialTarget` pulls a scoped token from the broker into the server (env for
+stdio, `Authorization` for HTTP). Hosted swap-in: AgentCore Gateway. See
+[`examples/mcp-gateway`](../../examples/mcp-gateway) for a runnable demo.
+
 ## Run
 ```bash
 # fully local (no AWS): needs ollama + a tool-capable model (see tracer-bullet README)

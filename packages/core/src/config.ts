@@ -17,6 +17,8 @@ import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
 import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
+import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
+import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -28,6 +30,7 @@ export interface Providers {
   telemetry: TelemetrySink;
   gate: Gate;
   credentials: CredentialBroker;
+  toolProvider: ToolProvider;
 }
 
 type Env = Record<string, string | undefined>;
@@ -86,5 +89,14 @@ export function providersFromEnv(env: Env = process.env): Providers {
   const credentials: CredentialBroker =
     (env.CRED_BROKER ?? "noop") === "local" ? new LocalCredentialBroker(env.CRED_BROKER_CONFIG) : new NoopCredentialBroker();
 
-  return { inference, sandbox, guard, telemetry, gate, credentials };
+  // tool gateway (ADR-0011): built-in tools always; MCP servers added when
+  // MCP_SERVERS is configured. The runtime resolves a per-run toolset through it.
+  const toolProvider: ToolProvider = (() => {
+    const providers: ToolProvider[] = [new BuiltinToolProvider(credentials)];
+    const mcpServers: McpServers = env.MCP_SERVERS ? JSON.parse(env.MCP_SERVERS) : {};
+    if (Object.keys(mcpServers).length) providers.push(new McpToolProvider(mcpServers, credentials));
+    return new CompositeToolProvider(providers);
+  })();
+
+  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider };
 }
