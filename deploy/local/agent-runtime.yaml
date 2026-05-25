@@ -1,0 +1,64 @@
+# agent-runtime on a local cluster (colima --kubernetes / k3s).
+# Same manifest applies on EKS — only swap imagePullPolicy: Never (local image)
+# for a real registry image, and the aws-creds Secret for EKS Pod Identity.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-os
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+  namespace: agent-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-runtime
+  template:
+    metadata:
+      labels:
+        app: agent-runtime
+    spec:
+      containers:
+        - name: agent-runtime
+          image: agent-runtime:dev
+          imagePullPolicy: Never # local image imported into the cluster (not a registry)
+          ports:
+            - containerPort: 3000
+          env:
+            - name: REGION
+              value: eu-west-2
+            # INFERENCE_PROVIDER / SANDBOX_PROVIDER default to bedrock / agentcore
+          envFrom:
+            - secretRef:
+                name: aws-creds # local only — EKS would use Pod Identity instead
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+  namespace: agent-os
+spec:
+  selector:
+    app: agent-runtime
+  ports:
+    - port: 80
+      targetPort: 3000

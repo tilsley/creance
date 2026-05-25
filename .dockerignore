@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+.git
+**/cdk.out
+**/.cdk.staging
+**/*.output
+*.log
+.env
+.env.*
