@@ -2,7 +2,7 @@
   "name": "@agent-os/infra",
   "version": "0.0.0",
   "private": true,
-  "description": "AWS CDK infrastructure for agent-os (SKELETON — stacks are shells)",
+  "description": "AWS CDK infrastructure for agent-os (StateStack + BedrockStack implemented; VPC/EKS/DataLog still skeleton)",
   "bin": {
     "agent-os": "bin/agent-os.ts"
   },

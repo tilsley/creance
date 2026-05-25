@@ -11,18 +11,23 @@ import { CoreVpcStack } from "../lib/core-vpc-stack";
 import { EksClusterStack } from "../lib/eks-cluster-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { DataLogStack } from "../lib/data-log-stack";
+import { StateStack } from "../lib/state-stack";
 
 const app = new cdk.App();
 
 // TODO: derive from context/env per environment (dev/staging/prod).
 const env: cdk.Environment = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
-  region: process.env.CDK_DEFAULT_REGION ?? "us-east-1",
+  region: process.env.CDK_DEFAULT_REGION ?? "eu-west-2", // matches the rest of agent-os
 };
 
+// IMPLEMENTED — deployable now (cheap, no EKS): the remember store + guard/inference.
+new StateStack(app, "AgentOsState", { env });
+new BedrockStack(app, "AgentOsBedrock", { env });
+
+// SKELETON — day-0 EKS control plane, not yet implemented.
 const vpc = new CoreVpcStack(app, "AgentOsCoreVpc", { env });
 const cluster = new EksClusterStack(app, "AgentOsEksCluster", { env });
-new BedrockStack(app, "AgentOsBedrock", { env });
 new DataLogStack(app, "AgentOsDataLog", { env });
 
 // Suppress unused-var noise while these are shells.

@@ -1,21 +1,58 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
+import * as bedrock from "aws-cdk-lib/aws-bedrock";
+import * as iam from "aws-cdk-lib/aws-iam";
 
 /**
- * BedrockStack — inference access (the brain).
+ * BedrockStack — inference access (the brain) + the `guard` control.
  *
- * SKELETON — intended contents:
- *  - Scoped IAM policy for the inference-gateway service:
- *      bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream,
- *      bedrock:ListFoundationModels — scoped to specific model ARNs (not "*").
- *  - Bound to the gateway's ServiceAccount via EKS Pod Identity.
- *
- * NOTE: provider is pluggable — Bedrock OR the Anthropic API directly. Prefer
- * NATIVE provider prompt caching over a bespoke semantic cache in ElastiCache.
+ *  - A Bedrock **Guardrail** (content filters incl. prompt-attack) — the `guard`
+ *    control's policy as IaC. Replaces the ad-hoc `agent-os-poc-demo` guardrail
+ *    that was created outside CDK; delete that one once this is deployed.
+ *  - A scoped **inference** policy: InvokeModel on specific models/profiles only
+ *    (not "*") + ApplyGuardrail on the guardrail. Binds to the runtime's
+ *    ServiceAccount via EKS Pod Identity (prod).
  */
 export class BedrockStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
-    // TODO: implement during the infra milestone.
+
+    const guardrail = new bedrock.CfnGuardrail(this, "Guardrail", {
+      name: "agent-os-poc",
+      description: "agent-os content safety: filters incl. prompt attack, PII off for POC",
+      blockedInputMessaging: "Blocked by the agent-os guardrail.",
+      blockedOutputsMessaging: "Blocked by the agent-os guardrail.",
+      contentPolicyConfig: {
+        filtersConfig: [
+          { type: "PROMPT_ATTACK", inputStrength: "HIGH", outputStrength: "NONE" }, // input-only
+          { type: "HATE", inputStrength: "MEDIUM", outputStrength: "MEDIUM" },
+          { type: "INSULTS", inputStrength: "MEDIUM", outputStrength: "MEDIUM" },
+          { type: "SEXUAL", inputStrength: "HIGH", outputStrength: "HIGH" },
+          { type: "VIOLENCE", inputStrength: "MEDIUM", outputStrength: "MEDIUM" },
+          { type: "MISCONDUCT", inputStrength: "MEDIUM", outputStrength: "MEDIUM" },
+        ],
+      },
+    });
+
+    const inferencePolicy = new iam.ManagedPolicy(this, "BedrockInvokePolicy", {
+      managedPolicyName: "agent-os-bedrock-invoke",
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+          resources: [
+            `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-lite-v1:0`,
+            `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-pro-v1:0`,
+            `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/*`,
+          ],
+        }),
+        new iam.PolicyStatement({
+          actions: ["bedrock:ApplyGuardrail"],
+          resources: [guardrail.attrGuardrailArn],
+        }),
+      ],
+    });
+
+    new cdk.CfnOutput(this, "GuardrailId", { value: guardrail.attrGuardrailId });
+    new cdk.CfnOutput(this, "BedrockInvokePolicyArn", { value: inferencePolicy.managedPolicyArn });
   }
 }

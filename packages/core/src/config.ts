@@ -19,6 +19,8 @@ import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
 import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
 import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
+import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
+import { InMemoryRunStore, type RunStore } from "./runs";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -31,6 +33,7 @@ export interface Providers {
   gate: Gate;
   credentials: CredentialBroker;
   toolProvider: ToolProvider;
+  runStore: RunStore;
 }
 
 type Env = Record<string, string | undefined>;
@@ -98,5 +101,12 @@ export function providersFromEnv(env: Env = process.env): Providers {
     return new CompositeToolProvider(providers);
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider };
+  // remember (State primitive): durable run store. In-memory for dev; DynamoDB
+  // (a real AWS resource) for restart-survival. RUNS_TABLE_ENDPOINT → DynamoDB Local.
+  const runStore: RunStore =
+    (env.RUN_STORE ?? "memory") === "dynamodb"
+      ? new DynamoDBRunStore(env.RUNS_TABLE ?? "agent-os-runs", region, env.RUNS_TABLE_ENDPOINT)
+      : new InMemoryRunStore();
+
+  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore };
 }

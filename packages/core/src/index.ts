@@ -29,6 +29,8 @@ export * from "./adapters/local-credential-broker";
 export * from "./adapters/noop-credential-broker";
 // tools (#4): MCP gateway
 export * from "./adapters/mcp-tool-provider";
+// remember: durable run store
+export * from "./adapters/dynamodb-run-store";
 // record
 export * from "./adapters/console-telemetry";
 export * from "./adapters/otel-telemetry";

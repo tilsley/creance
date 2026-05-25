@@ -20,14 +20,11 @@ import {
   providersFromEnv,
   estimateCostUsd,
   UnauthorizedError,
-  InMemoryRunStore,
   type Run,
-  type RunStore,
 } from "@agent-os/core";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
-const { gate, toolProvider } = providers;
-const store: RunStore = new InMemoryRunStore();
+const { gate, toolProvider, runStore: store } = providers;
 const port = Number(process.env.PORT ?? 3000);
 
 const bearer = (req: Request): string | undefined =>
