@@ -63,16 +63,19 @@ install/build (mirrors janey-ops' `WorkspacePort`).
 - **Status:** workspace implemented + validated (local incl. real git clone, $0;
   AgentCore runCmd + file roundtrip, live). See [ADR-0006](decisions/0006-agentcore-execution-environment.md), [isolation.md](isolation.md).
 
-### 3. State / Memory — *remember*  · port `StateStore` · **DEFERRED (POC)**
+### 3. State / Memory — *remember*  · port `RunStore` (→ `StateStore`)
 Durable, possibly shared state across runs and across agents — long-term memory.
 - **Why a primitive:** can't be built on the others. Not inference (stateless),
   not sandbox (ephemeral by design), not a control. It needs its own backing store.
-- **Backing (future):** AgentCore Memory, or a datastore — DynamoDB/Postgres/Redis
-  for queryable state, S3 for artifacts. "Shared" adds concurrency → favors a
-  transactional DB over a blob store.
-- **Not this primitive:** intra-session sandbox state (→ #2) and the loop's
-  working/conversation state (→ L1).
-- **Status:** deferred for the POC; real for production.
+- **First use — run state (`RunStore`):** the L1 runtime persists each run
+  (status + conversation) here, per turn. That's what makes runs **async**
+  (submit → poll) and **durable** (inspectable mid-flight; recoverable with a
+  persistent adapter). See [`core/runs`](../packages/core/src/runs.ts).
+- **Backing:** in-memory today (dev); DynamoDB / AgentCore Memory next — swappable
+  behind the port. S3 for artifacts; a transactional DB once state is *shared*.
+- **Next use — cross-run memory:** the same primitive, holding learnings/results
+  across runs and agents (the original "remember" vision).
+- **Status:** realized for run state; cross-run memory still ahead.
 
 ---
 

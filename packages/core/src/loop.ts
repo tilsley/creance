@@ -35,6 +35,9 @@ export interface RunOnSessionOpts {
   systemPrompt?: string;
   tools?: (session: SandboxSession) => AgentTool[];
   maxSteps?: number;
+  /** Called after each turn with the conversation so far — the runtime persists
+   *  it to the RunStore, making run state durable + inspectable mid-flight. */
+  onProgress?: (messages: Message[]) => void | Promise<void>;
 }
 
 export interface RunOpts extends Omit<RunOnSessionOpts, "session"> {
@@ -81,6 +84,7 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
         },
       );
       messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls });
+      await opts.onProgress?.(messages);
       if (turn.text) console.log(`🧠 ${turn.text}`);
 
       if (turn.toolCalls.length === 0) {
