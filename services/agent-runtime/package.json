@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/agent-runtime",
+  "private": true,
+  "type": "module",
+  "description": "L1 agent runtime as an HTTP service — POST /runs, built on @agent-os/core",
+  "scripts": {
+    "start": "bun run server.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

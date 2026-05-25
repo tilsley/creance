@@ -39,8 +39,16 @@
         "@opentelemetry/sdk-trace-node": "2.7.1",
       },
     },
+    "services/agent-runtime": {
+      "name": "@agent-os/agent-runtime",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
   },
   "packages": {
+    "@agent-os/agent-runtime": ["@agent-os/agent-runtime@workspace:services/agent-runtime"],
+
     "@agent-os/core": ["@agent-os/core@workspace:packages/core"],
 
     "@agent-os/infra": ["@agent-os/infra@workspace:infra"],

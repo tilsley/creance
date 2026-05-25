@@ -2,6 +2,9 @@
  * The L1 agent loop — depends ONLY on the ports (ADR-0003). It has no idea
  * whether `think` is Bedrock or Ollama, `do` is AgentCore or local, `guard` is
  * Bedrock Guardrails or a no-op, or where `record` sends its spans.
+ *
+ * Returns a structured RunResult (so a service can respond) while still logging
+ * the trace to the console (handy for CLI + server logs).
  */
 import type {
   InferenceProvider,
@@ -35,12 +38,18 @@ export interface RunOpts {
   maxSteps?: number;
 }
 
-export async function runAgent({ inference, sandbox, guard, telemetry, task, maxSteps = 8 }: RunOpts): Promise<void> {
+export interface RunResult {
+  runId: string;
+  status: "completed" | "blocked" | "max_steps";
+  output?: string;
+}
+
+export async function runAgent({ inference, sandbox, guard, telemetry, task, maxSteps = 8 }: RunOpts): Promise<RunResult> {
   const runId = crypto.randomUUID();
   console.log(`▶ inference=${inference.name}  sandbox=${sandbox.name}  guard=${guard.name}  record=${telemetry.name}`);
   console.log(`▶ task: ${task}\n`);
 
-  await telemetry.run({ "run.id": runId, "agent.task": task }, async () => {
+  return telemetry.run({ "run.id": runId, "agent.task": task }, async (): Promise<RunResult> => {
     // guard: screen the input before it reaches the model
     const inputCheck = await telemetry.step("guard.screen", { "guard.direction": "input" }, async (span) => {
       const v = await guard.screen(task, "input");
@@ -49,7 +58,7 @@ export async function runAgent({ inference, sandbox, guard, telemetry, task, max
     });
     if (inputCheck.blocked) {
       console.log("🛡 guard blocked the input — aborting");
-      return;
+      return { runId, status: "blocked" };
     }
 
     const session = await telemetry.step("sandbox.start", {}, () => sandbox.startSession());
@@ -77,7 +86,7 @@ export async function runAgent({ inference, sandbox, guard, telemetry, task, max
 
         if (turn.toolCalls.length === 0) {
           console.log("\n✅ done");
-          return;
+          return { runId, status: "completed", output: turn.text };
         }
 
         const results: ToolResult[] = [];
@@ -107,6 +116,7 @@ export async function runAgent({ inference, sandbox, guard, telemetry, task, max
         messages.push({ role: "tool", results });
       }
       console.log("\n⚠ hit step limit");
+      return { runId, status: "max_steps" };
     } finally {
       await telemetry.step("sandbox.stop", {}, () => session.close());
       console.log(`✓ session stopped: ${session.id}`);
