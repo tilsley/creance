@@ -24,7 +24,7 @@ spec:
       containers:
         - name: agent-runtime
           image: agent-runtime:dev
-          imagePullPolicy: Never # local image imported into the cluster (not a registry)
+          imagePullPolicy: Never # local image in docker (k3s uses docker runtime); not a registry
           ports:
             - containerPort: 3000
           env:

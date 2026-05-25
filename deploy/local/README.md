@@ -10,12 +10,16 @@ colima start --kubernetes --cpu 2 --memory 4 --disk 20
 kubectl get nodes
 ```
 
-## 2. Build the image + load it into k3s
-k3s uses containerd, so a docker-built image must be imported (no registry):
+## 2. Build the image
+colima wires k3s to the **docker** runtime (`kubectl get nodes -o wide` shows
+`CONTAINER-RUNTIME: docker://…`), so an image built with `docker build` is already
+visible to k3s — **no import, no sudo** (the Deployment uses
+`imagePullPolicy: Never` so it won't reach for a registry):
 ```bash
 docker build -t agent-runtime:dev -f services/agent-runtime/Dockerfile .
-docker save agent-runtime:dev | colima ssh -- sudo k3s ctr -n k8s.io images import -
 ```
+> On a containerd-runtime cluster (e.g. EKS, or `colima --runtime containerd`)
+> you'd push to a registry / `ctr images import` instead.
 
 ## 3. AWS creds (local only)
 The pod calls Bedrock + AgentCore, so give it creds via a Secret. (On EKS this is
