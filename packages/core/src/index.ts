@@ -10,6 +10,7 @@ export * from "./config";
 export * from "./tools";
 export * from "./runs"; // State primitive (remember): persisted runs
 export * from "./gate"; // gate control: identity + budget
+export * from "./credentials"; // gate control: downstream credential broker
 
 // think
 export * from "./adapters/bedrock-inference";
@@ -23,6 +24,8 @@ export * from "./adapters/noop-guard";
 // gate
 export * from "./adapters/local-gate";
 export * from "./adapters/noop-gate";
+export * from "./adapters/local-credential-broker";
+export * from "./adapters/noop-credential-broker";
 // record
 export * from "./adapters/console-telemetry";
 export * from "./adapters/otel-telemetry";

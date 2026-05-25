@@ -35,6 +35,19 @@ curl -s -X POST localhost:3000/runs -H 'authorization: Bearer tok-a' \
 same port: AgentCore Identity / Auth0 Token Vault (human×agent token + downstream
 creds), an AI gateway / Bedrock inference profiles + AWS Budgets (spend).
 
+### Credential broker — [ADR-0010](../../docs/decisions/0010-credential-broker.md)
+Runs get an `http_request` tool for **authenticated** outbound calls. The model
+names a `target`; the `CredentialBroker` attaches that principal's scoped credential
+**server-side — the secret never enters the model's context**. Default is deny-all;
+grant per tenant with `CRED_BROKER=local`:
+```bash
+CRED_BROKER=local \
+CRED_BROKER_CONFIG='{"teamA":{"github":{"scheme":"bearer","token":"...","baseUrl":"https://api.github.com","ttlSeconds":300}}}' \
+  bun run start
+```
+See [`examples/credential-broker`](../../examples/credential-broker) for a runnable
+demo that proves the secret never reaches the model.
+
 ## Run
 ```bash
 # fully local (no AWS): needs ollama + a tool-capable model (see tracer-bullet README)

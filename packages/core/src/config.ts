@@ -15,8 +15,11 @@ import { ConsoleTelemetrySink } from "./adapters/console-telemetry";
 import { OtelTelemetrySink } from "./adapters/otel-telemetry";
 import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
+import { LocalCredentialBroker } from "./adapters/local-credential-broker";
+import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate } from "./gate";
+import type { CredentialBroker } from "./credentials";
 
 export interface Providers {
   inference: InferenceProvider;
@@ -24,6 +27,7 @@ export interface Providers {
   guard: ContentGuard;
   telemetry: TelemetrySink;
   gate: Gate;
+  credentials: CredentialBroker;
 }
 
 type Env = Record<string, string | undefined>;
@@ -77,5 +81,10 @@ export function providersFromEnv(env: Env = process.env): Providers {
   const gate: Gate =
     (env.GATE ?? "noop") === "local" ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD) : new NoopGate();
 
-  return { inference, sandbox, guard, telemetry, gate };
+  // credential broker defaults to deny-all (noop); authenticated tools are inert
+  // until CRED_BROKER=local grants downstream targets per tenant (ADR-0010).
+  const credentials: CredentialBroker =
+    (env.CRED_BROKER ?? "noop") === "local" ? new LocalCredentialBroker(env.CRED_BROKER_CONFIG) : new NoopCredentialBroker();
+
+  return { inference, sandbox, guard, telemetry, gate, credentials };
 }

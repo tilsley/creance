@@ -92,13 +92,17 @@ agent that executes it (see [ADR-0009](decisions/0009-gate-identity-and-governan
   `Principal {tenant, subject}`, attaches it to the `Run`, and enforces a
   per-tenant budget costed from token usage. `LocalGate` adapter (dev) →
   `NoopGate` (default open).
+- **Downstream creds (`CredentialBroker`):** mints scoped, short-lived creds for a
+  run's `Principal` to call external systems — applied by tools **server-side, so
+  the model never sees the secret** ([ADR-0010](decisions/0010-credential-broker.md)).
+  `LocalCredentialBroker` (env grants, dev) → `NoopCredentialBroker` (default deny).
 - **Backing / swap-ins:** EKS Pod Identity + STS + IAM (Crossplane) for
   AWS-downstream creds; AgentCore Identity / Auth0 Token Vault for the human×agent
   token + third-party OAuth ([ADR-0007](decisions/0007-tools-and-external-auth.md));
   an AI gateway / Bedrock inference profiles + AWS Budgets for spend
   ([ADR-0004](decisions/0004-cost-governance.md)); Cedar/OPA for policy.
-- **Component:** `iam-authorizer`. Still ahead: real credential brokering, a
-  policy engine, mid-run budget hard-stop.
+- **Component:** `iam-authorizer`. Still ahead: real (minted) credentials + OAuth,
+  a policy engine, mid-run budget hard-stop.
 
 ### 5. Observability — *record*  · port `TelemetrySink`
 Structural tracking of non-deterministic agent loops.

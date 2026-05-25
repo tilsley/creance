@@ -19,6 +19,7 @@ import {
   runOnSession,
   providersFromEnv,
   workspaceTools,
+  httpRequestTool,
   estimateCostUsd,
   UnauthorizedError,
   InMemoryRunStore,
@@ -27,7 +28,7 @@ import {
 } from "@agent-os/core";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
-const { gate } = providers;
+const { gate, credentials } = providers;
 const store: RunStore = new InMemoryRunStore();
 const port = Number(process.env.PORT ?? 3000);
 
@@ -38,7 +39,8 @@ const bearer = (req: Request): string | undefined =>
 async function processRun(id: string): Promise<void> {
   const existing = await store.get(id);
   if (!existing) return;
-  const tenant = existing.principal?.tenant ?? "default";
+  const principal = existing.principal ?? { tenant: "default", subject: "anonymous" };
+  const tenant = principal.tenant;
   await store.update(id, { status: "running" });
   const session = await providers.sandbox.startSession();
   try {
@@ -48,7 +50,9 @@ async function processRun(id: string): Promise<void> {
       telemetry: providers.telemetry,
       session,
       task: existing.task,
-      tools: workspaceTools,
+      // workspace + an authenticated outbound tool scoped to this run's principal
+      // (creds applied server-side by the broker; ADR-0010)
+      tools: (s) => [...workspaceTools(s), httpRequestTool(credentials, principal)],
       onProgress: (messages) => {
         store.update(id, { messages }).catch(() => {}); // durable per-turn state
       },

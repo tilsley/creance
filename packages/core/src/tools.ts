@@ -4,10 +4,65 @@
  * to the model, which is what lets an agent investigate and edit a repo.
  */
 import type { SandboxSession, ToolDef } from "./ports";
+import type { CredentialBroker } from "./credentials";
+import type { Principal } from "./gate";
 
 export interface AgentTool {
   spec: ToolDef;
   run(input: Record<string, unknown>): Promise<string>;
+}
+
+/**
+ * An authenticated outbound HTTP tool (ADR-0010). The model names a `target`; the
+ * platform asks the CredentialBroker for that principal's scoped credential and
+ * applies it server-side. The model never sees the secret, and can only reach
+ * targets the broker grants (default deny) at the allowlisted baseUrl.
+ */
+export function httpRequestTool(broker: CredentialBroker, principal: Principal): AgentTool {
+  return {
+    spec: {
+      name: "http_request",
+      description:
+        "Make an authenticated HTTP request to an allowlisted external target. " +
+        "Credentials are attached by the platform — you never see, provide, or need them. " +
+        "Args: target (e.g. 'github'), path (e.g. '/user'), method (default GET), body (optional).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          target: { type: "string", description: "The granted downstream system, e.g. 'github'." },
+          path: { type: "string", description: "Path appended to the target's base URL." },
+          method: { type: "string", description: "HTTP method (default GET)." },
+          body: { type: "string", description: "Request body, for POST/PUT/PATCH." },
+        },
+        required: ["target", "path"],
+      },
+    },
+    run: async (i) => {
+      const target = String(i.target ?? "");
+      const cred = await broker.issue(principal, target);
+      if (!cred) return `error: no access to target '${target}' for tenant '${principal.tenant}'`;
+      if (!cred.baseUrl) return `error: target '${target}' has no endpoint configured`;
+      if (cred.expiresAt && Date.parse(cred.expiresAt) < Date.now()) return `error: credential for '${target}' expired`;
+
+      const url = cred.baseUrl.replace(/\/$/, "") + "/" + String(i.path ?? "").replace(/^\//, "");
+      const headers: Record<string, string> = { accept: "application/json" };
+      if (cred.scheme === "bearer") headers.authorization = `Bearer ${cred.token}`;
+      else headers[cred.header ?? "x-api-key"] = cred.token; // secret stays server-side
+
+      try {
+        const method = String(i.method ?? "GET").toUpperCase();
+        const res = await fetch(url, {
+          method,
+          headers,
+          body: i.body != null && method !== "GET" ? String(i.body) : undefined,
+        });
+        const text = await res.text();
+        return `HTTP ${res.status}\n${text.slice(0, 4000)}`; // body only — never the credential
+      } catch (e: any) {
+        return `error: request failed: ${e?.message ?? String(e)}`;
+      }
+    },
+  };
 }
 
 export function runCodeTool(session: SandboxSession): AgentTool {
