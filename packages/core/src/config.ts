@@ -21,6 +21,7 @@ import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
 import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
 import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
+import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -34,6 +35,7 @@ export interface Providers {
   credentials: CredentialBroker;
   toolProvider: ToolProvider;
   runStore: RunStore;
+  agentRegistry: AgentRegistry;
 }
 
 type Env = Record<string, string | undefined>;
@@ -108,5 +110,11 @@ export function providersFromEnv(env: Env = process.env): Providers {
       ? new DynamoDBRunStore(env.RUNS_TABLE ?? "agent-os-runs", region, env.RUNS_TABLE_ENDPOINT)
       : new InMemoryRunStore();
 
-  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore };
+  // agent control plane (#5): the registry of agent definitions the runtime reads.
+  // memory (seeded from AGENTS_JSON) for dev; kube (Agent CRDs) wired in ADR-0012.
+  const agentRegistry: AgentRegistry = new InMemoryAgentRegistry(
+    env.AGENTS_JSON ? (JSON.parse(env.AGENTS_JSON) as AgentSpec[]) : [],
+  );
+
+  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore, agentRegistry };
 }

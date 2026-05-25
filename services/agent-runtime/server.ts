@@ -24,7 +24,7 @@ import {
 } from "@agent-os/core";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
-const { gate, toolProvider, runStore: store } = providers;
+const { gate, toolProvider, runStore: store, agentRegistry } = providers;
 const port = Number(process.env.PORT ?? 3000);
 
 const bearer = (req: Request): string | undefined =>
@@ -36,6 +36,8 @@ async function processRun(id: string): Promise<void> {
   if (!existing) return;
   const principal = existing.principal ?? { tenant: "default", subject: "anonymous" };
   const tenant = principal.tenant;
+  // agent control plane (#5): resolve the run's agent definition + apply it
+  const spec = existing.agent ? await agentRegistry.get(existing.agent) : undefined;
   await store.update(id, { status: "running" });
   const session = await providers.sandbox.startSession();
   // resolve this run's toolset through the gateway (built-in + MCP servers,
@@ -48,6 +50,8 @@ async function processRun(id: string): Promise<void> {
       telemetry: providers.telemetry,
       session,
       task: existing.task,
+      systemPrompt: spec?.systemPrompt,
+      maxSteps: spec?.maxSteps,
       tools: () => toolset.tools,
       onProgress: (messages) => {
         store.update(id, { messages }).catch(() => {}); // durable per-turn state
@@ -95,11 +99,20 @@ const server = Bun.serve({
       if (typeof task !== "string" || !task.trim()) {
         return Response.json({ error: "missing 'task' (string)" }, { status: 400 });
       }
+      // agent control plane (#5): if an agent is named, it must be registered
+      const agent = body?.agent;
+      if (agent != null && !(await agentRegistry.get(String(agent)))) {
+        return Response.json({ error: `unknown agent '${agent}'` }, { status: 404 });
+      }
       const now = new Date().toISOString();
-      const run: Run = { id: crypto.randomUUID(), status: "queued", task, principal, messages: [], createdAt: now, updatedAt: now };
+      const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, principal, messages: [], createdAt: now, updatedAt: now };
       await store.create(run);
       void processRun(run.id); // fire-and-forget worker (in-process for now)
-      return Response.json({ runId: run.id, status: run.status, tenant: principal.tenant }, { status: 202 });
+      return Response.json({ runId: run.id, status: run.status, agent, tenant: principal.tenant }, { status: 202 });
+    }
+
+    if (req.method === "GET" && url.pathname === "/agents") {
+      return Response.json(await agentRegistry.list());
     }
 
     const runMatch = url.pathname.match(/^\/runs\/([^/]+)$/);

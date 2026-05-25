@@ -16,6 +16,8 @@ export interface Run {
   id: string;
   status: RunStatus;
   task: string;
+  /** Which registered agent this run executes as (agent control plane, #5). */
+  agent?: string;
   /** Who the run acts as (gate, ADR-0009). Absent under the open NoopGate. */
   principal?: Principal;
   messages: Message[];

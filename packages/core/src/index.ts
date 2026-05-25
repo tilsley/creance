@@ -10,6 +10,7 @@ export * from "./config";
 export * from "./tools";
 export * from "./tool-gateway"; // #4: assemble per-run toolset from sources
 export * from "./runs"; // State primitive (remember): persisted runs
+export * from "./agents"; // #5: agent control plane — the registry data model
 export * from "./gate"; // gate control: identity + budget
 export * from "./credentials"; // gate control: downstream credential broker
 
