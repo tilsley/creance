@@ -1,0 +1,91 @@
+# The agent control plane's object model (#5, ADR-0012): the Agent CRD + example
+# Agent custom resources. `kubectl apply -f` this, then the runtime (AGENT_REGISTRY=
+# kube) resolves agents straight from these CRs. The agent-controller reconciles
+# them and sets .status.phase.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agents.agent-os.io
+spec:
+  group: agent-os.io
+  scope: Namespaced
+  names:
+    kind: Agent
+    plural: agents
+    singular: agent
+    shortNames: [ag]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                tenant: { type: string }
+                model: { type: string }
+                systemPrompt: { type: string }
+                tools: { type: array, items: { type: string } }
+                maxSteps: { type: integer }
+            status:
+              type: object
+              properties:
+                phase: { type: string } # Pending | Ready | Invalid (set by agent-controller)
+                message: { type: string }
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - { name: Tenant, type: string, jsonPath: .spec.tenant }
+        - { name: Model, type: string, jsonPath: .spec.model }
+        - { name: Phase, type: string, jsonPath: .status.phase }
+---
+# RBAC: let the agent-runtime ServiceAccount read Agent CRs (the runtime resolves
+# agents via the k8s API in-cluster, using its SA token).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-reader
+  namespace: agent-os
+rules:
+  - apiGroups: ["agent-os.io"]
+    resources: ["agents"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-runtime-reads-agents
+  namespace: agent-os
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: agent-os
+roleRef:
+  kind: Role
+  name: agent-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: agent-os.io/v1alpha1
+kind: Agent
+metadata:
+  name: math-helper
+  namespace: agent-os
+spec:
+  tenant: teamA
+  model: amazon.nova-pro-v1:0
+  systemPrompt: "You are a calculator. Reply with ONLY the number, nothing else."
+  maxSteps: 3
+---
+apiVersion: agent-os.io/v1alpha1
+kind: Agent
+metadata:
+  name: haiku-writer
+  namespace: agent-os
+spec:
+  tenant: teamB
+  model: amazon.nova-pro-v1:0
+  systemPrompt: "You are a poet. Reply with ONLY a haiku: three lines, nothing else."
+  maxSteps: 3

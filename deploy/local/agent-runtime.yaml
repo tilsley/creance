@@ -28,6 +28,10 @@ data:
   RUNS_TABLE: agent-os-runs
   TELEMETRY: console
   GATE: noop # set "local" + a GATE_TOKENS secret to require auth + budget
+  AGENT_REGISTRY: kube # resolve agents from Agent CRs (deploy/local/agents.yaml)
+  AGENTS_NAMESPACE: agent-os
+  # in-cluster: trust the cluster CA so the k8s client (Bun fetch) can call the API
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
   # GUARDRAIL_ID: "<AgentOsBedrock GuardrailId output>"  # set after deploying BedrockStack
 ---
 apiVersion: apps/v1

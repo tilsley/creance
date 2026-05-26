@@ -36,10 +36,13 @@ spec:
       default: { cpu: 250m, memory: 256Mi }
       defaultRequest: { cpu: 100m, memory: 128Mi }
 ---
-# Default-deny + scoped egress (DNS + HTTPS to AWS). The network side of containment.
-# NOTE: k3s' default flannel CNI does NOT enforce NetworkPolicy — install Calico (or
-# a policy-enforcing CNI) for it to bite; on EKS the VPC CNI + Calico enforce it.
-# Included here to learn the object; enforcement needs the right CNI.
+# Ingress containment (default-deny except :3000 from the namespace) + egress.
+# LESSON: k3s DOES enforce NetworkPolicy (built-in kube-router controller — plain
+# flannel wouldn't). A tight egress allowlist refused the pod's k8s API-server
+# connection: the API is reached via 10.43.0.1:443 but DNATs to the host on :6443,
+# and port-based egress doesn't reliably match that path under kube-router. Egress
+# to the API server is CNI-specific — properly done with Calico/Cilium policies on
+# EKS. So here we contain INGRESS and leave egress open (with the caveat documented).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -55,8 +58,4 @@ spec:
       ports:
         - { port: 3000, protocol: TCP }
   egress:
-    - ports: # DNS
-        - { port: 53, protocol: UDP }
-        - { port: 53, protocol: TCP }
-    - ports: # HTTPS — Bedrock / AgentCore / DynamoDB
-        - { port: 443, protocol: TCP }
+    - {} # allow all egress (see lesson above — fine-grained egress is CNI-specific)

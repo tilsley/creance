@@ -22,6 +22,7 @@ import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from ".
 import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
 import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
+import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -111,10 +112,17 @@ export function providersFromEnv(env: Env = process.env): Providers {
       : new InMemoryRunStore();
 
   // agent control plane (#5): the registry of agent definitions the runtime reads.
-  // memory (seeded from AGENTS_JSON) for dev; kube (Agent CRDs) wired in ADR-0012.
-  const agentRegistry: AgentRegistry = new InMemoryAgentRegistry(
-    env.AGENTS_JSON ? (JSON.parse(env.AGENTS_JSON) as AgentSpec[]) : [],
-  );
+  // memory (seeded from AGENTS_JSON) for dev; kube reads Agent CRs (ADR-0012).
+  const agentRegistry: AgentRegistry = (() => {
+    switch (env.AGENT_REGISTRY ?? "memory") {
+      case "memory":
+        return new InMemoryAgentRegistry(env.AGENTS_JSON ? (JSON.parse(env.AGENTS_JSON) as AgentSpec[]) : []);
+      case "kube":
+        return new KubeAgentRegistry(env.AGENTS_NAMESPACE ?? "agent-os");
+      default:
+        throw new Error(`unknown AGENT_REGISTRY: ${env.AGENT_REGISTRY}`);
+    }
+  })();
 
   return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore, agentRegistry };
 }

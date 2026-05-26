@@ -32,6 +32,8 @@ export * from "./adapters/noop-credential-broker";
 export * from "./adapters/mcp-tool-provider";
 // remember: durable run store
 export * from "./adapters/dynamodb-run-store";
+// #5: agent control plane — CRD-backed registry
+export * from "./adapters/kube-agent-registry";
 // record
 export * from "./adapters/console-telemetry";
 export * from "./adapters/otel-telemetry";
