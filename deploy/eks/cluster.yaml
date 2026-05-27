@@ -1,0 +1,59 @@
+# Ephemeral EKS field trip (the "secure + scales" capstone). Reproducible IaC:
+#   eksctl create cluster -f deploy/eks/cluster.yaml --profile nathan-tilsley-developer
+#   eksctl delete  cluster -f deploy/eks/cluster.yaml --profile nathan-tilsley-developer
+#
+# The point: KEYLESS identity via Pod Identity (no aws-creds Secret, nothing to
+# expire) — the podIdentityAssociation below binds the agent-os/agent-runtime
+# ServiceAccount to a scoped IAM role. Version omitted on purpose: eksctl picks a
+# current, standard-support k8s version (avoids extended-support pricing).
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: agent-os
+  region: eu-west-2
+
+# Pod Identity: the agent-runtime SA -> a scoped role. Replaces the aws-creds Secret.
+iam:
+  podIdentityAssociations:
+    - namespace: agent-os
+      serviceAccountName: agent-runtime
+      roleName: agent-os-eks-runtime
+      permissionPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Inference
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:ApplyGuardrail
+            Resource: "*"
+          - Sid: Sandbox
+            Effect: Allow
+            Action: ["bedrock-agentcore:*"]
+            Resource: "*"
+          - Sid: RunStore
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+            Resource:
+              - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-runs
+              - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-runs/index/*
+
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: eks-pod-identity-agent # required for Pod Identity
+
+managedNodeGroups:
+  - name: ng-1
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 1
+    maxSize: 4 # headroom for the Karpenter/HPA scale demo
+    volumeSize: 20

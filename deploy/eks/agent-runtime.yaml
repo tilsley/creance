@@ -1,0 +1,81 @@
+# agent-runtime on EKS — KEYLESS. The whole point of the field trip:
+# NO aws-creds Secret. The agent-runtime ServiceAccount is bound to the
+# agent-os-eks-runtime IAM role by the podIdentityAssociation in cluster.yaml;
+# the eks-pod-identity-agent injects fresh, auto-rotating creds into the pod.
+# (Image is in ECR — EKS uses containerd, can't see the local docker image.)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-os
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runtime # <- bound to the IAM role by Pod Identity (no annotation needed)
+  namespace: agent-os
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-runtime-config
+  namespace: agent-os
+data:
+  REGION: eu-west-2
+  INFERENCE_PROVIDER: bedrock
+  MODEL_ID: amazon.nova-pro-v1:0
+  SANDBOX_PROVIDER: agentcore # real microVM isolation, accessed keylessly
+  RUN_STORE: dynamodb # the StateStack table, accessed keylessly
+  RUNS_TABLE: agent-os-runs
+  TELEMETRY: console
+  GATE: noop # field trip focuses on keyless AWS, not app auth
+  AGENT_REGISTRY: memory # skip CRDs here — minimal surface for the keyless proof
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+  namespace: agent-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-runtime }
+  template:
+    metadata:
+      labels: { app: agent-runtime }
+    spec:
+      serviceAccountName: agent-runtime # keyless creds via Pod Identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent-runtime
+          image: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/agent-runtime:dev
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: agent-runtime-config } # NO secretRef — that's the point
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+  namespace: agent-os
+spec:
+  selector: { app: agent-runtime }
+  ports:
+    - { port: 80, targetPort: 3000 }
