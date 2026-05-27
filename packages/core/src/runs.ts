@@ -37,6 +37,8 @@ export interface RunStore {
   update(id: string, patch: Partial<Run>): Promise<Run>;
   /** For startup reconciliation (e.g. re-queue/abandon interrupted runs). */
   listByStatus(status: RunStatus): Promise<Run[]>;
+  /** Recent runs, newest first — for the dashboard / observability. */
+  list(limit?: number): Promise<Run[]>;
 }
 
 export class InMemoryRunStore implements RunStore {
@@ -61,5 +63,11 @@ export class InMemoryRunStore implements RunStore {
 
   async listByStatus(status: RunStatus): Promise<Run[]> {
     return [...this.runs.values()].filter((r) => r.status === status);
+  }
+
+  async list(limit = 100): Promise<Run[]> {
+    return [...this.runs.values()]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
   }
 }

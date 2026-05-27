@@ -93,6 +93,18 @@ these change when you move to EKS:
 **Implication:** reserve EKS for a one-off *field trip* to see **Pod Identity** +
 **Karpenter** in the flesh; everything else is learnable locally against real AWS.
 
+### Field-trip result (verified, then torn down)
+Ran an ephemeral eksctl cluster ([deploy/eks](../deploy/eks)) and proved the one
+EKS-only thing — **keyless Pod Identity**: the `agent-runtime` pod had **no
+`aws-creds` Secret and no `AWS_ACCESS_KEY_ID`** (creds came from
+`AWS_CONTAINER_CREDENTIALS_FULL_URI`, auto-rotating), yet a run completed via
+Bedrock + AgentCore + DynamoDB — ending the expiring-creds treadmill. **Karpenter
+turned out unnecessary:** the spiky/bursty scaling concern is *untrusted execution*,
+and **AgentCore already auto-scales that** (a microVM per session, zero idle) — so
+there's no sandbox node-fleet for Karpenter to manage; it would only scale the
+*trusted* platform pods (steady-state, a managed nodegroup suffices). The genuinely
+hard scaling problem is solved by ADR-0006, not deferred to Karpenter.
+
 ## Minimal stand-up checklist
 
 **Local-now (≈$0 idle):** colima + k3s · Bedrock model access enabled · an IAM role

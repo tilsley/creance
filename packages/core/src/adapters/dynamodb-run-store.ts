@@ -14,6 +14,7 @@ import {
   PutCommand,
   UpdateCommand,
   QueryCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { Run, RunStatus, RunStore } from "../runs";
 
@@ -74,5 +75,12 @@ export class DynamoDBRunStore implements RunStore {
       }),
     );
     return (r.Items ?? []) as Run[];
+  }
+
+  // POC: a Scan is fine for a small table. At scale, add a GSI on a constant PK
+  // + createdAt sort key (or stream to a query store) for ordered listing.
+  async list(limit = 100): Promise<Run[]> {
+    const r = await this.doc.send(new ScanCommand({ TableName: this.table, Limit: limit }));
+    return ((r.Items ?? []) as Run[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 }
