@@ -1,0 +1,57 @@
+# Composition — expands one TenantInferenceProfile claim into the underlying AWS
+# resource(s). v2 Compositions are function pipelines (no inline resources); this
+# uses function-patch-and-transform. Today it composes one InferenceProfile; you'd
+# add a scoped IAM policy + an AWS Budget here to make the claim a full per-tenant
+# bundle (the "self-service, no code per team" promise).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: tenantinferenceprofile
+spec:
+  compositeTypeRef:
+    apiVersion: platform.agent-os.io/v1alpha1
+    kind: TenantInferenceProfile
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: profile
+            base:
+              apiVersion: bedrock.aws.upbound.io/v1beta1
+              kind: InferenceProfile
+              spec:
+                forProvider:
+                  region: eu-west-2
+                  description: Provisioned by Crossplane for agent-os
+                  modelSource:
+                    - copyFrom: placeholder
+                  tags:
+                    managedBy: agent-os
+            patches:
+              # profile name = agentos-<tenant>
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.name
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s" }
+              # cost-attribution tag
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.tags.team
+              # copyFrom = foundation-model ARN built from baseModel
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.baseModel
+                toFieldPath: spec.forProvider.modelSource[0].copyFrom
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "arn:aws:bedrock:eu-west-2::foundation-model/%s" }
+              # surface the AWS-assigned profile id back on the claim
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.id
+                toFieldPath: status.profileId

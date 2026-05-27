@@ -1,0 +1,36 @@
+# XRD — the platform API. Defines a simple, opinionated resource type
+# `TenantInferenceProfile` that a team can claim with just {tenant, baseModel};
+# the Composition expands it into the real AWS resources. This is the self-service
+# layer of Crossplane (ADR-0005) — Crossplane v2 (apiextensions.crossplane.io/v2).
+#
+# scope: Cluster so it composes the cluster-scoped InferenceProfile MR with the
+# existing `default` ProviderConfig. (Namespaced — a per-team namespace — is the v2
+# ideal but needs a namespaced/Cluster ProviderConfig for the .m. MRs.)
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: tenantinferenceprofiles.platform.agent-os.io
+spec:
+  scope: Cluster
+  group: platform.agent-os.io
+  names:
+    kind: TenantInferenceProfile
+    plural: tenantinferenceprofiles
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                tenant: { type: string }
+                baseModel: { type: string, default: amazon.nova-lite-v1:0 }
+              required: [tenant]
+            status:
+              type: object
+              properties:
+                profileId: { type: string }

@@ -1,0 +1,9 @@
+# A claim against the platform API — what a team actually writes. One line of
+# intent ("teamA wants an inference profile"); Crossplane composes the rest.
+apiVersion: platform.agent-os.io/v1alpha1
+kind: TenantInferenceProfile
+metadata:
+  name: teama
+spec:
+  tenant: teama
+  baseModel: amazon.nova-lite-v1:0
