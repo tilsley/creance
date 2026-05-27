@@ -41,7 +41,15 @@ kubectl -n agent-os create secret generic aws-creds \
 > the `agent-os-runs` table (deploy `AgentOsState` first) and (b) creds with access
 > to it. If your IAM user lacks DynamoDB perms, either grant them, have the runtime
 > assume the `agent-os-runtime` role, or set `RUN_STORE=memory` for a creds-light
-> smoke test. Set `GUARDRAIL_ID` (the `AgentOsBedrock` output) to enable `guard`.
+> smoke test. `GUARDRAIL_ID` (the `AgentOsBedrock` output) enables `guard`.
+
+The ConfigMap also sets `GATE=local` (Bearer-token auth + per-tenant budget). Provide
+the tokens via a Secret (`token:tenant:subject` pairs); then calls need
+`Authorization: Bearer <token>`:
+```bash
+kubectl -n agent-os create secret generic gate-tokens \
+  --from-literal=GATE_TOKENS="tok-a:teamA:alice,tok-b:teamB:bob"
+```
 
 ## 4. Deploy + test
 ```bash

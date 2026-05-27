@@ -27,12 +27,13 @@ data:
   RUN_STORE: dynamodb # durable RunStore — the StateStack table
   RUNS_TABLE: agent-os-runs
   TELEMETRY: console
-  GATE: noop # set "local" + a GATE_TOKENS secret to require auth + budget
+  GATE: local # require Bearer auth + per-tenant budget (tokens in the gate-tokens Secret)
+  GATE_BUDGET_USD: "1.00" # per-tenant cap
+  GUARDRAIL_ID: svs60qf8fqff # AgentOsBedrock output -> guard = Bedrock Guardrails
   AGENT_REGISTRY: kube # resolve agents from Agent CRs (deploy/local/agents.yaml)
   AGENTS_NAMESPACE: agent-os
   # in-cluster: trust the cluster CA so the k8s client (Bun fetch) can call the API
   NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-  # GUARDRAIL_ID: "<AgentOsBedrock GuardrailId output>"  # set after deploying BedrockStack
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -62,6 +63,7 @@ spec:
           envFrom:
             - configMapRef: { name: agent-runtime-config }
             - secretRef: { name: aws-creds } # local only — EKS uses Pod Identity
+            - secretRef: { name: gate-tokens, optional: true } # GATE_TOKENS=token:tenant:subject,…
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }

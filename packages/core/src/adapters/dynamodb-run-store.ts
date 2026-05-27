@@ -46,7 +46,9 @@ export class DynamoDBRunStore implements RunStore {
 
   async update(id: string, patch: Partial<Run>): Promise<Run> {
     const next: Record<string, unknown> = { ...patch, updatedAt: new Date().toISOString() };
-    const keys = Object.keys(next);
+    // skip undefined (e.g. a blocked run has no `output`) — else the SET expression
+    // references a value the marshaller drops -> "expression attribute value not defined".
+    const keys = Object.keys(next).filter((k) => next[k] !== undefined);
     const r = await this.doc.send(
       new UpdateCommand({
         TableName: this.table,
