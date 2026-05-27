@@ -23,7 +23,7 @@ data:
   REGION: eu-west-2
   INFERENCE_PROVIDER: bedrock
   MODEL_ID: amazon.nova-lite-v1:0
-  SANDBOX_PROVIDER: local # runs code in-pod; set "agentcore" for real microVM isolation
+  SANDBOX_PROVIDER: agentcore # real isolation: Firecracker microVM per session (ADR-0006)
   RUN_STORE: dynamodb # durable RunStore — the StateStack table
   RUNS_TABLE: agent-os-runs
   TELEMETRY: console
