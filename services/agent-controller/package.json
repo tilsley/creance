@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/agent-controller",
+  "private": true,
+  "type": "module",
+  "description": "The agent control plane's reconciler — validates Agent CRs and writes .status (ADR-0012)",
+  "scripts": {
+    "start": "bun run controller.ts"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0"
+  }
+}

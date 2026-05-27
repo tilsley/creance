@@ -62,6 +62,12 @@
         "@opentelemetry/sdk-trace-node": "2.7.1",
       },
     },
+    "services/agent-controller": {
+      "name": "@agent-os/agent-controller",
+      "dependencies": {
+        "@kubernetes/client-node": "^1.4.0",
+      },
+    },
     "services/agent-runtime": {
       "name": "@agent-os/agent-runtime",
       "dependencies": {
@@ -70,6 +76,8 @@
     },
   },
   "packages": {
+    "@agent-os/agent-controller": ["@agent-os/agent-controller@workspace:services/agent-controller"],
+
     "@agent-os/agent-runtime": ["@agent-os/agent-runtime@workspace:services/agent-runtime"],
 
     "@agent-os/core": ["@agent-os/core@workspace:packages/core"],

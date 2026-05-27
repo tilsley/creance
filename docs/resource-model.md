@@ -40,12 +40,12 @@ execution leaves the cluster (AgentCore) — see [ADR-0006](decisions/0006-agent
 Budget alerts); the `inference-gateway` *enforces* real-time caps. One CRD field
 (`maxDailyCostUSD`) feeds both ([ADR-0004](decisions/0004-cost-governance.md)).
 
-## Agent control plane — lifecycle of agents (#5, planned)
+## Agent control plane — lifecycle of agents (#5)
 
 | Piece | k8s object(s) | AWS resource(s) | Status |
 |---|---|---|---|
-| **`agent-registry`** (catalog: definitions, versions, config) | `Agent` CRD *or* a registry Deploy | registry store (DynamoDB) · agent images (ECR) | ⬜ |
-| **`agent-controller`** (reconciles desired → running) | controller/operator Deploy | — | ⬜ |
+| **`agent-registry`** (catalog: definitions, versions, config) | **`Agent` CRD** + CRs (`AgentRegistry` port: in-memory / `KubeAgentRegistry`) | (future: agent images in ECR) | ✅ runtime resolves agents from CRs |
+| **`agent-controller`** (reconciler: validates, writes `.status`) | Deployment + SA + RBAC (agents + agents/status) | — | 🟡 operator (resync; no watch yet) |
 
 Sibling of Crossplane (the *infra* control plane); governs L2, read by L1. See
 [primitives.md](primitives.md#agent-control-plane-planned-5).

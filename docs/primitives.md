@@ -170,7 +170,7 @@ L1 contract: [runtime.md](runtime.md).
 Specific agents and products built on the runtime. Out of platform scope; they
 consume L0/L1.
 
-## Agent control plane (planned, #5)
+## Agent control plane (#5, [ADR-0012](decisions/0012-agent-control-plane.md))
 
 Lifecycle + catalog of L2 agents — the **control plane for agents**, the sibling of
 Crossplane (the control plane for *infra*). **Not L0** (the loop never calls it to
@@ -180,13 +180,13 @@ the roles don't merge:
 
 - **`agent-registry`** — the source of truth: what agents exist, their versions,
   config, owning tenant, which model/tools each needs. The L1 runtime reads it to
-  resolve "this request → which agent + version + config".
-- **`agent-controller`** — reconciles desired → running agents (operator-style on
-  an `Agent` resource). The analogue of a k8s Deployment controller.
+  resolve "this request → which agent + config". Built: `AgentRegistry` port +
+  in-memory / `KubeAgentRegistry` (reads `Agent` CRs); agents are an `Agent` CRD.
+- **`agent-controller`** — reconciles `Agent` CRs and writes `.status` (an operator,
+  its own pod). The analogue of a k8s Deployment controller.
 
-> Registry = declarative truth; controller = makes reality match it. Start with the
-> registry (catalog-first); carve out the controller when reconciliation is real.
-> To be formalized in an ADR when #5 is built.
+> Registry = declarative truth; controller = makes reality match it. Built
+> registry-first, then the controller — kept as separate components.
 
 ## References
 

@@ -1,0 +1,80 @@
+# agent-controller — the agent control plane's reconciler (#5, ADR-0012).
+# Its own pod (the registry/runtime reads agents; the controller writes their
+# status). Reuses the agent-runtime:dev image with a different command. Apply after
+# namespace.yaml + agents.yaml (the CRD).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-controller
+  namespace: agent-os
+---
+# RBAC: read agents, write their status subresource.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-controller
+  namespace: agent-os
+rules:
+  - apiGroups: ["agent-os.io"]
+    resources: ["agents"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agent-os.io"]
+    resources: ["agents/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-controller
+  namespace: agent-os
+subjects:
+  - kind: ServiceAccount
+    name: agent-controller
+    namespace: agent-os
+roleRef:
+  kind: Role
+  name: agent-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-controller-config
+  namespace: agent-os
+data:
+  AGENTS_NAMESPACE: agent-os
+  RECONCILE_INTERVAL_MS: "10000"
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-controller
+  namespace: agent-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-controller }
+  template:
+    metadata:
+      labels: { app: agent-controller }
+    spec:
+      serviceAccountName: agent-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent-controller
+          image: agent-runtime:dev # same workspace image, different entrypoint
+          imagePullPolicy: Never
+          command: ["bun", "run", "services/agent-controller/controller.ts"]
+          envFrom:
+            - configMapRef: { name: agent-controller-config }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 200m, memory: 256Mi }
