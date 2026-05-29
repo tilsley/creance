@@ -6,6 +6,8 @@
 #   3. role        — the tenant's IAM principal (runtime assumes it per run; ADR-0014)
 #   4. attachment  — binds the scoped policy (#2) to the tenant role (#3)
 #   5. budget      — an AWS Budget on the team's tagged spend (cost guardrail)
+#   6-9. backstop  — deny policy + Budgets execution role (+inline policy) + a
+#        BudgetAction that auto-attaches the deny to the tenant role at 100% (0014 §3)
 # This is the "self-service, no code per team" promise: a team writes ~3 lines of
 # intent and Crossplane provisions the identity + governance scaffolding.
 apiVersion: apiextensions.crossplane.io/v1
@@ -71,6 +73,8 @@ spec:
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
               kind: Policy
+              metadata:
+                labels: { agentos.io/component: bedrock-policy } # disambiguate from the deny policy
               spec:
                 forProvider:
                   description: agent-os tenant Bedrock invoke policy (Crossplane-managed)
@@ -128,6 +132,8 @@ spec:
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
               kind: Role
+              metadata:
+                labels: { agentos.io/component: tenant-role } # the principal the runtime assumes
               spec:
                 forProvider:
                   assumeRolePolicy: |
@@ -159,9 +165,10 @@ spec:
                 fromFieldPath: status.atProvider.arn
                 toFieldPath: status.roleArn
 
-          # 4. Attach the scoped Bedrock policy (#2) to the tenant role (#3). Both
-          # are composed by this same claim, so matchControllerRef selects the
-          # sibling Role + Policy unambiguously (one of each per tenant).
+          # 4. Attach the scoped Bedrock policy (#2) to the tenant role (#3). Now that
+          # the claim composes multiple roles + policies, the selectors pin the exact
+          # ones by label (matchControllerRef scopes to THIS claim; matchLabels picks
+          # the component within it).
           - name: role-policy-attachment
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
@@ -170,8 +177,10 @@ spec:
                 forProvider:
                   roleSelector:
                     matchControllerRef: true
+                    matchLabels: { agentos.io/component: tenant-role }
                   policyArnSelector:
                     matchControllerRef: true
+                    matchLabels: { agentos.io/component: bedrock-policy }
 
           # 5. AWS Budget — a monthly cost cap on the tenant's tagged spend.
           # Budgets is global (no region). costFilter matches the `team:<tenant>`
@@ -215,3 +224,141 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.tenant
                 toFieldPath: spec.forProvider.tags.team
+
+          # ---- ADR-0014 step 3: the cloud-side Budget Action Deny backstop ----
+          # 6. Budget-deny policy — an explicit Deny on Bedrock invoke. Inert until
+          # attached; the Budget Action (#9) attaches it to the tenant role when the
+          # cap is breached. Explicit Deny overrides the allow (#2), so the tenant
+          # loses model access cloud-side until remediated — defense in depth under
+          # the app admission gate (ADR-0013).
+          - name: deny-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Policy
+              metadata:
+                labels: { agentos.io/component: deny-policy }
+              spec:
+                forProvider:
+                  description: agent-os tenant budget-exceeded Bedrock deny (Crossplane-managed)
+                  policy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Sid": "DenyBedrockOverBudget",
+                          "Effect": "Deny",
+                          "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                          "Resource": "*"
+                        }
+                      ]
+                    }
+                  tags:
+                    managedBy: agent-os
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s-budget-deny" }
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.tags.team
+
+          # 7. Budget Action execution role — the identity AWS Budgets assumes to
+          # carry out the action. Trusts the budgets service principal.
+          - name: budget-exec-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              metadata:
+                labels: { agentos.io/component: budget-exec-role }
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Effect": "Allow",
+                          "Principal": { "Service": "budgets.amazonaws.com" },
+                          "Action": "sts:AssumeRole"
+                        }
+                      ]
+                    }
+                  tags:
+                    managedBy: agent-os
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s-budget-exec" }
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.tags.team
+
+          # 8. Inline policy on the execution role — lets Budgets attach/detach the
+          # deny policy to the tenant role. Scoped to this account's agentos-* roles.
+          - name: budget-exec-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicy
+              spec:
+                forProvider:
+                  roleSelector:
+                    matchControllerRef: true
+                    matchLabels: { agentos.io/component: budget-exec-role }
+                  policy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Effect": "Allow",
+                          "Action": ["iam:AttachRolePolicy", "iam:DetachRolePolicy"],
+                          "Resource": "arn:aws:iam::233965347831:role/agentos-*"
+                        }
+                      ]
+                    }
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s-budget-exec-attach" }
+
+          # 9. The Budget Action — the armed backstop. At 100% of ACTUAL monthly
+          # spend, Budgets (via the execution role #7) auto-attaches the deny policy
+          # (#6) to the tenant role (#3). AUTOMATIC = no manual approval. It lags
+          # hours, so it's the cloud-side backstop UNDER the immediate app gate.
+          - name: budget-action
+            base:
+              apiVersion: budgets.aws.upbound.io/v1beta2
+              kind: BudgetAction
+              spec:
+                forProvider:
+                  actionType: APPLY_IAM_POLICY
+                  approvalModel: AUTOMATIC
+                  notificationType: ACTUAL
+                  # v1beta2: actionThreshold + definition are objects (not lists)
+                  actionThreshold:
+                    actionThresholdType: PERCENTAGE
+                    actionThresholdValue: 100
+                  budgetNameSelector:
+                    matchControllerRef: true
+                  executionRoleArnSelector:
+                    matchControllerRef: true
+                    matchLabels: { agentos.io/component: budget-exec-role }
+                  definition:
+                    iamActionDefinition:
+                      policyArnSelector:
+                        matchControllerRef: true
+                        matchLabels: { agentos.io/component: deny-policy }
+                      rolesSelector:
+                        matchControllerRef: true
+                        matchLabels: { agentos.io/component: tenant-role }
+                  subscriber:
+                    - subscriptionType: EMAIL
+                      address: nathantilsley@gmail.com
