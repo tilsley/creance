@@ -17,6 +17,7 @@ export * from "./credentials"; // gate control: downstream credential broker
 // think
 export * from "./adapters/bedrock-inference";
 export * from "./adapters/ollama-inference";
+export * from "./adapters/admission-inference"; // cost hard-stop decorator (ADR-0013)
 // do
 export * from "./adapters/agentcore-sandbox";
 export * from "./adapters/local-sandbox";
@@ -26,6 +27,7 @@ export * from "./adapters/noop-guard";
 // gate
 export * from "./adapters/local-gate";
 export * from "./adapters/noop-gate";
+export * from "./adapters/kube-budget-source"; // per-tenant cap from the claim (ADR-0013)
 export * from "./adapters/local-credential-broker";
 export * from "./adapters/noop-credential-broker";
 // tools (#4): MCP gateway

@@ -6,23 +6,29 @@
  * gateway.
  *
  *   GATE_TOKENS="tok-a:teamA:alice,tok-b:teamB:bob"   (token:tenant:subject)
- *   GATE_BUDGET_USD="1.00"                             (per tenant)
+ *   GATE_BUDGET_USD="1.00"                             (default cap; fallback)
+ *
+ * The per-tenant cap can come from a BudgetSource (e.g. the Crossplane claim's
+ * monthlyBudgetUsd — KubeBudgetSource); GATE_BUDGET_USD is the fallback when the
+ * source has no entry for a tenant. The in-memory spend counter is unchanged.
  */
-import type { Gate, Principal, BudgetStatus } from "../gate";
+import type { Gate, Principal, BudgetStatus, BudgetSource } from "../gate";
 import { UnauthorizedError } from "../gate";
 
 export class LocalGate implements Gate {
   readonly name = "local";
   private readonly principals = new Map<string, Principal>();
-  private readonly limitUsd: number;
+  private readonly fallbackLimitUsd: number;
+  private readonly source?: BudgetSource;
   private readonly spent = new Map<string, number>();
 
-  constructor(tokensSpec?: string, budgetUsd?: string) {
+  constructor(tokensSpec?: string, budgetUsd?: string, source?: BudgetSource) {
     for (const entry of (tokensSpec ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
       const [token, tenant, subject] = entry.split(":");
       if (token && tenant) this.principals.set(token, { tenant, subject: subject ?? "unknown" });
     }
-    this.limitUsd = Number(budgetUsd ?? "1.00");
+    this.fallbackLimitUsd = Number(budgetUsd ?? "1.00");
+    this.source = source;
   }
 
   async authenticate(credential: string | undefined): Promise<Principal> {
@@ -40,8 +46,15 @@ export class LocalGate implements Gate {
     return this.status(tenant);
   }
 
-  private status(tenant: string): BudgetStatus {
+  /** The tenant's cap: from the BudgetSource if it has one, else the flat fallback. */
+  private async limitFor(tenant: string): Promise<number> {
+    const fromSource = await this.source?.limitFor(tenant);
+    return fromSource != null && Number.isFinite(fromSource) ? fromSource : this.fallbackLimitUsd;
+  }
+
+  private async status(tenant: string): Promise<BudgetStatus> {
+    const limitUsd = await this.limitFor(tenant);
     const spentUsd = this.spent.get(tenant) ?? 0;
-    return { tenant, limitUsd: this.limitUsd, spentUsd, remainingUsd: this.limitUsd - spentUsd, ok: spentUsd < this.limitUsd };
+    return { tenant, limitUsd, spentUsd, remainingUsd: limitUsd - spentUsd, ok: spentUsd < limitUsd };
   }
 }

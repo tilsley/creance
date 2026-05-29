@@ -40,11 +40,20 @@ export interface AssistantTurn {
 }
 
 // --- think: the Inference primitive port -------------------------------------
+/** Per-call inference controls. `maxTokens` caps the output — the load-bearing
+ *  lever for cost: it bounds the otherwise-open-ended completion cost, so a
+ *  request's worst-case spend is knowable *before* the call (ADR-0013). Required,
+ *  not optional: an uncapped agent turn is an unbounded bill, so the type system
+ *  forces every caller to declare a ceiling. Adapters MUST honour it. */
+export interface GenerateOptions {
+  maxTokens: number;
+}
+
 export interface InferenceProvider {
   readonly name: string;
   readonly model: string;
   /** Given the conversation so far + available tools, produce the next turn. */
-  generate(messages: Message[], tools: ToolDef[]): Promise<AssistantTurn>;
+  generate(messages: Message[], tools: ToolDef[], opts: GenerateOptions): Promise<AssistantTurn>;
 }
 
 // --- do: the Sandbox primitive port ------------------------------------------

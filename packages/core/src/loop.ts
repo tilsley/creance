@@ -21,6 +21,10 @@ import { runCodeTool, type AgentTool } from "./tools";
 
 const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}… (${s.length} chars)` : s);
 
+/** Default per-turn output cap. Every turn is bounded so completion cost can't run
+ *  away (ADR-0013); callers override per-agent/per-run via `maxOutputTokens`. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+
 export interface RunResult {
   runId: string;
   status: "completed" | "blocked" | "max_steps" | "stuck";
@@ -38,6 +42,9 @@ export interface RunOnSessionOpts {
   systemPrompt?: string;
   tools?: (session: SandboxSession) => AgentTool[];
   maxSteps?: number;
+  /** Output-token cap per turn (ADR-0013). Defaults to DEFAULT_MAX_OUTPUT_TOKENS;
+   *  the admission decorator (step 2) reads this to price a request's worst case. */
+  maxOutputTokens?: number;
   /** Called after each turn with the conversation so far — the runtime persists
    *  it to the RunStore, making run state durable + inspectable mid-flight. */
   onProgress?: (messages: Message[]) => void | Promise<void>;
@@ -50,6 +57,7 @@ export interface RunOpts extends Omit<RunOnSessionOpts, "session"> {
 /** Run the agent loop over a session the caller manages. */
 export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
   const { inference, guard, telemetry, session, task, systemPrompt, maxSteps = 20 } = opts;
+  const maxOutputTokens = opts.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const tools = (opts.tools ?? ((s) => [runCodeTool(s)]))(session);
   const toolDefs = tools.map((t) => t.spec);
   const byName = new Map(tools.map((t) => [t.spec.name, t]));
@@ -76,9 +84,9 @@ export async function runOnSession(opts: RunOnSessionOpts): Promise<RunResult> {
     for (let step = 1; step <= maxSteps; step++) {
       const turn = await telemetry.step(
         "inference.generate",
-        { "gen_ai.system": inference.name, "gen_ai.request.model": inference.model },
+        { "gen_ai.system": inference.name, "gen_ai.request.model": inference.model, "gen_ai.request.max_tokens": maxOutputTokens },
         async (span) => {
-          const t = await inference.generate(messages, toolDefs); // think
+          const t = await inference.generate(messages, toolDefs, { maxTokens: maxOutputTokens }); // think
           span.setAttrs({
             "gen_ai.usage.input_tokens": t.usage?.inputTokens,
             "gen_ai.usage.output_tokens": t.usage?.outputTokens,

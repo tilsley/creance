@@ -6,6 +6,7 @@
  */
 import type {
   InferenceProvider,
+  GenerateOptions,
   Message,
   ToolDef,
   AssistantTurn,
@@ -22,7 +23,7 @@ export class OllamaInferenceProvider implements InferenceProvider {
     this.host = host.replace(/\/$/, "");
   }
 
-  async generate(messages: Message[], tools: ToolDef[]): Promise<AssistantTurn> {
+  async generate(messages: Message[], tools: ToolDef[], opts: GenerateOptions): Promise<AssistantTurn> {
     const res = await fetch(`${this.host}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -34,6 +35,8 @@ export class OllamaInferenceProvider implements InferenceProvider {
           type: "function",
           function: { name: t.name, description: t.description, parameters: t.inputSchema },
         })),
+        // num_predict is Ollama's output-token cap -> bounds per-call cost (ADR-0013)
+        options: { num_predict: opts.maxTokens },
       }),
     });
     if (!res.ok) throw new Error(`ollama ${res.status}: ${await res.text()}`);

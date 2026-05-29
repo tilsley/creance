@@ -15,6 +15,7 @@ import { ConsoleTelemetrySink } from "./adapters/console-telemetry";
 import { OtelTelemetrySink } from "./adapters/otel-telemetry";
 import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
+import { KubeBudgetSource } from "./adapters/kube-budget-source";
 import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
 import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
@@ -86,9 +87,14 @@ export function providersFromEnv(env: Env = process.env): Providers {
   })();
 
   // gate defaults to open (noop) so direct loop consumers are unaffected; the
-  // runtime opts into token auth + budget via GATE=local (ADR-0009).
+  // runtime opts into token auth + budget via GATE=local (ADR-0009). With
+  // GATE_BUDGET_SOURCE=kube the per-tenant cap is read from each TenantInferenceProfile
+  // claim's monthlyBudgetUsd (ADR-0013); GATE_BUDGET_USD is then the fallback default.
+  const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? new KubeBudgetSource() : undefined;
   const gate: Gate =
-    (env.GATE ?? "noop") === "local" ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD) : new NoopGate();
+    (env.GATE ?? "noop") === "local"
+      ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD, budgetSource)
+      : new NoopGate();
 
   // credential broker defaults to deny-all (noop); authenticated tools are inert
   // until CRED_BROKER=local grants downstream targets per tenant (ADR-0010).

@@ -54,6 +54,20 @@ export interface Gate {
 }
 
 /**
+ * Where a tenant's spend cap comes from — factored out of the gate so the *limit*
+ * and the *spend counter* are separate concerns. A flat env value is one source;
+ * the real one is the Crossplane `TenantInferenceProfile` claim's `monthlyBudgetUsd`
+ * (KubeBudgetSource), so the cap is declared once, per tenant, not maintained twice.
+ * Returns `undefined` when it has no opinion for a tenant — the gate then falls back
+ * to its default. (NB: this sources the *limit*; the spend *window* — monthly reset,
+ * restart-durability — is the durable-gate concern, ADR-0009.)
+ */
+export interface BudgetSource {
+  readonly name: string;
+  limitFor(tenant: string): Promise<number | undefined>;
+}
+
+/**
  * Rough $/token by model (per 1M tokens) — enough for a POC budget counter. Swap
  * for an AI gateway / Bedrock cost data in prod (ADR-0009).
  */
@@ -63,9 +77,15 @@ const PRICE_PER_MTOK: Record<string, { in: number; out: number }> = {
   default: { in: 0.5, out: 1.5 },
 };
 
-/** Estimate USD cost of a turn/run from token usage. */
+/** Price a known input/output token split in USD. Shared by the actual-cost
+ *  estimate (post-call) and the worst-case admission check (pre-call, ADR-0013). */
+export function priceTokensUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const p = PRICE_PER_MTOK[model] ?? PRICE_PER_MTOK.default!;
+  return (inputTokens * p.in + outputTokens * p.out) / 1_000_000;
+}
+
+/** Estimate USD cost of a turn/run from observed token usage. */
 export function estimateCostUsd(model: string, usage: TokenUsage | undefined): number {
   if (!usage) return 0;
-  const p = PRICE_PER_MTOK[model] ?? PRICE_PER_MTOK.default!;
-  return ((usage.inputTokens ?? 0) * p.in + (usage.outputTokens ?? 0) * p.out) / 1_000_000;
+  return priceTokensUsd(model, usage.inputTokens ?? 0, usage.outputTokens ?? 0);
 }

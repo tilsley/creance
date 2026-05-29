@@ -19,6 +19,7 @@ import {
   runOnSession,
   providersFromEnv,
   estimateCostUsd,
+  AdmissionInferenceProvider,
   UnauthorizedError,
   type Run,
 } from "@agent-os/core";
@@ -26,6 +27,8 @@ import {
 const providers = providersFromEnv(); // once per process (OTel registers globally)
 const { gate, toolProvider, runStore: store, agentRegistry } = providers;
 const port = Number(process.env.PORT ?? 3000);
+// per-turn output cap (ADR-0013); undefined -> the loop's built-in default
+const maxOutputTokens = process.env.MAX_OUTPUT_TOKENS ? Number(process.env.MAX_OUTPUT_TOKENS) : undefined;
 
 const bearer = (req: Request): string | undefined =>
   req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -102,22 +105,28 @@ async function processRun(id: string): Promise<void> {
   // resolve this run's toolset through the gateway (built-in + MCP servers,
   // per-tenant policy, broker creds injected; ADR-0011)
   const toolset = await toolProvider.resolve({ principal, session });
+  // wrap inference in the per-tenant admission decorator: worst-case cost is
+  // priced + checked against the tenant budget before each call, and actual spend
+  // is recorded per turn (the cost hard-stop, ADR-0013).
+  const inference = new AdmissionInferenceProvider(providers.inference, gate, tenant);
   try {
     const result = await runOnSession({
-      inference: providers.inference,
+      inference,
       guard: providers.guard,
       telemetry: providers.telemetry,
       session,
       task: existing.task,
       systemPrompt: spec?.systemPrompt,
       maxSteps: spec?.maxSteps,
+      maxOutputTokens,
       tools: () => toolset.tools,
       onProgress: (messages) => {
         store.update(id, { messages }).catch(() => {}); // durable per-turn state
       },
     });
+    // spend is recorded per-turn by the admission decorator; here we just persist
+    // the run's total cost for the dashboard / run record.
     const costUsd = estimateCostUsd(providers.inference.model, result.usage);
-    await gate.recordSpend(tenant, costUsd); // budget accounting (ADR-0009)
     await store.update(id, { status: result.status, output: result.output, usage: result.usage, costUsd });
   } catch (e: any) {
     await store.update(id, { status: "failed", error: e?.message ?? String(e) });

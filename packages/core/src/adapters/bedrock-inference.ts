@@ -9,6 +9,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import type {
   InferenceProvider,
+  GenerateOptions,
   Message,
   ToolDef,
   AssistantTurn,
@@ -25,11 +26,13 @@ export class BedrockInferenceProvider implements InferenceProvider {
     this.client = new BedrockRuntimeClient({ region });
   }
 
-  async generate(messages: Message[], tools: ToolDef[]): Promise<AssistantTurn> {
+  async generate(messages: Message[], tools: ToolDef[], opts: GenerateOptions): Promise<AssistantTurn> {
     const resp = await this.client.send(
       new ConverseCommand({
         modelId: this.modelId,
         messages: messages.map(toBedrock),
+        // cap the completion length -> bounds the per-call output cost (ADR-0013)
+        inferenceConfig: { maxTokens: opts.maxTokens },
         toolConfig: {
           tools: tools.map((t) => ({
             toolSpec: {

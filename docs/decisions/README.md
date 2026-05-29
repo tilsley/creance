@@ -18,3 +18,4 @@ consequences. Format follows Michael Nygard's template. ADRs are immutable once
 | [0010](0010-credential-broker.md) | CredentialBroker — thin local broker + authenticated tool (implements 0007) | Accepted |
 | [0011](0011-tool-mcp-gateway.md) | Tool/MCP gateway — client-side ToolProvider; AgentCore Gateway as swap-in (implements 0007) | Accepted |
 | [0012](0012-agent-control-plane.md) | Agent control plane — registry (catalog) + controller (reconciler) via an Agent CRD | Accepted |
+| [0013](0013-inference-cost-enforcement.md) | Inference cost enforcement — buy the gateway (LiteLLM behind the port), own the worst-case admission policy (refines 0004) | Proposed |
