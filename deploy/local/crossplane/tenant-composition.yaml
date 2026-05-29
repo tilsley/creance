@@ -1,9 +1,11 @@
 # Composition — expands one TenantInferenceProfile claim into a full per-tenant
 # bundle of AWS resources. v2 Compositions are function pipelines (no inline
 # resources); this uses function-patch-and-transform. One claim now composes:
-#   1. profile — a Bedrock application inference profile (cost-attribution unit)
-#   2. policy  — a scoped IAM policy (least-privilege Bedrock invoke for the team)
-#   3. budget  — an AWS Budget on the team's tagged spend (cost guardrail)
+#   1. profile     — a Bedrock application inference profile (cost-attribution unit)
+#   2. policy      — a scoped IAM policy (least-privilege Bedrock invoke for the team)
+#   3. role        — the tenant's IAM principal (runtime assumes it per run; ADR-0014)
+#   4. attachment  — binds the scoped policy (#2) to the tenant role (#3)
+#   5. budget      — an AWS Budget on the team's tagged spend (cost guardrail)
 # This is the "self-service, no code per team" promise: a team writes ~3 lines of
 # intent and Crossplane provisions the identity + governance scaffolding.
 apiVersion: apiextensions.crossplane.io/v1
@@ -114,7 +116,64 @@ spec:
                 fromFieldPath: status.atProvider.arn
                 toFieldPath: status.policyArn
 
-          # 3. AWS Budget — a monthly cost cap on the tenant's tagged spend.
+          # 3. Per-tenant IAM role — the tenant's cloud principal (ADR-0014). The
+          # runtime assumes this role per run (STS, keyless) so a tenant's model
+          # calls run as *the tenant*, not the platform's ambient creds; it's also
+          # the target the Budget Action attaches a Deny to when the cap is blown.
+          # Trust is delegated to the account root — the assuming principal (the
+          # runtime user locally / agent-os-runtime role on EKS) gates assumption
+          # via its own sts:AssumeRole permission. IAM is global (name via
+          # external-name annotation, like the policy).
+          - name: role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Effect": "Allow",
+                          "Principal": { "AWS": "arn:aws:iam::233965347831:root" },
+                          "Action": "sts:AssumeRole"
+                        }
+                      ]
+                    }
+                  tags:
+                    managedBy: agent-os
+            patches:
+              # role name = agentos-<tenant>
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s" }
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.tags.team
+              # surface the role ARN back on the claim (the runtime resolves it per run)
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.roleArn
+
+          # 4. Attach the scoped Bedrock policy (#2) to the tenant role (#3). Both
+          # are composed by this same claim, so matchControllerRef selects the
+          # sibling Role + Policy unambiguously (one of each per tenant).
+          - name: role-policy-attachment
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  roleSelector:
+                    matchControllerRef: true
+                  policyArnSelector:
+                    matchControllerRef: true
+
+          # 5. AWS Budget — a monthly cost cap on the tenant's tagged spend.
           # Budgets is global (no region). costFilter matches the `team:<tenant>`
           # cost-allocation tag (legacy "user:<key>$<value>" syntax). limitAmount
           # comes from the claim's monthlyBudgetUsd.

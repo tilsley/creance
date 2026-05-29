@@ -39,3 +39,6 @@ spec:
               properties:
                 profileId: { type: string }
                 policyArn: { type: string }
+                # ARN of the tenant's IAM role (the principal the runtime assumes
+                # per run, and the target of the Budget Action Deny backstop). ADR-0014.
+                roleArn: { type: string }
