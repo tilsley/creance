@@ -13,6 +13,32 @@ metadata:
   name: agent-runtime
   namespace: agent-os
 ---
+# ClusterRole — the runtime reads the *cluster-scoped* TenantInferenceProfile claims
+# to source each tenant's monthlyBudgetUsd (GATE_BUDGET_SOURCE=kube; ADR-0013). This
+# is the in-cluster SA-token path the KubeBudgetSource uses (vs. the namespaced
+# agent-os.io Agent read, which agents.yaml grants).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-runtime-budget-reader
+rules:
+  - apiGroups: ["platform.agent-os.io"]
+    resources: ["tenantinferenceprofiles"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-runtime-budget-reader
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: agent-os
+roleRef:
+  kind: ClusterRole
+  name: agent-runtime-budget-reader
+  apiGroup: rbac.authorization.k8s.io
+---
 # ConfigMap — non-secret adapter selection (the ports/adapters seam as config).
 apiVersion: v1
 kind: ConfigMap
@@ -26,9 +52,12 @@ data:
   SANDBOX_PROVIDER: agentcore # real isolation: Firecracker microVM per session (ADR-0006)
   RUN_STORE: dynamodb # durable RunStore — the StateStack table
   RUNS_TABLE: agent-os-runs
+  SPEND_STORE: dynamodb # durable, monthly-windowed per-tenant spend counter (ADR-0013)
+  SPEND_TABLE: agent-os-budgets # the StateStack budgets table
   TELEMETRY: console
   GATE: local # require Bearer auth + per-tenant budget (tokens in the gate-tokens Secret)
-  GATE_BUDGET_USD: "1.00" # per-tenant cap
+  GATE_BUDGET_SOURCE: kube # source each tenant's cap from its TenantInferenceProfile claim
+  GATE_BUDGET_USD: "1.00" # fallback cap for tenants without a claim
   GUARDRAIL_ID: svs60qf8fqff # AgentOsBedrock output -> guard = Bedrock Guardrails
   AGENT_REGISTRY: kube # resolve agents from Agent CRs (deploy/local/agents.yaml)
   AGENTS_NAMESPACE: agent-os
