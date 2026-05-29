@@ -58,6 +58,7 @@ data:
   GATE: local # require Bearer auth + per-tenant budget (tokens in the gate-tokens Secret)
   GATE_BUDGET_SOURCE: kube # source each tenant's cap from its TenantInferenceProfile claim
   GATE_BUDGET_USD: "1.00" # fallback cap for tenants without a claim
+  TENANT_ASSUME_ROLE: kube # assume each tenant's IAM role per run (agentos-<tenant>); ADR-0014
   GUARDRAIL_ID: svs60qf8fqff # AgentOsBedrock output -> guard = Bedrock Guardrails
   AGENT_REGISTRY: kube # resolve agents from Agent CRs (deploy/local/agents.yaml)
   AGENTS_NAMESPACE: agent-os

@@ -105,10 +105,13 @@ async function processRun(id: string): Promise<void> {
   // resolve this run's toolset through the gateway (built-in + MCP servers,
   // per-tenant policy, broker creds injected; ADR-0011)
   const toolset = await toolProvider.resolve({ principal, session });
-  // wrap inference in the per-tenant admission decorator: worst-case cost is
-  // priced + checked against the tenant budget before each call, and actual spend
-  // is recorded per turn (the cost hard-stop, ADR-0013).
-  const inference = new AdmissionInferenceProvider(providers.inference, gate, tenant);
+  // resolve a tenant-scoped inference provider — assumes the tenant's IAM role so
+  // the model call acts AS the tenant (ADR-0014); falls back to the shared provider
+  // when per-tenant identity is off. Then wrap in the per-tenant admission decorator:
+  // worst-case cost is priced + checked against the budget before each call, and
+  // actual spend recorded per turn (the cost hard-stop, ADR-0013).
+  const baseInference = await providers.inferenceForTenant(tenant);
+  const inference = new AdmissionInferenceProvider(baseInference, gate, tenant);
   try {
     const result = await runOnSession({
       inference,

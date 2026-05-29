@@ -18,6 +18,7 @@ import { NoopGate } from "./adapters/noop-gate";
 import { KubeBudgetSource } from "./adapters/kube-budget-source";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
+import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
 import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
 import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
@@ -40,6 +41,9 @@ export interface Providers {
   toolProvider: ToolProvider;
   runStore: RunStore;
   agentRegistry: AgentRegistry;
+  /** Inference provider scoped to a tenant's assumed role (ADR-0014), or the shared
+   *  provider when per-tenant identity is off / the role isn't provisioned yet. */
+  inferenceForTenant: (tenant: string) => Promise<InferenceProvider>;
 }
 
 type Env = Record<string, string | undefined>;
@@ -47,8 +51,9 @@ type Env = Record<string, string | undefined>;
 export function providersFromEnv(env: Env = process.env): Providers {
   const region = env.REGION ?? "eu-west-2";
 
+  const inferenceKind = env.INFERENCE_PROVIDER ?? "bedrock";
   const inference: InferenceProvider = (() => {
-    switch (env.INFERENCE_PROVIDER ?? "bedrock") {
+    switch (inferenceKind) {
       case "bedrock":
         return new BedrockInferenceProvider(env.MODEL_ID ?? "amazon.nova-lite-v1:0", region);
       case "ollama":
@@ -104,6 +109,20 @@ export function providersFromEnv(env: Env = process.env): Providers {
       ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD, { source: budgetSource, spendStore })
       : new NoopGate();
 
+  // per-tenant workload identity (ADR-0014): TENANT_ASSUME_ROLE=kube makes the runtime
+  // assume each tenant's IAM role (agentos-<tenant>, ARN from the claim) per run, so
+  // calls act AS the tenant. Bedrock-only (it's the AWS-cred injection point); other
+  // providers ignore it and use the shared instance.
+  const tenantCredentials: TenantCredentials | undefined =
+    env.TENANT_ASSUME_ROLE === "kube" && inferenceKind === "bedrock"
+      ? new KubeStsTenantCredentials(region)
+      : undefined;
+  const inferenceForTenant = async (tenant: string): Promise<InferenceProvider> => {
+    if (!tenantCredentials) return inference;
+    const creds = await tenantCredentials.forTenant(tenant);
+    return creds ? new BedrockInferenceProvider(inference.model, region, creds) : inference;
+  };
+
   // credential broker defaults to deny-all (noop); authenticated tools are inert
   // until CRED_BROKER=local grants downstream targets per tenant (ADR-0010).
   const credentials: CredentialBroker =
@@ -138,5 +157,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore, agentRegistry };
+  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant };
 }

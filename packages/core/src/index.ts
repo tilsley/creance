@@ -29,6 +29,7 @@ export * from "./adapters/local-gate";
 export * from "./adapters/noop-gate";
 export * from "./adapters/kube-budget-source"; // per-tenant cap from the claim (ADR-0013)
 export * from "./adapters/dynamo-spend-store"; // durable monthly spend counter (ADR-0013)
+export * from "./adapters/sts-tenant-credentials"; // per-tenant assume-role identity (ADR-0014)
 export * from "./adapters/local-credential-broker";
 export * from "./adapters/noop-credential-broker";
 // tools (#4): MCP gateway

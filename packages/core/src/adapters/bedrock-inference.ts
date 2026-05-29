@@ -7,6 +7,7 @@ import {
   BedrockRuntimeClient,
   ConverseCommand,
 } from "@aws-sdk/client-bedrock-runtime";
+import type { AwsCredentialIdentityProvider } from "@smithy/types";
 import type {
   InferenceProvider,
   GenerateOptions,
@@ -21,9 +22,12 @@ export class BedrockInferenceProvider implements InferenceProvider {
   readonly model: string;
   private client: BedrockRuntimeClient;
 
-  constructor(private modelId: string, region: string) {
+  // `credentials` (optional) scopes the client to a specific identity — e.g. a
+  // tenant's assumed role (ADR-0014). Omitted → the SDK default chain (the
+  // platform's ambient creds), which is the prior behaviour.
+  constructor(private modelId: string, region: string, credentials?: AwsCredentialIdentityProvider) {
     this.model = modelId;
-    this.client = new BedrockRuntimeClient({ region });
+    this.client = new BedrockRuntimeClient({ region, ...(credentials ? { credentials } : {}) });
   }
 
   async generate(messages: Message[], tools: ToolDef[], opts: GenerateOptions): Promise<AssistantTurn> {
