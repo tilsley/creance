@@ -8,6 +8,8 @@ import * as iam from "aws-cdk-lib/aws-iam";
  *
  *  - DynamoDB `agent-os-runs` table (the RunStore): PK `id`; GSI `byStatus` so the
  *    runtime can find interrupted runs on boot. On-demand billing → ~$0 idle.
+ *  - DynamoDB `agent-os-budgets` table (the SpendStore): PK `tenant`, SK `period`
+ *    ("YYYY-MM") — the durable, monthly-windowed per-tenant spend counter (ADR-0013).
  *  - A scoped IAM role the runtime assumes — keyless via EKS Pod Identity in prod;
  *    account-assumable locally so we can validate the adapter against the real table.
  *
@@ -29,10 +31,21 @@ export class StateStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // per-tenant monthly spend counter (the SpendStore) — PK tenant, SK period.
+    // The gate's atomic ADD increments spentUsd; a new month is a new SK, so the
+    // monthly budget resets with no cron (ADR-0013).
+    const budgets = new dynamodb.Table(this, "BudgetsTable", {
+      tableName: "agent-os-budgets",
+      partitionKey: { name: "tenant", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "period", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // the runtime's cloud identity
     const runtimeRole = new iam.Role(this, "AgentRuntimeRole", {
       roleName: "agent-os-runtime",
-      description: "agent-os runtime - least-privilege access to the runs table",
+      description: "agent-os runtime - least-privilege access to the runs + budgets tables",
       // prod: assumed by the runtime's ServiceAccount via EKS Pod Identity (keyless).
       // local: assumed by the account so we can validate against the real table.
       assumedBy: new iam.CompositePrincipal(
@@ -49,8 +62,10 @@ export class StateStack extends cdk.Stack {
     );
 
     runs.grantReadWriteData(runtimeRole); // scoped to the table + its indexes only
+    budgets.grantReadWriteData(runtimeRole); // GetItem + atomic UpdateItem on spend
 
     new cdk.CfnOutput(this, "RunsTableName", { value: runs.tableName });
+    new cdk.CfnOutput(this, "BudgetsTableName", { value: budgets.tableName });
     new cdk.CfnOutput(this, "AgentRuntimeRoleArn", { value: runtimeRole.roleArn });
   }
 }

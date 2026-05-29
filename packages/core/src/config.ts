@@ -16,6 +16,8 @@ import { OtelTelemetrySink } from "./adapters/otel-telemetry";
 import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
 import { KubeBudgetSource } from "./adapters/kube-budget-source";
+import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
+import { InMemorySpendStore, type SpendStore } from "./gate";
 import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
 import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
@@ -90,10 +92,16 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // runtime opts into token auth + budget via GATE=local (ADR-0009). With
   // GATE_BUDGET_SOURCE=kube the per-tenant cap is read from each TenantInferenceProfile
   // claim's monthlyBudgetUsd (ADR-0013); GATE_BUDGET_USD is then the fallback default.
+  // SPEND_STORE=dynamodb makes the monthly spend counter durable (survives restarts);
+  // SPEND_TABLE_ENDPOINT → DynamoDB Local. Defaults to in-memory (lost on restart).
   const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? new KubeBudgetSource() : undefined;
+  const spendStore: SpendStore =
+    (env.SPEND_STORE ?? "memory") === "dynamodb"
+      ? new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT)
+      : new InMemorySpendStore();
   const gate: Gate =
     (env.GATE ?? "noop") === "local"
-      ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD, budgetSource)
+      ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD, { source: budgetSource, spendStore })
       : new NoopGate();
 
   // credential broker defaults to deny-all (noop); authenticated tools are inert
