@@ -29,8 +29,13 @@ spec:
               properties:
                 tenant: { type: string }
                 baseModel: { type: string, default: amazon.nova-lite-v1:0 }
+                # AWS Budget cap for the tenant's tagged spend (string — the
+                # Budget MR's limitAmount is a string). One claim now provisions
+                # a cost guardrail, not just an inference profile.
+                monthlyBudgetUsd: { type: string, default: "10" }
               required: [tenant]
             status:
               type: object
               properties:
                 profileId: { type: string }
+                policyArn: { type: string }

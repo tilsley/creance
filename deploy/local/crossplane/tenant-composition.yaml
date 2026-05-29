@@ -1,8 +1,11 @@
-# Composition — expands one TenantInferenceProfile claim into the underlying AWS
-# resource(s). v2 Compositions are function pipelines (no inline resources); this
-# uses function-patch-and-transform. Today it composes one InferenceProfile; you'd
-# add a scoped IAM policy + an AWS Budget here to make the claim a full per-tenant
-# bundle (the "self-service, no code per team" promise).
+# Composition — expands one TenantInferenceProfile claim into a full per-tenant
+# bundle of AWS resources. v2 Compositions are function pipelines (no inline
+# resources); this uses function-patch-and-transform. One claim now composes:
+#   1. profile — a Bedrock application inference profile (cost-attribution unit)
+#   2. policy  — a scoped IAM policy (least-privilege Bedrock invoke for the team)
+#   3. budget  — an AWS Budget on the team's tagged spend (cost guardrail)
+# This is the "self-service, no code per team" promise: a team writes ~3 lines of
+# intent and Crossplane provisions the identity + governance scaffolding.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -55,3 +58,101 @@ spec:
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.id
                 toFieldPath: status.profileId
+
+          # 2. Scoped IAM policy — least-privilege Bedrock invoke for this tenant.
+          # IAM is global (no region). The policy doc is static here: it's scoped to
+          # inference-profile + foundation-model invoke + ApplyGuardrail. We can't
+          # narrow the Resource to *this* profile's ARN because the profile id is
+          # generated at create-time (cross-resource ARN patches are fiddly); a
+          # follow-up could use the composite status.profileId once it's known.
+          - name: policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Policy
+              spec:
+                forProvider:
+                  description: agent-os tenant Bedrock invoke policy (Crossplane-managed)
+                  policy: |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Sid": "InvokeBedrock",
+                          "Effect": "Allow",
+                          "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                          "Resource": [
+                            "arn:aws:bedrock:eu-west-2::foundation-model/*",
+                            "arn:aws:bedrock:eu-west-2:*:inference-profile/*",
+                            "arn:aws:bedrock:eu-west-2:*:application-inference-profile/*"
+                          ]
+                        },
+                        {
+                          "Sid": "ApplyGuardrail",
+                          "Effect": "Allow",
+                          "Action": "bedrock:ApplyGuardrail",
+                          "Resource": "arn:aws:bedrock:eu-west-2:*:guardrail/*"
+                        }
+                      ]
+                    }
+                  tags:
+                    managedBy: agent-os
+            patches:
+              # policy name = agentos-<tenant>-bedrock. The IAM policy name is the
+              # AWS identity, so it's set via the external-name annotation (this MR
+              # has no spec.forProvider.name field).
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s-bedrock" }
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.tags.team
+              # surface the policy ARN back on the claim
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.policyArn
+
+          # 3. AWS Budget — a monthly cost cap on the tenant's tagged spend.
+          # Budgets is global (no region). costFilter matches the `team:<tenant>`
+          # cost-allocation tag (legacy "user:<key>$<value>" syntax). limitAmount
+          # comes from the claim's monthlyBudgetUsd.
+          - name: budget
+            base:
+              apiVersion: budgets.aws.upbound.io/v1beta2
+              kind: Budget
+              spec:
+                forProvider:
+                  budgetType: COST
+                  limitUnit: USD
+                  timeUnit: MONTHLY
+                  costFilter:
+                    - name: TagKeyValue
+                      values:
+                        - placeholder
+                  tags:
+                    managedBy: agent-os
+            patches:
+              # budget name = agentos-<tenant>-monthly. Like the policy, the budget
+              # name is the AWS identity, set via the external-name annotation.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "agentos-%s-monthly" }
+              # limit = claim's monthlyBudgetUsd
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.monthlyBudgetUsd
+                toFieldPath: spec.forProvider.limitAmount
+              # cost filter matches the team cost-allocation tag
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.costFilter[0].values[0]
+                transforms:
+                  - type: string
+                    string: { type: Format, fmt: "user:team$%s" }
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.tags.team
