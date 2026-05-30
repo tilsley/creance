@@ -26,8 +26,13 @@ iam:
         Version: "2012-10-17"
         Statement:
           - Sid: AssumePerTenantRole
+            # sts:TagSession is REQUIRED, not optional: EKS Pod Identity attaches
+            # transitive session tags (eks-cluster-arn, namespace, SA) to the base
+            # identity, and they auto-forward on any downstream AssumeRole — so the
+            # chained call carries tags and AWS demands TagSession on both the caller
+            # policy (here) and the target role's trust (agentos-<tenant>). (ADR-0014)
             Effect: Allow
-            Action: ["sts:AssumeRole"]
+            Action: ["sts:AssumeRole", "sts:TagSession"]
             Resource: "arn:aws:iam::233965347831:role/agentos-*"
           - Sid: StateAndBudget
             Effect: Allow
@@ -36,6 +41,7 @@ iam:
               - dynamodb:PutItem
               - dynamodb:UpdateItem
               - dynamodb:Query
+              - dynamodb:Scan # GET /runs lists all runs (proven needed on the field trip)
             Resource:
               - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-runs
               - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-runs/index/*

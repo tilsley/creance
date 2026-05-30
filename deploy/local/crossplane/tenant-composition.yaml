@@ -136,6 +136,10 @@ spec:
                 labels: { agentos.io/component: tenant-role } # the principal the runtime assumes
               spec:
                 forProvider:
+                  # Action includes sts:TagSession because EKS Pod Identity gives the
+                  # assuming base identity transitive session tags that auto-forward on
+                  # the chained AssumeRole — without TagSession in the trust the keyless
+                  # base -> per-tenant hop fails (proven on the EKS field trip). (ADR-0014)
                   assumeRolePolicy: |
                     {
                       "Version": "2012-10-17",
@@ -143,7 +147,7 @@ spec:
                         {
                           "Effect": "Allow",
                           "Principal": { "AWS": "arn:aws:iam::233965347831:root" },
-                          "Action": "sts:AssumeRole"
+                          "Action": ["sts:AssumeRole", "sts:TagSession"]
                         }
                       ]
                     }
