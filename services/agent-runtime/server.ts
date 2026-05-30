@@ -25,13 +25,15 @@ import {
 } from "@agent-os/core";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
-const { gate, toolProvider, runStore: store, agentRegistry } = providers;
+const { gate, authenticator, authorizer, toolProvider, runStore: store, agentRegistry } = providers;
 const port = Number(process.env.PORT ?? 3000);
 // per-turn output cap (ADR-0013); undefined -> the loop's built-in default
 const maxOutputTokens = process.env.MAX_OUTPUT_TOKENS ? Number(process.env.MAX_OUTPUT_TOKENS) : undefined;
 
 const bearer = (req: Request): string | undefined =>
   req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+// lowercased header map for the Authenticator (mesh/IAP edge forwards claims here)
+const headerMap = (req: Request): Record<string, string> => Object.fromEntries(req.headers);
 
 // A self-contained runs dashboard (served at GET /): a live view of agent runs —
 // status, agent, tokens, cost, and the full conversation — plus a launch form.
@@ -159,6 +161,8 @@ const server = Bun.serve({
         sandbox: providers.sandbox.name,
         store: store.name,
         gate: gate.name,
+        authn: authenticator.name,
+        authz: authorizer.name,
         guard: providers.guard.name,
         agentRegistry: agentRegistry.name,
       });
@@ -170,14 +174,16 @@ const server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/runs") {
-      // gate: authenticate the caller, then pre-check the tenant's budget
+      // authn → authz → budget (ADR-0015): who is the caller, may they, can they afford it
       let principal;
       try {
-        principal = await gate.authenticate(bearer(req));
+        principal = await authenticator.authenticate({ credential: bearer(req), headers: headerMap(req) });
       } catch (e) {
         if (e instanceof UnauthorizedError) return Response.json({ error: "unauthorized" }, { status: 401 });
         throw e;
       }
+      const decision = await authorizer.authorize(principal, "run:create");
+      if (!decision.allow) return Response.json({ error: "forbidden", reason: decision.reason }, { status: 403 });
       const budget = await gate.checkBudget(principal.tenant);
       if (!budget.ok) return Response.json({ error: "budget exceeded", budget }, { status: 402 });
 
@@ -224,6 +230,7 @@ const server = Bun.serve({
 
 console.log(
   `agent-runtime listening on :${server.port}  (async; store=${store.name}; gate=${gate.name}; ` +
+    `authn=${authenticator.name} authz=${authorizer.name}; ` +
     `inference=${providers.inference.name} sandbox=${providers.sandbox.name} ` +
     `guard=${providers.guard.name} record=${providers.telemetry.name})`,
 );

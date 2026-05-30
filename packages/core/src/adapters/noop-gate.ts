@@ -1,9 +1,10 @@
 /**
- * NoopGate — open gate: no auth, no budget. The default, so examples and
- * dep-migrator (which call the loop directly) are unaffected. The runtime opts
- * into real identity via GATE=local (LocalGate). See ADR-0009.
+ * NoopGate — open **budget** gate: unlimited, no accounting. The default, so
+ * examples and dep-migrator (which call the loop directly) are unaffected. The
+ * runtime opts into real budgets via GATE=local (LocalGate). Identity is the
+ * Authenticator port now (NoopAuthenticator is the open default). See ADR-0009/0015.
  */
-import type { Gate, Principal, BudgetStatus } from "../gate";
+import type { Gate, BudgetStatus } from "../gate";
 
 const unlimited = (tenant: string): BudgetStatus => ({
   tenant,
@@ -15,9 +16,6 @@ const unlimited = (tenant: string): BudgetStatus => ({
 
 export class NoopGate implements Gate {
   readonly name = "noop";
-  async authenticate(): Promise<Principal> {
-    return { tenant: "default", subject: "anonymous" };
-  }
   async checkBudget(tenant: string): Promise<BudgetStatus> {
     return unlimited(tenant);
   }

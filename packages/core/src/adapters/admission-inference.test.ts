@@ -28,7 +28,7 @@ const tools: ToolDef[] = [];
 
 test("admits a request within budget and records actual spend", async () => {
   const inner = fakeInner();
-  const gate = new LocalGate(undefined, "1.00"); // $1 / tenant
+  const gate = new LocalGate("1.00"); // $1 / tenant
   const sut = new AdmissionInferenceProvider(inner.provider, gate, "teama");
 
   const turn = await sut.generate(msgs, tools, { maxTokens: 100 });
@@ -42,7 +42,7 @@ test("admits a request within budget and records actual spend", async () => {
 
 test("refuses the $50 one-shot BEFORE calling the model", async () => {
   const inner = fakeInner();
-  const gate = new LocalGate(undefined, "0.001"); // tiny cap
+  const gate = new LocalGate("0.001"); // tiny cap
   const sut = new AdmissionInferenceProvider(inner.provider, gate, "teama");
 
   // worst case = 100_000 output tokens * $0.24/Mtok = $0.024  >> $0.001 cap
@@ -54,7 +54,7 @@ test("refuses the $50 one-shot BEFORE calling the model", async () => {
 
 test("refuses once cumulative spend would tip over the cap", async () => {
   const inner = fakeInner();
-  const gate = new LocalGate(undefined, "0.02");
+  const gate = new LocalGate("0.02");
   const sut = new AdmissionInferenceProvider(inner.provider, gate, "teama");
 
   await gate.recordSpend("teama", 0.019); // already near the $0.02 cap

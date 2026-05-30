@@ -1,21 +1,15 @@
 /**
- * LocalGate — the thin local `gate` adapter (ADR-0009). Tokens map to principals
- * via env; budget is a per-tenant in-memory USD counter. For dev + proving the
- * seam, NOT production: static tokens, spend lost on restart, no real OBO / token
- * vault / policy engine. Swap for AgentCore Identity / Auth0 Token Vault + an AI
- * gateway.
- *
- *   GATE_TOKENS="tok-a:teamA:alice,tok-b:teamB:bob"   (token:tenant:subject)
- *   GATE_BUDGET_USD="1.00"                             (default cap; fallback)
- *
- * Composable: the per-tenant cap comes from a BudgetSource (e.g. the Crossplane
+ * LocalGate — the local **budget** gate (ADR-0009; authn/authz split out per
+ * ADR-0015). A per-tenant USD counter: cap from a BudgetSource (the Crossplane
  * claim's monthlyBudgetUsd — KubeBudgetSource; GATE_BUDGET_USD is the fallback),
- * and spend is tallied through a SpendStore (in-memory by default, DynamoSpendStore
- * for restart-durable, monthly-windowed counting). The gate itself just wires
- * identity + the current period together.
+ * spend tallied through a SpendStore (in-memory by default, DynamoSpendStore for
+ * restart-durable, monthly-windowed counting). Identity is the Authenticator port
+ * now, not this gate.
+ *
+ *   GATE_BUDGET_USD="1.00"   (default cap; fallback when a tenant has no claim)
  */
-import type { Gate, Principal, BudgetStatus, BudgetSource, SpendStore } from "../gate";
-import { UnauthorizedError, InMemorySpendStore, currentPeriod } from "../gate";
+import type { Gate, BudgetStatus, BudgetSource, SpendStore } from "../gate";
+import { InMemorySpendStore, currentPeriod } from "../gate";
 
 export interface LocalGateOptions {
   /** Per-tenant cap source; falls back to GATE_BUDGET_USD when it has no entry. */
@@ -28,27 +22,16 @@ export interface LocalGateOptions {
 
 export class LocalGate implements Gate {
   readonly name = "local";
-  private readonly principals = new Map<string, Principal>();
   private readonly fallbackLimitUsd: number;
   private readonly source?: BudgetSource;
   private readonly spend: SpendStore;
   private readonly now: () => Date;
 
-  constructor(tokensSpec?: string, budgetUsd?: string, opts: LocalGateOptions = {}) {
-    for (const entry of (tokensSpec ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
-      const [token, tenant, subject] = entry.split(":");
-      if (token && tenant) this.principals.set(token, { tenant, subject: subject ?? "unknown" });
-    }
+  constructor(budgetUsd?: string, opts: LocalGateOptions = {}) {
     this.fallbackLimitUsd = Number(budgetUsd ?? "1.00");
     this.source = opts.source;
     this.spend = opts.spendStore ?? new InMemorySpendStore();
     this.now = opts.now ?? (() => new Date());
-  }
-
-  async authenticate(credential: string | undefined): Promise<Principal> {
-    const principal = credential ? this.principals.get(credential) : undefined;
-    if (!principal) throw new UnauthorizedError();
-    return principal;
   }
 
   async checkBudget(tenant: string): Promise<BudgetStatus> {

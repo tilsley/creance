@@ -16,21 +16,21 @@ const fakeClaims: BudgetSource = {
 };
 
 test("reads each tenant's cap from the BudgetSource", async () => {
-  const gate = new LocalGate(undefined, "1.00", { source: fakeClaims });
+  const gate = new LocalGate("1.00", { source: fakeClaims });
 
   expect((await gate.checkBudget("teama")).limitUsd).toBe(10);
   expect((await gate.checkBudget("teamb")).limitUsd).toBe(50);
 });
 
 test("falls back to the flat default when the source has no entry", async () => {
-  const gate = new LocalGate(undefined, "1.00", { source: fakeClaims });
+  const gate = new LocalGate("1.00", { source: fakeClaims });
 
   // 'teamc' has no claim -> the GATE_BUDGET_USD default applies
   expect((await gate.checkBudget("teamc")).limitUsd).toBe(1);
 });
 
 test("the per-tenant cap drives the ok/remaining verdict", async () => {
-  const gate = new LocalGate(undefined, "1.00", { source: fakeClaims });
+  const gate = new LocalGate("1.00", { source: fakeClaims });
 
   await gate.recordSpend("teama", 9.5);
   const a = await gate.checkBudget("teama");
@@ -42,13 +42,13 @@ test("the per-tenant cap drives the ok/remaining verdict", async () => {
 });
 
 test("with no source, every tenant gets the flat default (unchanged behaviour)", async () => {
-  const gate = new LocalGate(undefined, "2.50");
+  const gate = new LocalGate("2.50");
   expect((await gate.checkBudget("anyone")).limitUsd).toBe(2.5);
 });
 
 test("spend resets when the billing month rolls over", async () => {
   let clock = new Date("2026-05-20T00:00:00Z");
-  const gate = new LocalGate(undefined, "10", { now: () => clock });
+  const gate = new LocalGate("10", { now: () => clock });
 
   await gate.recordSpend("teama", 7);
   expect((await gate.checkBudget("teama")).spentUsd).toBe(7); // May
@@ -60,11 +60,11 @@ test("spend resets when the billing month rolls over", async () => {
 
 test("spend is durable across gate instances sharing a SpendStore (survives a restart)", async () => {
   const store = new InMemorySpendStore(); // stands in for the persistent DynamoSpendStore
-  const before = new LocalGate(undefined, "10", { spendStore: store });
+  const before = new LocalGate("10", { spendStore: store });
   await before.recordSpend("teama", 4);
 
   // a fresh gate (as if the process restarted) reads the same store
-  const after = new LocalGate(undefined, "10", { spendStore: store });
+  const after = new LocalGate("10", { spendStore: store });
   expect((await after.checkBudget("teama")).spentUsd).toBe(4);
 });
 

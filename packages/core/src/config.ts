@@ -15,6 +15,10 @@ import { ConsoleTelemetrySink } from "./adapters/console-telemetry";
 import { OtelTelemetrySink } from "./adapters/otel-telemetry";
 import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
+import { StaticTokenAuthenticator } from "./adapters/static-token-authenticator";
+import { MeshTrustAuthenticator } from "./adapters/mesh-trust-authenticator";
+import { NoopAuthenticator } from "./adapters/noop-authenticator";
+import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { KubeBudgetSource } from "./adapters/kube-budget-source";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
@@ -28,7 +32,7 @@ import { InMemoryRunStore, type RunStore } from "./runs";
 import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
 import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
-import type { Gate } from "./gate";
+import type { Gate, Authenticator, Authorizer } from "./gate";
 import type { CredentialBroker } from "./credentials";
 
 export interface Providers {
@@ -37,6 +41,10 @@ export interface Providers {
   guard: ContentGuard;
   telemetry: TelemetrySink;
   gate: Gate;
+  /** authn (who is the caller) — ADR-0015, swappable per stack. */
+  authenticator: Authenticator;
+  /** authz (may they do this) — ADR-0015; AllowAll today, OPA next. */
+  authorizer: Authorizer;
   credentials: CredentialBroker;
   toolProvider: ToolProvider;
   runStore: RunStore;
@@ -106,8 +114,32 @@ export function providersFromEnv(env: Env = process.env): Providers {
       : new InMemorySpendStore();
   const gate: Gate =
     (env.GATE ?? "noop") === "local"
-      ? new LocalGate(env.GATE_TOKENS, env.GATE_BUDGET_USD, { source: budgetSource, spendStore })
+      ? new LocalGate(env.GATE_BUDGET_USD, { source: budgetSource, spendStore })
       : new NoopGate();
+
+  // authn (ADR-0015): AUTHN picks the identity adapter. Default tracks the old
+  // behaviour — token auth under GATE=local, open otherwise — so existing wiring is
+  // unchanged; AUTHN=mesh trusts edge-verified claims (Istio/IAP), simulated locally.
+  const authnKind = env.AUTHN ?? ((env.GATE ?? "noop") === "local" ? "token" : "noop");
+  const authenticator: Authenticator = (() => {
+    switch (authnKind) {
+      case "token":
+        return new StaticTokenAuthenticator(env.GATE_TOKENS);
+      case "mesh":
+        return new MeshTrustAuthenticator({
+          header: env.MESH_IDENTITY_HEADER,
+          tenantClaim: env.MESH_TENANT_CLAIM,
+          groupsClaim: env.MESH_GROUPS_CLAIM,
+        });
+      case "noop":
+        return new NoopAuthenticator();
+      default:
+        throw new Error(`unknown AUTHN: ${env.AUTHN}`);
+    }
+  })();
+
+  // authz (ADR-0015): allow/deny policy seam. AllowAll stub today; OpaAuthorizer next.
+  const authorizer: Authorizer = new AllowAllAuthorizer();
 
   // per-tenant workload identity (ADR-0014): TENANT_ASSUME_ROLE=kube makes the runtime
   // assume each tenant's IAM role (agentos-<tenant>, ARN from the claim) per run, so
@@ -157,5 +189,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant };
+  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant };
 }
