@@ -41,8 +41,10 @@ export class MeshTrustAuthenticator implements Authenticator {
   }
 
   async authenticate(ctx: AuthnContext): Promise<Principal> {
-    const raw = ctx.headers[this.header];
-    if (!raw) throw new UnauthorizedError(`missing edge identity header '${this.header}'`);
+    // the edge forwards identity in a header; A2A's standard auth puts the (already
+    // edge-verified) token in Authorization — accept either (ADR-0018).
+    const raw = ctx.headers[this.header] ?? ctx.credential;
+    if (!raw) throw new UnauthorizedError(`missing edge identity ('${this.header}' header or bearer)`);
     const claims = decodeClaims(raw);
     const tenant = claims?.[this.tenantClaim];
     const subject = this.subjectClaims.map((c) => claims?.[c]).find(Boolean);

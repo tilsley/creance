@@ -23,6 +23,7 @@ import {
   UnauthorizedError,
   type Run,
 } from "@agent-os/core";
+import { handleA2A, buildAgentCard, type GateOutcome } from "./a2a";
 
 const providers = providersFromEnv(); // once per process (OTel registers globally)
 const { gate, authenticator, authorizer, toolProvider, runStore: store, agentRegistry } = providers;
@@ -141,10 +142,54 @@ async function processRun(id: string): Promise<void> {
   }
 }
 
+// the agent this runtime advertises over A2A (and runs when a message names none)
+const a2aAgent = process.env.A2A_AGENT;
+
+/** The gate sequence shared by REST POST /runs and A2A message/send (ADR-0015/0018):
+ *  authn → authz(of the target agent) → budget → create the queued Run. */
+async function authorizeAndCreate(
+  credential: string | undefined,
+  headers: Record<string, string>,
+  agent: string | undefined,
+  task: string,
+): Promise<GateOutcome> {
+  let principal;
+  try {
+    principal = await authenticator.authenticate({ credential, headers });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return { ok: false, status: 401, error: "unauthorized" };
+    throw e;
+  }
+  const decision = await authorizer.authorize(principal, "run:create", agent);
+  if (!decision.allow) return { ok: false, status: 403, error: "forbidden", reason: decision.reason };
+  const budget = await gate.checkBudget(principal.tenant);
+  if (!budget.ok) return { ok: false, status: 402, error: "budget exceeded" };
+  if (agent != null && !(await agentRegistry.get(agent))) return { ok: false, status: 404, error: `unknown agent '${agent}'` };
+  const now = new Date().toISOString();
+  const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, principal, messages: [], createdAt: now, updatedAt: now };
+  await store.create(run);
+  void processRun(run.id); // fire-and-forget worker (in-process for now)
+  return { ok: true, run };
+}
+
 const server = Bun.serve({
   port,
   async fetch(req) {
     const url = new URL(req.url);
+
+    // --- A2A protocol surface (ADR-0018): discovery + JSON-RPC ---
+    if (req.method === "GET" && url.pathname === "/.well-known/agent-card.json") {
+      return Response.json(
+        buildAgentCard({
+          name: a2aAgent ?? "agent-os-runtime",
+          description: `agent-os runtime hosting '${a2aAgent ?? "agents"}'`,
+          url: `${url.protocol}//${url.host}/a2a`,
+        }),
+      );
+    }
+    if (req.method === "POST" && url.pathname === "/a2a") {
+      return handleA2A(req, { createRun: authorizeAndCreate, getRun: (id) => store.get(id), defaultAgent: a2aAgent });
+    }
 
     if (req.method === "GET" && url.pathname === "/healthz") {
       return Response.json({ status: "ok" });
@@ -174,15 +219,6 @@ const server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/runs") {
-      // gate (ADR-0015): authn → authz(of the target agent) → budget
-      let principal;
-      try {
-        principal = await authenticator.authenticate({ credential: bearer(req), headers: headerMap(req) });
-      } catch (e) {
-        if (e instanceof UnauthorizedError) return Response.json({ error: "unauthorized" }, { status: 401 });
-        throw e;
-      }
-
       let body: any;
       try {
         body = await req.json();
@@ -193,24 +229,11 @@ const server = Bun.serve({
       if (typeof task !== "string" || !task.trim()) {
         return Response.json({ error: "missing 'task' (string)" }, { status: 400 });
       }
-      const agent = body?.agent;
-
-      // authz: may this principal create a run of this agent? (policy sees the agent
-      // as the resource — e.g. OPA can gate sensitive agents on group membership)
-      const decision = await authorizer.authorize(principal, "run:create", agent != null ? String(agent) : undefined);
-      if (!decision.allow) return Response.json({ error: "forbidden", reason: decision.reason }, { status: 403 });
-      const budget = await gate.checkBudget(principal.tenant);
-      if (!budget.ok) return Response.json({ error: "budget exceeded", budget }, { status: 402 });
-
-      // agent control plane (#5): if an agent is named, it must be registered
-      if (agent != null && !(await agentRegistry.get(String(agent)))) {
-        return Response.json({ error: `unknown agent '${agent}'` }, { status: 404 });
-      }
-      const now = new Date().toISOString();
-      const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, principal, messages: [], createdAt: now, updatedAt: now };
-      await store.create(run);
-      void processRun(run.id); // fire-and-forget worker (in-process for now)
-      return Response.json({ runId: run.id, status: run.status, agent, tenant: principal.tenant }, { status: 202 });
+      const agent = body?.agent != null ? String(body.agent) : undefined;
+      // same gate as A2A: authn → authz(agent) → budget → create (ADR-0015/0018)
+      const r = await authorizeAndCreate(bearer(req), headerMap(req), agent, task);
+      if (!r.ok) return Response.json({ error: r.error, reason: r.reason }, { status: r.status });
+      return Response.json({ runId: r.run.id, status: r.run.status, agent, tenant: r.run.principal!.tenant }, { status: 202 });
     }
 
     if (req.method === "GET" && url.pathname === "/agents") {

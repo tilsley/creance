@@ -66,19 +66,20 @@ export function httpRequestTool(broker: CredentialBroker, principal: Principal):
 }
 
 /**
- * Agent-to-agent delegation tool (ADR-0017). The model names another `agent`; the
- * platform brokers an on-behalf-of credential for it (extending the delegation
- * chain) and makes a real POST /runs to that agent's runtime, forwarding the
- * propagated identity in the x-agentos-identity header — then polls to completion.
- * The model never handles credentials, and can only reach agents the broker grants.
+ * Agent-to-agent delegation tool (ADR-0017/0018), speaking the standard A2A protocol.
+ * The model names another `agent`; the platform brokers an on-behalf-of credential
+ * (extending the delegation chain), discovers the target via its Agent Card, and
+ * invokes it over A2A JSON-RPC (message/send → poll tasks/get), forwarding the
+ * propagated identity in the standard Authorization header. The model never handles
+ * credentials, and can only reach agents the broker grants.
  */
 export function callAgentTool(broker: CredentialBroker, principal: Principal): AgentTool {
-  const TERMINAL = ["completed", "failed", "blocked", "stuck", "max_steps"];
+  const TERMINAL = ["completed", "failed", "canceled"]; // A2A TaskState terminals
   return {
     spec: {
       name: "call_agent",
       description:
-        "Delegate a task to another agent. The platform forwards your identity on-behalf-of " +
+        "Delegate a task to another agent (A2A). The platform forwards your identity on-behalf-of " +
         "(extending the delegation chain) — you never handle credentials. " +
         "Args: agent (target agent name, must be granted), task (what it should do).",
       inputSchema: {
@@ -96,24 +97,48 @@ export function callAgentTool(broker: CredentialBroker, principal: Principal): A
       if (!cred) return `error: no access to agent '${agent}' for tenant '${principal.tenant}'`;
       if (!cred.baseUrl) return `error: agent '${agent}' has no endpoint configured`;
       const base = cred.baseUrl.replace(/\/$/, "");
+      const auth = { "content-type": "application/json", authorization: `Bearer ${cred.token}` }; // A2A standard auth
+      const rpc = (method: string, params: unknown) =>
+        fetch(a2aUrl, { method: "POST", headers: auth, body: JSON.stringify({ jsonrpc: "2.0", id: method, method, params }) });
+
+      // A2A discovery: resolve the JSON-RPC endpoint from the Agent Card (default {base}/a2a)
+      let a2aUrl = `${base}/a2a`;
       try {
-        const post = await fetch(`${base}/runs`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-agentos-identity": cred.token }, // propagated identity
-          body: JSON.stringify({ agent, task: String(i.task ?? "") }),
+        const card = await fetch(`${base}/.well-known/agent-card.json`);
+        if (card.ok) {
+          const c = (await card.json()) as { url?: string };
+          if (c?.url) a2aUrl = c.url;
+        }
+      } catch {}
+
+      try {
+        const send = await rpc("message/send", {
+          message: { role: "user", parts: [{ kind: "text", text: String(i.task ?? "") }], messageId: crypto.randomUUID(), kind: "message" },
+          metadata: { agent },
         });
-        if (!post.ok) return `error: call to '${agent}' failed: HTTP ${post.status} ${(await post.text()).slice(0, 200)}`;
-        const { runId } = (await post.json()) as { runId: string };
+        if (send.status === 401 || send.status === 403) return `error: A2A '${agent}' rejected the call: HTTP ${send.status}`;
+        const sent = (await send.json()) as { result?: { id?: string }; error?: { message?: string } };
+        if (sent.error) return `error: A2A '${agent}': ${sent.error.message}`;
+        const taskId = sent.result?.id;
+        if (!taskId) return `error: A2A '${agent}': no task id returned`;
+
         for (let n = 0; n < 60; n++) {
           await new Promise((r) => setTimeout(r, 1000));
-          const r = await fetch(`${base}/runs/${runId}`);
-          if (!r.ok) continue;
-          const run = (await r.json()) as { status: string; output?: string; error?: string };
-          if (TERMINAL.includes(run.status)) return `agent '${agent}' -> ${run.status}: ${run.output ?? run.error ?? "(no output)"}`;
+          const got = await rpc("tasks/get", { id: taskId });
+          if (!got.ok) continue;
+          const task = ((await got.json()) as { result?: any }).result;
+          if (task && TERMINAL.includes(task.status?.state)) {
+            const text = (task.artifacts ?? [])
+              .flatMap((a: any) => a.parts ?? [])
+              .filter((p: any) => p?.kind === "text")
+              .map((p: any) => p.text)
+              .join("\n");
+            return `agent '${agent}' -> ${task.status.state}: ${text || "(no output)"}`;
+          }
         }
         return `error: agent '${agent}' timed out`;
       } catch (e: any) {
-        return `error: call_agent failed: ${e?.message ?? String(e)}`;
+        return `error: call_agent (A2A) failed: ${e?.message ?? String(e)}`;
       }
     },
   };

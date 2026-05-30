@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * REAL two-process agent-to-agent (ADR-0017) — the genuine version of the in-memory
- * a2a-delegation demo. Two actual agent-runtime processes:
- *   A (:3000) hosts ticket-bot, B (:3001) hosts enrich-bot.
- * alice calls A; A's call_agent tool makes a real POST /runs to B, forwarding an
- * on-behalf-of token; B authenticates it through its OWN gate and calls Jira. The
- * delegation chain propagates across the real network hop:
+ * REAL two-process agent-to-agent over the standard A2A protocol (ADR-0017/0018).
+ * Two actual agent-runtime processes: A (:3000) hosts ticket-bot, B (:3001) hosts
+ * enrich-bot. alice calls A; A's call_agent tool discovers B via its Agent Card and
+ * invokes it over A2A JSON-RPC (message/send → tasks/get), forwarding an on-behalf-of
+ * token in the standard Authorization header; B authenticates it through its OWN gate
+ * and calls Jira. The delegation chain propagates across the real network hop:
  *
  *   alice ──POST /runs──▶ ticket-bot(:3000) ──call_agent: POST /runs──▶ enrich-bot(:3001) ──▶ Jira
  *
@@ -76,6 +76,7 @@ const bproc = Bun.spawn({
     ...common,
     PORT: "3001",
     OBO_ACTOR: "enrich-bot",
+    A2A_AGENT: "enrich-bot", // advertised on the Agent Card; run when a message names none
     AGENTS_JSON: JSON.stringify([{ name: "enrich-bot", tenant: "support" }]),
     INFERENCE_PROVIDER: "scripted",
     SCRIPTED_TURNS: JSON.stringify([
@@ -97,6 +98,7 @@ const aproc = Bun.spawn({
     ...common,
     PORT: "3000",
     OBO_ACTOR: "ticket-bot",
+    A2A_AGENT: "ticket-bot",
     AGENTS_JSON: JSON.stringify([{ name: "ticket-bot", tenant: "support" }]),
     INFERENCE_PROVIDER: "scripted",
     SCRIPTED_TURNS: JSON.stringify([
@@ -110,7 +112,11 @@ const aproc = Bun.spawn({
 try {
   const up = (await waitFor("http://localhost:3000/healthz")) && (await waitFor("http://localhost:3001/healthz"));
   if (!up) throw new Error("a runtime did not come up");
-  console.log("\n▶ two agent-runtimes up: ticket-bot(:3000), enrich-bot(:3001)\n");
+  console.log("\n▶ two agent-runtimes up: ticket-bot(:3000), enrich-bot(:3001)");
+
+  // A2A discovery: read enrich-bot's Agent Card (what ticket-bot's call_agent does too)
+  const card = await (await fetch("http://localhost:3001/.well-known/agent-card.json")).json();
+  console.log(`▶ discovered Agent Card @ /.well-known/agent-card.json: name='${card.name}' proto=${card.protocolVersion} url=${card.url} auth=${Object.keys(card.securitySchemes ?? {}).join(",")}\n`);
 
   // alice calls A — her verified identity rides in the mesh header
   const aliceToken = jwt({ tenant: "support", sub: "alice@corp", email: "alice@corp" });
@@ -133,7 +139,8 @@ try {
 
   const t = tickets[0];
   console.log(`\n[downstream] Jira ticket ${t?.key}: reporter='${t?.reporter}'  delegation chain=[${(t?.chain ?? []).join(" → ")}]`);
-  console.log(`[real transport] the A→B hop was a real POST /runs across processes, authenticated by B's own gate ✅`);
+  console.log(`[A2A transport] the A→B hop was a real A2A call (Agent Card discovery + JSON-RPC message/send → tasks/get), authenticated by B's own gate ✅`);
+  console.log(`[agent card] served at /.well-known/agent-card.json with bearer security scheme: ${card.securitySchemes?.bearer ? "yes ✅" : "no ❌"}`);
   console.log(`[human preserved] reporter is the human across the network hop: ${t?.reporter === "alice@corp" ? "yes ✅" : "no ❌"}`);
   console.log(`[chain accumulated] [${(t?.chain ?? []).join(", ")}] == [enrich-bot, ticket-bot]: ${JSON.stringify(t?.chain) === JSON.stringify(["enrich-bot", "ticket-bot"]) ? "yes ✅" : "no ❌"}`);
 } finally {

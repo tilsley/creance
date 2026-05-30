@@ -23,3 +23,4 @@ consequences. Format follows Michael Nygard's template. ADRs are immutable once
 | [0015](0015-split-authn-authz-ports.md) | Split identity (authn) + policy (authz) into separate swappable ports — mesh-trust + OPA seam (refines 0009) | Proposed |
 | [0016](0016-obo-token-vault.md) | On-behalf-of credentials via a token-exchange vault (RFC 8693) — act AS the user; per-target service-account vs OBO (realizes 0010) | Proposed |
 | [0017](0017-a2a-identity-propagation.md) | Agent-to-agent identity propagation — the OBO delegation chain (nested act) flows through the gate at every hop (extends 0016) | Proposed |
+| [0018](0018-a2a-protocol-transport.md) | Adopt the A2A (Agent2Agent) protocol — Agent Card discovery + JSON-RPC message/send/tasks/get for interoperable agent-to-agent calls (supersedes 0017's bespoke hop) | Proposed |
