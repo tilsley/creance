@@ -7,6 +7,7 @@
  */
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
 import { OllamaInferenceProvider } from "./adapters/ollama-inference";
+import { ScriptedInferenceProvider } from "./adapters/scripted-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
 import { LocalSandboxProvider } from "./adapters/local-sandbox";
 import { BedrockContentGuard } from "./adapters/bedrock-guard";
@@ -68,6 +69,8 @@ export function providersFromEnv(env: Env = process.env): Providers {
         return new BedrockInferenceProvider(env.MODEL_ID ?? "amazon.nova-lite-v1:0", region);
       case "ollama":
         return new OllamaInferenceProvider(env.OLLAMA_MODEL ?? "llama3.1", env.OLLAMA_HOST);
+      case "scripted": // deterministic demo/test driver (ADR-0017 A2A); SCRIPTED_TURNS = JSON
+        return new ScriptedInferenceProvider(env.SCRIPTED_TURNS ? JSON.parse(env.SCRIPTED_TURNS) : []);
       default:
         throw new Error(`unknown INFERENCE_PROVIDER: ${env.INFERENCE_PROVIDER}`);
     }
@@ -169,7 +172,8 @@ export function providersFromEnv(env: Env = process.env): Providers {
       case "local":
         return new LocalCredentialBroker(env.CRED_BROKER_CONFIG);
       case "vault":
-        return new OboTokenVaultBroker(env.CRED_BROKER_CONFIG);
+        // OBO_ACTOR = this runtime's agent identity, carried into the act claim (A2A chain)
+        return new OboTokenVaultBroker(env.CRED_BROKER_CONFIG, env.OBO_ACTOR ?? "agent-os");
       default:
         return new NoopCredentialBroker();
     }

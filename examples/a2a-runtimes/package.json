@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/a2a-runtimes-demo",
+  "private": true,
+  "type": "module",
+  "description": "Real two-process agent-to-agent: two agent-runtime instances, a real POST /runs between them, the OBO delegation chain propagated through each runtime's actual gate (ADR-0017)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

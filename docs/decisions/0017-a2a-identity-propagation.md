@@ -47,8 +47,14 @@ identity claims (tenant/subject) so each hop's gate re-authenticates cleanly.
 - **Least privilege travels with the request**: hop N's downstream still enforces
   the *user's* permissions, and can additionally constrain by the agent chain.
 - **Same gate, same broker** — A2A is not a special case; it's the OBO chain
-  flowing through the seams we already have. Demonstrated in examples/a2a-delegation
-  (alice → ticket-bot → enrich-bot → Jira) with no leakage.
+  flowing through the seams we already have. Demonstrated two ways: in-process
+  (examples/a2a-delegation) and across **two real agent-runtime processes**
+  (examples/a2a-runtimes) where `call_agent` makes a genuine `POST /runs` to the
+  next agent, authenticated by *its own* gate — the chain propagates over the
+  network with no leakage.
+- The transport: `call_agent` brokers an OBO credential for the target agent and
+  forwards the propagated identity in the request; the runtime's `OBO_ACTOR` is the
+  agent identity stamped into the `act` claim at each hop.
 - **Deferred:** loop/depth guards in policy; a real IdP performing the nesting (vs
-  the mock endpoint); wiring an A2A transport (e.g. the Agent2Agent protocol) so the
-  chain rides real inter-agent calls rather than an in-process hand-off.
+  the mock endpoint); adopting a *standard* A2A wire protocol (e.g. Agent2Agent)
+  in place of our bespoke `POST /runs` between runtimes.

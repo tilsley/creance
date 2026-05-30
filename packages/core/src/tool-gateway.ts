@@ -8,7 +8,7 @@
  * endpoint (AgentCore Gateway) is the documented swap-in.
  */
 import type { AgentTool } from "./tools";
-import { workspaceTools, httpRequestTool } from "./tools";
+import { workspaceTools, httpRequestTool, callAgentTool } from "./tools";
 import type { SandboxSession } from "./ports";
 import type { Principal } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -35,7 +35,7 @@ export class BuiltinToolProvider implements ToolProvider {
   constructor(private readonly broker: CredentialBroker) {}
   async resolve(ctx: ToolContext): Promise<ToolSet> {
     return {
-      tools: [...workspaceTools(ctx.session), httpRequestTool(this.broker, ctx.principal)],
+      tools: [...workspaceTools(ctx.session), httpRequestTool(this.broker, ctx.principal), callAgentTool(this.broker, ctx.principal)],
       close: async () => {},
     };
   }

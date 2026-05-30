@@ -17,6 +17,7 @@ export * from "./credentials"; // gate control: downstream credential broker
 // think
 export * from "./adapters/bedrock-inference";
 export * from "./adapters/ollama-inference";
+export * from "./adapters/scripted-inference"; // deterministic demo/test driver (ADR-0017)
 export * from "./adapters/admission-inference"; // cost hard-stop decorator (ADR-0013)
 // do
 export * from "./adapters/agentcore-sandbox";

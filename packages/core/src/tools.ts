@@ -65,6 +65,60 @@ export function httpRequestTool(broker: CredentialBroker, principal: Principal):
   };
 }
 
+/**
+ * Agent-to-agent delegation tool (ADR-0017). The model names another `agent`; the
+ * platform brokers an on-behalf-of credential for it (extending the delegation
+ * chain) and makes a real POST /runs to that agent's runtime, forwarding the
+ * propagated identity in the x-agentos-identity header — then polls to completion.
+ * The model never handles credentials, and can only reach agents the broker grants.
+ */
+export function callAgentTool(broker: CredentialBroker, principal: Principal): AgentTool {
+  const TERMINAL = ["completed", "failed", "blocked", "stuck", "max_steps"];
+  return {
+    spec: {
+      name: "call_agent",
+      description:
+        "Delegate a task to another agent. The platform forwards your identity on-behalf-of " +
+        "(extending the delegation chain) — you never handle credentials. " +
+        "Args: agent (target agent name, must be granted), task (what it should do).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          agent: { type: "string", description: "The downstream agent to call." },
+          task: { type: "string", description: "The task for that agent." },
+        },
+        required: ["agent", "task"],
+      },
+    },
+    run: async (i) => {
+      const agent = String(i.agent ?? "");
+      const cred = await broker.issue(principal, agent); // OBO token carrying this caller's chain
+      if (!cred) return `error: no access to agent '${agent}' for tenant '${principal.tenant}'`;
+      if (!cred.baseUrl) return `error: agent '${agent}' has no endpoint configured`;
+      const base = cred.baseUrl.replace(/\/$/, "");
+      try {
+        const post = await fetch(`${base}/runs`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-agentos-identity": cred.token }, // propagated identity
+          body: JSON.stringify({ agent, task: String(i.task ?? "") }),
+        });
+        if (!post.ok) return `error: call to '${agent}' failed: HTTP ${post.status} ${(await post.text()).slice(0, 200)}`;
+        const { runId } = (await post.json()) as { runId: string };
+        for (let n = 0; n < 60; n++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const r = await fetch(`${base}/runs/${runId}`);
+          if (!r.ok) continue;
+          const run = (await r.json()) as { status: string; output?: string; error?: string };
+          if (TERMINAL.includes(run.status)) return `agent '${agent}' -> ${run.status}: ${run.output ?? run.error ?? "(no output)"}`;
+        }
+        return `error: agent '${agent}' timed out`;
+      } catch (e: any) {
+        return `error: call_agent failed: ${e?.message ?? String(e)}`;
+      }
+    },
+  };
+}
+
 export function runCodeTool(session: SandboxSession): AgentTool {
   return {
     spec: {
