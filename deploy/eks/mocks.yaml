@@ -25,6 +25,7 @@ spec:
           ports:
             - { name: slack, containerPort: 9101 }
             - { name: jira, containerPort: 9102 }
+            - { name: exchange, containerPort: 9103 }
           env:
             - { name: SLACK_SA, value: slack-sa-token }
             - { name: JIRA_SA, value: jira-sa-token }
@@ -54,3 +55,14 @@ spec:
   selector: { app: mocks }
   ports:
     - { port: 80, targetPort: 9102 }
+---
+# the OBO token-exchange endpoint (RFC 8693) the vault broker exchanges against
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-exchange
+  namespace: agent-os
+spec:
+  selector: { app: mocks }
+  ports:
+    - { port: 80, targetPort: 9103 }

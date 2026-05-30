@@ -1,0 +1,143 @@
+# Cross-pod A2A + OBO field-trip add-on (ADR-0017/0018). Two more runtimes on the
+# same keyless image + ServiceAccount:
+#   agent-caller (coordinator) --A2A/JSON-RPC--> agent-b (specialist)
+# The coordinator's CRED_BROKER=vault exchanges alice's inbound token (RFC 8693, at
+# mock-exchange) for a downstream token that acts AS alice with act:{sub:coordinator},
+# and call_agent carries it to agent-b as the A2A Authorization bearer. agent-b's
+# mesh-trust decodes it, so its run is attributed to alice with the delegation chain
+# [coordinator] — proving OBO propagates across pods over the network, keyless.
+# Both reuse SA agent-runtime (Pod Identity keyless creds + tenant-reader RBAC).
+---
+# ---------- agent-b: the downstream "specialist" ----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-b-config
+  namespace: agent-os
+data:
+  REGION: eu-west-2
+  INFERENCE_PROVIDER: bedrock
+  MODEL_ID: amazon.nova-lite-v1:0
+  SANDBOX_PROVIDER: local
+  RUN_STORE: dynamodb
+  RUNS_TABLE: agent-os-runs
+  SPEND_STORE: dynamodb
+  SPEND_TABLE: agent-os-budgets
+  TELEMETRY: console
+  GATE: local
+  GATE_BUDGET_SOURCE: kube
+  TENANT_ASSUME_ROLE: kube # keyless, runs as agentos-teama
+  AUTHN: mesh # decodes the OBO token arriving in the A2A Authorization bearer
+  AUTHZ: allow # authz-on-user already proven on ticket-bot; keep this pod lean (no OPA sidecar)
+  CRED_BROKER: noop # the specialist calls nobody downstream
+  AGENT_REGISTRY: memory
+  AGENTS_JSON: |
+    [
+      { "name": "specialist", "tenant": "teama", "maxSteps": 2,
+        "systemPrompt": "You are a specialist analyst. Answer the delegated question in one or two sentences, then stop." }
+    ]
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-b
+  namespace: agent-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-b }
+  template:
+    metadata:
+      labels: { app: agent-b }
+    spec:
+      serviceAccountName: agent-runtime # keyless via Pod Identity
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: agent-b
+          image: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/agent-runtime:dev
+          ports: [{ containerPort: 3000 }]
+          envFrom: [{ configMapRef: { name: agent-b-config } }]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { httpGet: { path: /healthz, port: 3000 }, initialDelaySeconds: 3 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-b
+  namespace: agent-os
+spec:
+  selector: { app: agent-b }
+  ports: [{ port: 80, targetPort: 3000 }]
+---
+# ---------- agent-caller: the "coordinator" that delegates via A2A + OBO ----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-caller-config
+  namespace: agent-os
+data:
+  REGION: eu-west-2
+  # Scripted inference: this demo tests the A2A *transport* + OBO propagation, not the
+  # model's tool-selection. Scripting the coordinator's turns makes call_agent fire
+  # deterministically (nova-lite is too weak to reliably pick a tool over run_cmd), and
+  # needs no Bedrock at all — the run is fully reproducible. The specialist (agent-b)
+  # still does real nova-lite inference to answer.
+  INFERENCE_PROVIDER: scripted
+  SCRIPTED_TURNS: '[{"tool":"call_agent","input":{"agent":"specialist","task":"In one or two sentences, summarise the likely root cause when a nightly export job fails after an S3 lifecycle change."}},{"text":"Relayed the specialist''s analysis to the user."}]'
+  SANDBOX_PROVIDER: local
+  RUN_STORE: dynamodb
+  RUNS_TABLE: agent-os-runs
+  SPEND_STORE: dynamodb
+  SPEND_TABLE: agent-os-budgets
+  TELEMETRY: console
+  GATE: local
+  GATE_BUDGET_SOURCE: kube
+  AUTHN: mesh
+  AUTHZ: allow
+  # OBO: exchange the caller's token for a downstream token that acts AS the user,
+  # tagging this runtime's agent identity into the act claim.
+  CRED_BROKER: vault
+  OBO_ACTOR: coordinator
+  CRED_BROKER_CONFIG: '{"specialist":{"tokenEndpoint":"http://mock-exchange.agent-os.svc.cluster.local/token","baseUrl":"http://agent-b.agent-os.svc.cluster.local","audience":"specialist"}}'
+  AGENT_REGISTRY: memory
+  AGENTS_JSON: |
+    [
+      { "name": "coordinator", "tenant": "teama", "maxSteps": 4,
+        "systemPrompt": "You are a coordinator. Delegate the user's question to the 'specialist' agent: call the call_agent tool with agent set to 'specialist' and task set to the user's question. The platform forwards identity on-behalf-of; you never handle credentials. When the specialist replies, relay its answer to the user and stop." }
+    ]
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-caller
+  namespace: agent-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-caller }
+  template:
+    metadata:
+      labels: { app: agent-caller }
+    spec:
+      serviceAccountName: agent-runtime # keyless via Pod Identity
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: agent-caller
+          image: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/agent-runtime:dev
+          ports: [{ containerPort: 3000 }]
+          envFrom: [{ configMapRef: { name: agent-caller-config } }]
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } }
+          readinessProbe: { httpGet: { path: /healthz, port: 3000 }, initialDelaySeconds: 3 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-caller
+  namespace: agent-os
+spec:
+  selector: { app: agent-caller }
+  ports: [{ port: 80, targetPort: 3000 }]

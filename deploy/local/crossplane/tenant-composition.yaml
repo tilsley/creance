@@ -69,6 +69,15 @@ spec:
           # narrow the Resource to *this* profile's ARN because the profile id is
           # generated at create-time (cross-resource ARN patches are fiddly); a
           # follow-up could use the composite status.profileId once it's known.
+          #
+          # foundation-model is region-AGNOSTIC (arn:aws:bedrock:*::foundation-model/*)
+          # on purpose: a system-defined cross-region inference profile (e.g.
+          # eu.anthropic.claude-haiku — what spec.baseModel selects) fans a single
+          # invoke out to the model's copies in OTHER regions, so the role needs FM
+          # invoke in those regions too — eu-west-2-only FM would AccessDenied. The
+          # inference-profile entry stays region-pinned (the profile is called in
+          # eu-west-2). So switching a tenant to Claude is purely a spec.baseModel edit
+          # on the claim — the grant already covers it. Proven on the EKS field trip.
           - name: policy
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
@@ -87,7 +96,7 @@ spec:
                           "Effect": "Allow",
                           "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
                           "Resource": [
-                            "arn:aws:bedrock:eu-west-2::foundation-model/*",
+                            "arn:aws:bedrock:*::foundation-model/*",
                             "arn:aws:bedrock:eu-west-2:*:inference-profile/*",
                             "arn:aws:bedrock:eu-west-2:*:application-inference-profile/*"
                           ]
