@@ -1,0 +1,72 @@
+# Tenant claim on the cluster WITHOUT Crossplane (field trip). A plain CRD + a teama
+# CR pointing at the per-tenant resources that already exist in AWS. The runtime's
+# KubeBudgetSource reads spec.monthlyBudgetUsd; KubeStsTenantCredentials reads
+# status.roleArn — both unchanged from local. No status subresource, so one apply
+# sets spec + status together. (On the real platform Crossplane provisions + fills
+# these; here we reuse the existing agentos-teama bundle.)
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tenantinferenceprofiles.platform.agent-os.io
+spec:
+  group: platform.agent-os.io
+  scope: Cluster
+  names:
+    kind: TenantInferenceProfile
+    plural: tenantinferenceprofiles
+    singular: tenantinferenceprofile
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                tenant: { type: string }
+                baseModel: { type: string }
+                monthlyBudgetUsd: { type: string }
+            status:
+              type: object
+              properties:
+                roleArn: { type: string }
+                profileId: { type: string }
+                policyArn: { type: string }
+---
+apiVersion: platform.agent-os.io/v1alpha1
+kind: TenantInferenceProfile
+metadata:
+  name: teama
+spec:
+  tenant: teama
+  baseModel: amazon.nova-lite-v1:0
+  monthlyBudgetUsd: "10"
+status:
+  roleArn: arn:aws:iam::233965347831:role/agentos-teama
+---
+# the runtime SA reads the cluster-scoped claim (cap + roleArn)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-runtime-tenant-reader
+rules:
+  - apiGroups: ["platform.agent-os.io"]
+    resources: ["tenantinferenceprofiles"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-runtime-tenant-reader
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: agent-os
+roleRef:
+  kind: ClusterRole
+  name: agent-runtime-tenant-reader
+  apiGroup: rbac.authorization.k8s.io

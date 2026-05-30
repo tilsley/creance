@@ -1,0 +1,56 @@
+# Mock Slack + Jira for the field trip — one pod, two ports, two Services. Each
+# requires the bot's service-account token (the auth point under test). Tokens are
+# fixed demo values shared with the runtime's CRED_BROKER_CONFIG.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mocks
+  namespace: agent-os
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mocks }
+  template:
+    metadata:
+      labels: { app: mocks }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: mocks
+          image: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/agent-os-mocks:dev
+          ports:
+            - { name: slack, containerPort: 9101 }
+            - { name: jira, containerPort: 9102 }
+          env:
+            - { name: SLACK_SA, value: slack-sa-token }
+            - { name: JIRA_SA, value: jira-sa-token }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-slack
+  namespace: agent-os
+spec:
+  selector: { app: mocks }
+  ports:
+    - { port: 80, targetPort: 9101 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-jira
+  namespace: agent-os
+spec:
+  selector: { app: mocks }
+  ports:
+    - { port: 80, targetPort: 9102 }
