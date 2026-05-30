@@ -51,7 +51,8 @@ export class MeshTrustAuthenticator implements Authenticator {
     }
     const groupsRaw = claims[this.groupsClaim];
     const groups = Array.isArray(groupsRaw) ? groupsRaw.map(String) : undefined;
-    return { tenant, subject, ...(groups ? { groups } : {}) };
+    // surface the raw token as the subject_token for downstream OBO exchange (ADR-0010)
+    return { tenant, subject, ...(groups ? { groups } : {}), token: raw };
   }
 }
 

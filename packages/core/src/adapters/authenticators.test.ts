@@ -32,13 +32,14 @@ test("MeshTrustAuthenticator reads tenant/subject/groups from edge-verified clai
   const a = new MeshTrustAuthenticator(); // defaults: header x-agentos-identity, tenant claim, email/sub subject
   const token = fakeJwt({ tenant: "teama", email: "alice@corp.com", groups: ["eng", "admins"] });
   const p = await a.authenticate({ headers: { "x-agentos-identity": token } });
-  expect(p).toEqual({ tenant: "teama", subject: "alice@corp.com", groups: ["eng", "admins"] });
+  expect(p).toMatchObject({ tenant: "teama", subject: "alice@corp.com", groups: ["eng", "admins"] });
+  expect(p.token).toBe(token); // raw token surfaced for downstream OBO exchange
 });
 
 test("MeshTrustAuthenticator also accepts a raw JSON claims blob + custom claim names", async () => {
   const a = new MeshTrustAuthenticator({ header: "x-id", tenantClaim: "custom:tenant" });
   const p = await a.authenticate({ headers: { "x-id": JSON.stringify({ "custom:tenant": "teamb", sub: "svc-1" }) } });
-  expect(p).toEqual({ tenant: "teamb", subject: "svc-1" });
+  expect(p).toMatchObject({ tenant: "teamb", subject: "svc-1" });
 });
 
 test("MeshTrustAuthenticator rejects a missing edge header (fail closed)", async () => {

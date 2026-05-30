@@ -21,3 +21,4 @@ consequences. Format follows Michael Nygard's template. ADRs are immutable once
 | [0013](0013-inference-cost-enforcement.md) | Inference cost enforcement — buy the gateway (LiteLLM behind the port), own the worst-case admission policy (refines 0004) | Proposed |
 | [0014](0014-per-tenant-workload-identity.md) | Per-tenant workload identity — assume-role + Budget Action enforcement (implements 0009, refines 0013) | Proposed |
 | [0015](0015-split-authn-authz-ports.md) | Split identity (authn) + policy (authz) into separate swappable ports — mesh-trust + OPA seam (refines 0009) | Proposed |
+| [0016](0016-obo-token-vault.md) | On-behalf-of credentials via a token-exchange vault (RFC 8693) — act AS the user; per-target service-account vs OBO (realizes 0010) | Proposed |

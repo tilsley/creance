@@ -26,6 +26,7 @@ import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
 import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
+import { OboTokenVaultBroker } from "./adapters/obo-token-vault-broker";
 import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
 import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
 import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
@@ -160,10 +161,19 @@ export function providersFromEnv(env: Env = process.env): Providers {
     return creds ? new BedrockInferenceProvider(inference.model, region, creds) : inference;
   };
 
-  // credential broker defaults to deny-all (noop); authenticated tools are inert
-  // until CRED_BROKER=local grants downstream targets per tenant (ADR-0010).
-  const credentials: CredentialBroker =
-    (env.CRED_BROKER ?? "noop") === "local" ? new LocalCredentialBroker(env.CRED_BROKER_CONFIG) : new NoopCredentialBroker();
+  // credential broker defaults to deny-all (noop). CRED_BROKER=local grants static
+  // per-tenant service-account creds; CRED_BROKER=vault exchanges the caller's token
+  // for downstream creds that act AS the user (OBO, RFC 8693 — ADR-0010).
+  const credentials: CredentialBroker = (() => {
+    switch (env.CRED_BROKER ?? "noop") {
+      case "local":
+        return new LocalCredentialBroker(env.CRED_BROKER_CONFIG);
+      case "vault":
+        return new OboTokenVaultBroker(env.CRED_BROKER_CONFIG);
+      default:
+        return new NoopCredentialBroker();
+    }
+  })();
 
   // tool gateway (ADR-0011): built-in tools always; MCP servers added when
   // MCP_SERVERS is configured. The runtime resolves a per-run toolset through it.

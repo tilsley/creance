@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/obo-token-vault-demo",
+  "private": true,
+  "type": "module",
+  "description": "On-behalf-of: the broker exchanges the caller's token (RFC 8693) for a downstream token that acts AS the user, carrying both identities — vs the service-account model (ADR-0010)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

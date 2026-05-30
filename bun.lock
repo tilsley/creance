@@ -24,6 +24,12 @@
         "@modelcontextprotocol/sdk": "^1.29.0",
       },
     },
+    "examples/obo-token-vault": {
+      "name": "@agent-os/obo-token-vault-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/ticket-bot": {
       "name": "@agent-os/ticket-bot-demo",
       "dependencies": {
@@ -96,6 +102,8 @@
     "@agent-os/infra": ["@agent-os/infra@workspace:infra"],
 
     "@agent-os/mcp-gateway-demo": ["@agent-os/mcp-gateway-demo@workspace:examples/mcp-gateway"],
+
+    "@agent-os/obo-token-vault-demo": ["@agent-os/obo-token-vault-demo@workspace:examples/obo-token-vault"],
 
     "@agent-os/ticket-bot-demo": ["@agent-os/ticket-bot-demo@workspace:examples/ticket-bot"],
 

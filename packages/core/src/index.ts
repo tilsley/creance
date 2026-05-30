@@ -39,6 +39,7 @@ export * from "./adapters/dynamo-spend-store"; // durable monthly spend counter 
 export * from "./adapters/sts-tenant-credentials"; // per-tenant assume-role identity (ADR-0014)
 export * from "./adapters/local-credential-broker";
 export * from "./adapters/noop-credential-broker";
+export * from "./adapters/obo-token-vault-broker"; // on-behalf-of token exchange (ADR-0010)
 // tools (#4): MCP gateway
 export * from "./adapters/mcp-tool-provider";
 // remember: durable run store
