@@ -174,7 +174,7 @@ const server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/runs") {
-      // authn → authz → budget (ADR-0015): who is the caller, may they, can they afford it
+      // gate (ADR-0015): authn → authz(of the target agent) → budget
       let principal;
       try {
         principal = await authenticator.authenticate({ credential: bearer(req), headers: headerMap(req) });
@@ -182,10 +182,6 @@ const server = Bun.serve({
         if (e instanceof UnauthorizedError) return Response.json({ error: "unauthorized" }, { status: 401 });
         throw e;
       }
-      const decision = await authorizer.authorize(principal, "run:create");
-      if (!decision.allow) return Response.json({ error: "forbidden", reason: decision.reason }, { status: 403 });
-      const budget = await gate.checkBudget(principal.tenant);
-      if (!budget.ok) return Response.json({ error: "budget exceeded", budget }, { status: 402 });
 
       let body: any;
       try {
@@ -197,8 +193,16 @@ const server = Bun.serve({
       if (typeof task !== "string" || !task.trim()) {
         return Response.json({ error: "missing 'task' (string)" }, { status: 400 });
       }
-      // agent control plane (#5): if an agent is named, it must be registered
       const agent = body?.agent;
+
+      // authz: may this principal create a run of this agent? (policy sees the agent
+      // as the resource — e.g. OPA can gate sensitive agents on group membership)
+      const decision = await authorizer.authorize(principal, "run:create", agent != null ? String(agent) : undefined);
+      if (!decision.allow) return Response.json({ error: "forbidden", reason: decision.reason }, { status: 403 });
+      const budget = await gate.checkBudget(principal.tenant);
+      if (!budget.ok) return Response.json({ error: "budget exceeded", budget }, { status: 402 });
+
+      // agent control plane (#5): if an agent is named, it must be registered
       if (agent != null && !(await agentRegistry.get(String(agent)))) {
         return Response.json({ error: `unknown agent '${agent}'` }, { status: 404 });
       }
