@@ -31,8 +31,9 @@ export * from "./adapters/noop-gate";
 export * from "./adapters/static-token-authenticator";
 export * from "./adapters/mesh-trust-authenticator";
 export * from "./adapters/noop-authenticator";
-// authz (ADR-0015): allow/deny policy seam (OPA next)
+// authz (ADR-0015): allow/deny policy seam
 export * from "./adapters/allow-all-authorizer";
+export * from "./adapters/opa-authorizer";
 export * from "./adapters/kube-budget-source"; // per-tenant cap from the claim (ADR-0013)
 export * from "./adapters/dynamo-spend-store"; // durable monthly spend counter (ADR-0013)
 export * from "./adapters/sts-tenant-credentials"; // per-tenant assume-role identity (ADR-0014)

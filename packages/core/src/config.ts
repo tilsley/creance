@@ -19,6 +19,7 @@ import { StaticTokenAuthenticator } from "./adapters/static-token-authenticator"
 import { MeshTrustAuthenticator } from "./adapters/mesh-trust-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
+import { OpaAuthorizer } from "./adapters/opa-authorizer";
 import { KubeBudgetSource } from "./adapters/kube-budget-source";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
@@ -138,8 +139,12 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  // authz (ADR-0015): allow/deny policy seam. AllowAll stub today; OpaAuthorizer next.
-  const authorizer: Authorizer = new AllowAllAuthorizer();
+  // authz (ADR-0015): allow/deny policy seam. AUTHZ=opa delegates to an OPA instance
+  // (the user's org model — policy in Rego, owned per service); default AllowAll stub.
+  const authorizer: Authorizer =
+    env.AUTHZ === "opa"
+      ? new OpaAuthorizer(env.OPA_URL ?? "http://localhost:8181/v1/data/agentos/authz")
+      : new AllowAllAuthorizer();
 
   // per-tenant workload identity (ADR-0014): TENANT_ASSUME_ROLE=kube makes the runtime
   // assume each tenant's IAM role (agentos-<tenant>, ARN from the claim) per run, so
