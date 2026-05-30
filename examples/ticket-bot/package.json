@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/ticket-bot-demo",
+  "private": true,
+  "type": "module",
+  "description": "ticket-bot: a Slack->Jira agent using per-target service-account credentials from the broker, with the inbound gate (authn/authz) and server-side credential injection (ADR-0010/0015)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

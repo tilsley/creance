@@ -24,6 +24,12 @@
         "@modelcontextprotocol/sdk": "^1.29.0",
       },
     },
+    "examples/ticket-bot": {
+      "name": "@agent-os/ticket-bot-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/tracer-bullet": {
       "name": "@agent-os/tracer-bullet",
       "dependencies": {
@@ -90,6 +96,8 @@
     "@agent-os/infra": ["@agent-os/infra@workspace:infra"],
 
     "@agent-os/mcp-gateway-demo": ["@agent-os/mcp-gateway-demo@workspace:examples/mcp-gateway"],
+
+    "@agent-os/ticket-bot-demo": ["@agent-os/ticket-bot-demo@workspace:examples/ticket-bot"],
 
     "@agent-os/tracer-bullet": ["@agent-os/tracer-bullet@workspace:examples/tracer-bullet"],
 
