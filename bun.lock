@@ -11,6 +11,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/a2a-delegation": {
+      "name": "@agent-os/a2a-delegation-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/credential-broker": {
       "name": "@agent-os/credential-broker-demo",
       "dependencies": {
@@ -89,6 +95,8 @@
     },
   },
   "packages": {
+    "@agent-os/a2a-delegation-demo": ["@agent-os/a2a-delegation-demo@workspace:examples/a2a-delegation"],
+
     "@agent-os/agent-controller": ["@agent-os/agent-controller@workspace:services/agent-controller"],
 
     "@agent-os/agent-runtime": ["@agent-os/agent-runtime@workspace:services/agent-runtime"],

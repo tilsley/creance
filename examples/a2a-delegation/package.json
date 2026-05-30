@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/a2a-delegation-demo",
+  "private": true,
+  "type": "module",
+  "description": "Agent-to-agent identity propagation: the OBO delegation chain (nested RFC 8693 act) flows through the gate at each hop — the human is preserved and the agent path accumulates (ADR-0017)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

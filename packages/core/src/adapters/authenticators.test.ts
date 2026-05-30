@@ -42,6 +42,15 @@ test("MeshTrustAuthenticator also accepts a raw JSON claims blob + custom claim 
   expect(p).toMatchObject({ tenant: "teamb", subject: "svc-1" });
 });
 
+test("MeshTrustAuthenticator extracts the agent delegation chain from nested act (A2A)", async () => {
+  const a = new MeshTrustAuthenticator();
+  // the token an agent-to-agent hop carries: alice, acted for by enrich-bot, via ticket-bot
+  const token = fakeJwt({ tenant: "support", sub: "alice@corp", act: { sub: "enrich-bot", act: { sub: "ticket-bot" } } });
+  const p = await a.authenticate({ headers: { "x-agentos-identity": token } });
+  expect(p.subject).toBe("alice@corp"); // the human is preserved across hops
+  expect(p.actors).toEqual(["enrich-bot", "ticket-bot"]); // the delegation chain, most-recent first
+});
+
 test("MeshTrustAuthenticator rejects a missing edge header (fail closed)", async () => {
   const a = new MeshTrustAuthenticator();
   await expect(a.authenticate(noHeaders)).rejects.toBeInstanceOf(UnauthorizedError);

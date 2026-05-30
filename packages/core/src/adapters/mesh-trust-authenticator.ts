@@ -51,8 +51,15 @@ export class MeshTrustAuthenticator implements Authenticator {
     }
     const groupsRaw = claims[this.groupsClaim];
     const groups = Array.isArray(groupsRaw) ? groupsRaw.map(String) : undefined;
-    // surface the raw token as the subject_token for downstream OBO exchange (ADR-0010)
-    return { tenant, subject, ...(groups ? { groups } : {}), token: raw };
+    // walk the nested `act` claim → the agent delegation chain (A2A; ADR-0017)
+    const actors = actorChain(claims);
+    return {
+      tenant,
+      subject,
+      ...(groups ? { groups } : {}),
+      ...(actors.length ? { actors } : {}),
+      token: raw, // the subject_token for downstream OBO exchange (ADR-0010)
+    };
   }
 }
 
@@ -66,6 +73,15 @@ function decodeClaims(value: string): Record<string, any> | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** RFC 8693 nests `act` to express a delegation chain; flatten it, most-recent first. */
+function actorChain(claims: Record<string, any>): string[] {
+  const out: string[] = [];
+  for (let a = claims.act; a && typeof a === "object"; a = a.act) {
+    if (a.sub) out.push(String(a.sub));
+  }
+  return out;
 }
 
 function base64UrlDecode(s: string): string {
