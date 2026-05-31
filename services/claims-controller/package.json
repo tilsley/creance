@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/claims-controller",
+  "private": true,
+  "type": "module",
+  "description": "Reconciles InferenceClaims against the namespace InferenceAllowance — aggregate quota + status.conditions (ADR-0021)",
+  "scripts": {
+    "start": "bun run controller.ts"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0"
+  }
+}

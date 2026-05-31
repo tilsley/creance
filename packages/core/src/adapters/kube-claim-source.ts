@@ -47,6 +47,10 @@ export class KubeClaimSource implements ClaimSource, BudgetSource, SaTenantResol
     const bySa = new Map<string, InferenceClaim>();
     const byTenant = new Map<string, InferenceClaim>();
     for (const o of items) {
+      // honour only non-Rejected claims (slice 7): the claims-controller writes Ready=False on
+      // claims that overflow the namespace allowance. Fresh claims (no status) are honoured —
+      // the VAP already validated them per-object at apply.
+      if (isRejected(o)) continue;
       // Namespaced: tenant = the claim's namespace, SA = the in-namespace SA → full identity
       // (so a tenant can only bind SAs in its own namespace). Cluster: tenant/SA from spec.
       const ns = o?.metadata?.namespace;
@@ -74,6 +78,11 @@ export class KubeClaimSource implements ClaimSource, BudgetSource, SaTenantResol
   async tenantFor(serviceAccount: string): Promise<string | undefined> {
     return (await this.forServiceAccount(serviceAccount))?.tenant;
   }
+}
+
+/** A claim the controller marked over-allowance (status.conditions Ready=False) — not honoured. */
+function isRejected(o: any): boolean {
+  return (o?.status?.conditions ?? []).some((c: any) => c?.type === "Ready" && c?.status === "False");
 }
 
 /** `namespace` set ⇒ namespaced claim: tenant = namespace, SA = the full in-namespace identity. */

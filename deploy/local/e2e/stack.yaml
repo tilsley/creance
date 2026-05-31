@@ -222,3 +222,46 @@ spec:
       projected:
         sources:
           - serviceAccountToken: { path: token, audience: agent-os, expirationSeconds: 3600 }
+---
+# --- the claims-controller (slice 7): aggregate quota + status.conditions ---------
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: claims-controller, namespace: agentos-e2e }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: agentos-e2e-claims-controller }
+rules:
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: agentos-e2e-claims-controller }
+roleRef: { kind: ClusterRole, name: agentos-e2e-claims-controller, apiGroup: rbac.authorization.k8s.io }
+subjects:
+  - { kind: ServiceAccount, name: claims-controller, namespace: agentos-e2e }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: e2e-claims-controller, namespace: agentos-e2e }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: e2e-claims-controller } }
+  template:
+    metadata: { labels: { app: e2e-claims-controller } }
+    spec:
+      serviceAccountName: claims-controller
+      containers:
+        - name: controller
+          image: agent-runtime:dev # same repo image; override the command to run the controller
+          imagePullPolicy: IfNotPresent
+          command: ["bun", "run", "services/claims-controller/controller.ts"]
+          env:
+            - { name: RECONCILE_INTERVAL_MS, value: "3000" } # fast resync for the e2e
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+          resources: { requests: { cpu: 25m, memory: 96Mi }, limits: { cpu: 200m, memory: 256Mi } }

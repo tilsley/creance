@@ -43,10 +43,28 @@ spec:
               x-kubernetes-validations:
                 - rule: "!has(self.sessionBudgetUsd) || double(self.sessionBudgetUsd) <= double(self.monthlyBudgetUsd)"
                   message: "sessionBudgetUsd must not exceed monthlyBudgetUsd"
+            # the claims-controller writes status.conditions[Ready] (aggregate quota; slice 7)
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string }
+                      status: { type: string }
+                      reason: { type: string }
+                      message: { type: string }
+                      observedGeneration: { type: integer }
+                      lastTransitionTime: { type: string }
+      subresources:
+        status: {}
       additionalPrinterColumns:
         - { name: ServiceAccount, type: string, jsonPath: .spec.serviceAccount }
         - { name: Model, type: string, jsonPath: .spec.model }
         - { name: Budget, type: string, jsonPath: .spec.monthlyBudgetUsd }
+        - { name: Ready, type: string, jsonPath: '.status.conditions[?(@.type=="Ready")].status' }
 ---
 # The admin-set ceiling for a namespace — the bound the tenant self-services within. Tenants
 # get NO write RBAC on this; the VAP reads it (as a param) to validate each claim.

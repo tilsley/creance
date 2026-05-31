@@ -33,6 +33,17 @@ test("namespaced: a tenant can't be bound by another namespace's SA name (full i
   expect(await s.forServiceAccount("system:serviceaccount:team-b:ticket-bot")).toBeUndefined();
 });
 
+test("a claim the controller marked Ready=False (over-allowance) is NOT honoured", async () => {
+  const items = [
+    { metadata: { namespace: "team-a" }, spec: { serviceAccount: "ok", monthlyBudgetUsd: "10" } },
+    { metadata: { namespace: "team-a" }, spec: { serviceAccount: "over", monthlyBudgetUsd: "95" },
+      status: { conditions: [{ type: "Ready", status: "False", reason: "AllowanceExceeded" }] } },
+  ];
+  const s = new KubeClaimSource({ scope: "Namespaced" }, 30_000, async () => items);
+  expect(await s.forServiceAccount("system:serviceaccount:team-a:ok")).toBeTruthy(); // no status → honoured
+  expect(await s.forServiceAccount("system:serviceaccount:team-a:over")).toBeUndefined(); // Rejected → skipped
+});
+
 test("cluster (legacy): tenant + SA come from spec", async () => {
   const items = [{ spec: { tenant: "teama", serviceAccount: "system:serviceaccount:agent-os:run", monthlyBudgetUsd: "7" } }];
   const s = new KubeClaimSource({ scope: "Cluster" }, 30_000, async () => items);

@@ -106,6 +106,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "services/claims-controller": {
+      "name": "@agent-os/claims-controller",
+      "dependencies": {
+        "@kubernetes/client-node": "^1.4.0",
+      },
+    },
     "services/inference-gateway": {
       "name": "@agent-os/inference-gateway",
       "dependencies": {
@@ -121,6 +127,8 @@
     "@agent-os/agent-controller": ["@agent-os/agent-controller@workspace:services/agent-controller"],
 
     "@agent-os/agent-runtime": ["@agent-os/agent-runtime@workspace:services/agent-runtime"],
+
+    "@agent-os/claims-controller": ["@agent-os/claims-controller@workspace:services/claims-controller"],
 
     "@agent-os/core": ["@agent-os/core@workspace:packages/core"],
 

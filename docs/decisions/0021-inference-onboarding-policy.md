@@ -58,9 +58,12 @@ inference with a budget. **Onboarding becomes a policy assertion, not a provisio
 - ✅ **Namespaced claims + `InferenceAllowance`** — *built in slice 6*: the claim is Namespaced
   (tenant = namespace, RBAC-scoped so a tenant grants only its own SAs); an admin-set
   `InferenceAllowance` per namespace caps budget + allowed models; a **ValidatingAdmissionPolicy**
-  enforces claim ≤ allowance at apply time, controller-free. Still deferred: **aggregate quota**
-  (sum of a namespace's claims ≤ allowance — needs a controller to track the running total) and a
-  status/auto-approve flow.
+  enforces each claim ≤ allowance at apply time, controller-free.
+- ✅ **Aggregate quota + status** — *built in slice 7*: a `claims-controller` (the agent-controller
+  reconciler pattern) sums each namespace's claims vs the allowance and writes
+  `status.conditions[Ready]`; the gateway honours only non-Rejected claims (VAP = instant per-object
+  gate, controller = async cross-object + status). Still deferred: a **human-approval workflow**
+  (`autoApproveUnderUsd` → a `Pending` state needing sign-off) — this is auto-verdict from the aggregate.
 - **Per-claim model routing/enforcement** — the claim carries `model`; the gateway still uses its configured model id today.
 - **`DynamoClaimSource` + `POST /claims` API** — the non-k8s onboarding path.
 - **Optional status controller** (`agent-controller` pattern) for `status.conditions` / aggregate quota.
