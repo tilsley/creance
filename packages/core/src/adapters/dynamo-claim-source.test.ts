@@ -34,3 +34,19 @@ test("unknown identity / tenant → undefined; numeric-string budgets coerce", a
   expect(await s.forServiceAccount("x")).toMatchObject({ tenant: "t1", monthlyBudgetUsd: 9.5 });
   expect(await s.forTenant("nope")).toBeUndefined();
 });
+
+test("putClaim writes the item keyed by serviceAccount, omitting unset fields", async () => {
+  const written: any[] = [];
+  const s = new DynamoClaimSource("t", {
+    reader: { async byServiceAccount() {}, async byTenant() {}, async put(item) { written.push(item); } },
+  });
+  await s.putClaim({ tenant: "svc-1", serviceAccount: "svc-1", model: "claude-haiku", monthlyBudgetUsd: 10 });
+  expect(written).toEqual([{ serviceAccount: "svc-1", tenant: "svc-1", model: "claude-haiku", monthlyBudgetUsd: 10 }]);
+});
+
+test("putClaim throws without a writer or without a serviceAccount key", async () => {
+  const noWriter = new DynamoClaimSource("t", { reader: { async byServiceAccount() {}, async byTenant() {} } });
+  expect(noWriter.putClaim({ tenant: "x", serviceAccount: "x", model: "m", monthlyBudgetUsd: 1 })).rejects.toThrow(/writer not configured/);
+  const ok = new DynamoClaimSource("t", { reader: { async byServiceAccount() {}, async byTenant() {}, async put() {} } });
+  expect(ok.putClaim({ tenant: "x", model: "m", monthlyBudgetUsd: 1 })).rejects.toThrow(/serviceAccount/);
+});

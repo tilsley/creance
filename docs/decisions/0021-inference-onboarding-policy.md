@@ -64,11 +64,25 @@ inference with a budget. **Onboarding becomes a policy assertion, not a provisio
   `status.conditions[Ready]`; the gateway honours only non-Rejected claims (VAP = instant per-object
   gate, controller = async cross-object + status). Still deferred: a **human-approval workflow**
   (`autoApproveUnderUsd` → a `Pending` state needing sign-off) — this is auto-verdict from the aggregate.
-- **Per-claim model routing/enforcement** — the claim carries `model`; the gateway still uses its configured model id today.
+- ✅ **Per-claim model routing** — *built*: the gateway resolves each caller's model from its claim
+  (`modelFor` → `claimSource.forServiceAccount(sa).model`) and passes it to `inferenceForTenant`, so
+  the model id comes from the grant, not gateway config. (Per-claim *enforcement* — rejecting a
+  caller that asks off-claim — still rides the read path's model resolution.)
 - ✅ **`DynamoClaimSource`** — *built in slice 8*: the non-k8s read adapter (grants in a DynamoDB
   table next to the spend counter; `CLAIM_SOURCE=dynamo`), satisfying BudgetSource + SaTenantResolver
-  from the same store. Still deferred: a **`POST /claims` self-service write API** (its caller-auth
-  differs from the read path — the tenant can't be claim-derived when creating the first claim).
+  from the same store.
+- ✅ **`POST /claims` self-service write** — *built in slice 9*, resolving the caller-auth fork with
+  **tenant = the verified identity (1:1)**: a caller authenticates, the gateway sets `tenant = its
+  identity` (no derivation — you can't forge your own identity), validates the requested model +
+  budget against a default `Allowance` (`validateClaim`, the TS mirror of the CEL/VAP rules), and
+  writes the claim **keyed by + scoped to that identity** (`DynamoClaimSource.putClaim`), so a caller
+  can only create its OWN bounded grant. Identity verification is injected (`ClaimWrite.verifyIdentity`
+  = the `KubeTokenReviewer` today). Enabled when `CLAIM_SOURCE=dynamo` + `CLAIMS_DEFAULT_MAX_USD`
+  (+ `CLAIMS_ALLOWED_MODELS`) are set; the k8s namespaced path (tenant = namespace) is unchanged —
+  both behind the `ClaimSource` port. Still deferred: **IAM-SigV4 / OIDC identity verifiers** (the
+  verifier seam is ready; only the k8s `TokenReviewer` impl exists) and **per-identity allowance
+  overrides** (a stored allowance vs the flat env default). Team-grouping (tenant ≠ identity) is
+  explicitly out under the 1:1 assumption.
 
 ## Relationship
 

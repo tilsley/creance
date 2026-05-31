@@ -13,9 +13,10 @@
  */
 import { providersFromEnv } from "@agent-os/core";
 import { handleGenerate } from "./generate";
+import { handleCreateClaim } from "./claims";
 
 const providers = providersFromEnv();
-const { authenticator, inferenceForTenant, claimSource } = providers;
+const { authenticator, inferenceForTenant, claimSource, claimWrite } = providers;
 const port = Number(process.env.PORT ?? 3100);
 // route each caller to the model named on its claim (ADR-0021), when a claim source is configured
 const modelFor = claimSource ? (sa: string) => claimSource.forServiceAccount(sa).then((c) => c?.model) : undefined;
@@ -27,6 +28,11 @@ const server = Bun.serve({
     if (req.method === "GET" && url.pathname === "/healthz") return Response.json({ status: "ok" });
     if (req.method === "POST" && url.pathname === "/v1/generate") {
       return handleGenerate(req, { authenticator, inferenceForTenant, modelFor });
+    }
+    // self-service onboarding (ADR-0021): a service registers its own grant (tenant = identity)
+    if (req.method === "POST" && url.pathname === "/claims") {
+      if (!claimWrite) return Response.json({ error: "self-service claims not enabled" }, { status: 404 });
+      return handleCreateClaim(req, claimWrite);
     }
     return new Response("not found", { status: 404 });
   },

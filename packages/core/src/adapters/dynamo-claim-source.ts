@@ -12,15 +12,16 @@
  * needs the table (+ endpoint for DynamoDB Local).
  */
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, QueryCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { ClaimSource, InferenceClaim } from "../claims";
 import type { BudgetSource } from "../gate";
 import type { SaTenantResolver } from "./oidc-sa-authenticator";
 
-/** Raw-item reads, injectable for tests. */
+/** Raw-item reads + write, injectable for tests. */
 export interface DynamoClaimReader {
   byServiceAccount(serviceAccount: string): Promise<any | undefined>;
   byTenant(tenant: string): Promise<any | undefined>;
+  put?(item: any): Promise<void>;
 }
 
 export interface DynamoClaimOptions {
@@ -50,8 +51,24 @@ export class DynamoClaimSource implements ClaimSource, BudgetSource, SaTenantRes
           );
           return r.Items?.[0];
         },
+        put: async (item) => {
+          await doc.send(new PutCommand({ TableName: table, Item: item }));
+        },
       };
     }
+  }
+
+  /** Write a claim, keyed by serviceAccount (the self-service POST /claims path, ADR-0021). */
+  async putClaim(claim: InferenceClaim): Promise<void> {
+    if (!this.reader.put) throw new Error("DynamoClaimSource: writer not configured");
+    if (!claim.serviceAccount) throw new Error("putClaim: serviceAccount (the identity key) is required");
+    await this.reader.put({
+      serviceAccount: claim.serviceAccount,
+      tenant: claim.tenant,
+      ...(claim.model ? { model: claim.model } : {}),
+      ...(claim.monthlyBudgetUsd != null ? { monthlyBudgetUsd: claim.monthlyBudgetUsd } : {}),
+      ...(claim.sessionBudgetUsd != null ? { sessionBudgetUsd: claim.sessionBudgetUsd } : {}),
+    });
   }
 
   async forServiceAccount(serviceAccount: string): Promise<InferenceClaim | undefined> {

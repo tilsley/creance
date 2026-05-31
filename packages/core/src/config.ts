@@ -21,13 +21,13 @@ import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
 import { StaticTokenAuthenticator } from "./adapters/static-token-authenticator";
 import { MeshTrustAuthenticator } from "./adapters/mesh-trust-authenticator";
-import { OidcServiceAccountAuthenticator } from "./adapters/oidc-sa-authenticator";
+import { OidcServiceAccountAuthenticator, KubeTokenReviewer } from "./adapters/oidc-sa-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
 import { KubeClaimSource } from "./adapters/kube-claim-source";
 import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
-import type { ClaimSource } from "./claims";
+import type { ClaimSource, ClaimWrite } from "./claims";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
@@ -63,6 +63,9 @@ export interface Providers {
   inferenceForTenant: (tenant: string, token?: string, scopeId?: string, model?: string) => Promise<InferenceProvider>;
   /** The claim reader (ADR-0021), when configured — lets the gateway route per-claim model. */
   claimSource?: ClaimSource;
+  /** Self-service write deps for `POST /claims` (tenant = identity, 1:1), when the dynamo write
+   *  path + an identity verifier are configured. */
+  claimWrite?: ClaimWrite;
 }
 
 type Env = Record<string, string | undefined>;
@@ -144,6 +147,24 @@ export function providersFromEnv(env: Env = process.env): Providers {
       ? new DynamoClaimSource(env.CLAIMS_TABLE ?? "agent-os-claims", { region, endpoint: env.CLAIMS_TABLE_ENDPOINT })
       : new KubeClaimSource(claimCrd);
   const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? claimSource : undefined;
+  // identity verifier (shared by oidc-sa authn + the POST /claims write): TokenReview the SA token.
+  const reviewer = env.AUTHN === "oidc-sa" ? new KubeTokenReviewer(env.OIDC_SA_AUDIENCE) : undefined;
+  // self-service write (ADR-0021, tenant=identity 1:1): enabled for the dynamo claim store when an
+  // identity verifier + a default allowance (CLAIMS_DEFAULT_MAX_USD) are present.
+  const claimWrite: ClaimWrite | undefined =
+    env.CLAIM_SOURCE === "dynamo" && reviewer && env.CLAIMS_DEFAULT_MAX_USD && claimSource instanceof DynamoClaimSource
+      ? {
+          verifyIdentity: async (token) => {
+            const r = await reviewer.review(token);
+            return r.authenticated && r.username?.startsWith("system:serviceaccount:") ? r.username : undefined;
+          },
+          allowance: {
+            maxMonthlyUsd: Number(env.CLAIMS_DEFAULT_MAX_USD),
+            allowedModels: (env.CLAIMS_ALLOWED_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+          },
+          putClaim: (claim) => (claimSource as DynamoClaimSource).putClaim(claim),
+        }
+      : undefined;
   const spendStore: SpendStore =
     (env.SPEND_STORE ?? "memory") === "dynamodb"
       ? new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT)
@@ -173,7 +194,7 @@ export function providersFromEnv(env: Env = process.env): Providers {
       case "oidc-sa":
         // verified workload identity (ADR-0019): TokenReview-validate the caller's
         // ServiceAccount token; tenant comes from the SA→claim binding, not the token.
-        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE, resolver: claimSource });
+        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE, resolver: claimSource, reviewer });
       case "noop":
         return new NoopAuthenticator();
       default:
@@ -259,5 +280,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource };
+  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite };
 }
