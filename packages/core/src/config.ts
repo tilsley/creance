@@ -27,6 +27,7 @@ import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
 import { KubeClaimSource } from "./adapters/kube-claim-source";
 import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
+import type { ClaimSource } from "./claims";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
@@ -59,7 +60,9 @@ export interface Providers {
   agentRegistry: AgentRegistry;
   /** Inference provider scoped to a tenant's assumed role (ADR-0014), or the shared
    *  provider when per-tenant identity is off / the role isn't provisioned yet. */
-  inferenceForTenant: (tenant: string, token?: string, scopeId?: string) => Promise<InferenceProvider>;
+  inferenceForTenant: (tenant: string, token?: string, scopeId?: string, model?: string) => Promise<InferenceProvider>;
+  /** The claim reader (ADR-0021), when configured — lets the gateway route per-claim model. */
+  claimSource?: ClaimSource;
 }
 
 type Env = Record<string, string | undefined>;
@@ -199,10 +202,16 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // tenant's role, call Bedrock, and wrap with the worst-case budget admission here
   // (ADR-0013), so admission always runs wherever the *real* model call happens.
   const gatewayUrl = env.INFERENCE_GATEWAY_URL;
-  const inferenceForTenant = async (tenant: string, token?: string, scopeId?: string): Promise<InferenceProvider> => {
+  const inferenceForTenant = async (tenant: string, token?: string, scopeId?: string, model?: string): Promise<InferenceProvider> => {
+    // gateway-client: the gateway resolves the claim's model server-side; the client doesn't pick.
     if (gatewayUrl) return new GatewayInferenceProvider(gatewayUrl, inference.model, { token, tenant, sessionId: scopeId });
+    // direct: route to the claim's model (ADR-0021) when given — Bedrock only; scripted/ollama ignore it.
     const creds = tenantCredentials ? await tenantCredentials.forTenant(tenant) : undefined;
-    const base = creds ? new BedrockInferenceProvider(inference.model, region, creds) : inference;
+    const base = creds
+      ? new BedrockInferenceProvider(model ?? inference.model, region, creds)
+      : model && inferenceKind === "bedrock"
+        ? new BedrockInferenceProvider(model, region)
+        : inference;
     return new AdmissionInferenceProvider(base, gate, tenant, scopeId);
   };
 
@@ -250,5 +259,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant };
+  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource };
 }

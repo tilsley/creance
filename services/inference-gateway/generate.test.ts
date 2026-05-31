@@ -33,6 +33,21 @@ test("authenticates, derives tenant from the principal, returns the AssistantTur
   expect(sawToken).toBe("tok");
 });
 
+test("routes to the model named on the caller's claim (ADR-0021)", async () => {
+  let sawModel: string | undefined;
+  const deps: GenerateDeps = {
+    authenticator: okAuth,
+    modelFor: async (sa) => (sa === principal.subject ? "claude-haiku" : undefined),
+    inferenceForTenant: async (_tenant, _token, _scope, model) => {
+      sawModel = model;
+      return fakeProvider(async () => ({ text: "ok", toolCalls: [] }));
+    },
+  };
+  const res = await handleGenerate(post(body), deps);
+  expect(res.status).toBe(200);
+  expect(sawModel).toBe("claude-haiku"); // the gateway resolved the claim's model and routed to it
+});
+
 test("401 when the caller fails authn", async () => {
   const deps: GenerateDeps = {
     authenticator: { name: "fake", async authenticate() { throw new UnauthorizedError(); } },

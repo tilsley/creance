@@ -15,8 +15,10 @@ import { providersFromEnv } from "@agent-os/core";
 import { handleGenerate } from "./generate";
 
 const providers = providersFromEnv();
-const { authenticator, inferenceForTenant } = providers;
+const { authenticator, inferenceForTenant, claimSource } = providers;
 const port = Number(process.env.PORT ?? 3100);
+// route each caller to the model named on its claim (ADR-0021), when a claim source is configured
+const modelFor = claimSource ? (sa: string) => claimSource.forServiceAccount(sa).then((c) => c?.model) : undefined;
 
 const server = Bun.serve({
   port,
@@ -24,7 +26,7 @@ const server = Bun.serve({
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/healthz") return Response.json({ status: "ok" });
     if (req.method === "POST" && url.pathname === "/v1/generate") {
-      return handleGenerate(req, { authenticator, inferenceForTenant });
+      return handleGenerate(req, { authenticator, inferenceForTenant, modelFor });
     }
     return new Response("not found", { status: 404 });
   },
