@@ -112,7 +112,7 @@ async function processRun(id: string): Promise<void> {
   // set): an HTTP client to the standalone gateway, which holds the model creds and
   // enforces budget — this runtime then holds none (ADR-0019). The caller token is
   // forwarded so the gateway re-derives the tenant. Both modes are built in config.
-  const inference = await providers.inferenceForTenant(tenant, principal.token);
+  const inference = await providers.inferenceForTenant(tenant, principal.token, id);
   try {
     const result = await runOnSession({
       inference,

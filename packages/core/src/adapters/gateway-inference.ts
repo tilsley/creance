@@ -18,6 +18,8 @@ export interface GatewayInferenceOptions {
   token?: string;
   /** tenant hint (informational; the gateway authoritatively derives tenant from the token). */
   tenant?: string;
+  /** run/session id — lets the gateway enforce the per-session cap (ADR-0019). */
+  sessionId?: string;
 }
 
 export class GatewayInferenceProvider implements InferenceProvider {
@@ -37,7 +39,7 @@ export class GatewayInferenceProvider implements InferenceProvider {
         "content-type": "application/json",
         ...(this.opts.token ? { authorization: `Bearer ${this.opts.token}` } : {}),
       },
-      body: JSON.stringify({ messages, tools, maxTokens: opts.maxTokens }),
+      body: JSON.stringify({ messages, tools, maxTokens: opts.maxTokens, sessionId: this.opts.sessionId }),
     });
 
     if (res.status === 401) throw new UnauthorizedError("inference gateway rejected the caller");

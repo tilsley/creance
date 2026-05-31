@@ -14,7 +14,7 @@ import { UnauthorizedError, BudgetExceededError } from "@agent-os/core";
 export interface GenerateDeps {
   authenticator: Authenticator;
   /** the tenant-scoped, admission-wrapped provider factory (config's inferenceForTenant). */
-  inferenceForTenant: (tenant: string, token?: string) => Promise<InferenceProvider>;
+  inferenceForTenant: (tenant: string, token?: string, scopeId?: string) => Promise<InferenceProvider>;
 }
 
 const bearer = (req: Request): string | undefined => req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -30,7 +30,7 @@ export async function handleGenerate(req: Request, deps: GenerateDeps): Promise<
   }
 
   // 2. parse the generate request
-  let body: { messages?: Message[]; tools?: ToolDef[]; maxTokens?: number };
+  let body: { messages?: Message[]; tools?: ToolDef[]; maxTokens?: number; sessionId?: string };
   try {
     body = await req.json();
   } catch {
@@ -40,9 +40,10 @@ export async function handleGenerate(req: Request, deps: GenerateDeps): Promise<
     return Response.json({ error: "missing 'messages' (array) / 'maxTokens' (number)" }, { status: 400 });
   }
 
-  // 3. resolve the tenant's provider (assume-role Bedrock + admission) and run one turn.
+  // 3. resolve the tenant's provider (assume-role Bedrock + admission, keyed to the
+  //    caller's session so the per-session cap is enforced here) and run one turn.
   try {
-    const provider = await deps.inferenceForTenant(principal.tenant, principal.token);
+    const provider = await deps.inferenceForTenant(principal.tenant, principal.token, body.sessionId);
     const turn: AssistantTurn = await provider.generate(body.messages, body.tools ?? [], { maxTokens: body.maxTokens });
     return Response.json(turn);
   } catch (e) {

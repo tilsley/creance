@@ -22,4 +22,10 @@ export class NoopGate implements Gate {
   async recordSpend(tenant: string): Promise<BudgetStatus> {
     return unlimited(tenant);
   }
+  async reserve(tenant: string): Promise<BudgetStatus> {
+    return unlimited(tenant);
+  }
+  async settle(): Promise<void> {
+    /* unlimited — nothing to reconcile */
+  }
 }

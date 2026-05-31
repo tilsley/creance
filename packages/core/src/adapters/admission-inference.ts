@@ -24,30 +24,31 @@ export class AdmissionInferenceProvider implements InferenceProvider {
     private readonly inner: InferenceProvider,
     private readonly gate: Gate,
     private readonly tenant: string,
+    /** run/session id — also enforces the per-session cap, if one is configured (ADR-0019). */
+    private readonly scopeId?: string,
   ) {
     this.name = `admission(${inner.name})`;
     this.model = inner.model;
   }
 
   async generate(messages: Message[], tools: ToolDef[], opts: GenerateOptions): Promise<AssistantTurn> {
-    // 1-2. price the worst case: real input + the full output cap
+    const scopes = { sessionId: this.scopeId };
+    // 1. price the worst case: real input + the full output cap
     const worstUsd = priceTokensUsd(this.model, estimateInputTokens(messages, tools), opts.maxTokens);
-    // 3. would admitting this request push cumulative spend past the cap?
-    const status = await this.gate.checkBudget(this.tenant);
-    const projectedUsd = status.spentUsd + worstUsd;
-    if (projectedUsd > status.limitUsd) {
-      // 4. refuse pre-flight — report the PROJECTED spend so the error explains why
-      throw new BudgetExceededError({
-        ...status,
-        spentUsd: projectedUsd,
-        remainingUsd: status.limitUsd - projectedUsd,
-        ok: false,
-      });
+    // 2. ATOMICALLY reserve the worst case across every scope (tenant/month + session) —
+    //    closes the check-then-add race; refuse pre-flight if any scope would breach.
+    const reservation = await this.gate.reserve(this.tenant, worstUsd, scopes);
+    if (!reservation.ok) throw new BudgetExceededError(reservation);
+    // 3. admit — the real model call. On failure, fully refund (the call cost nothing).
+    let turn: AssistantTurn;
+    try {
+      turn = await this.inner.generate(messages, tools, opts);
+    } catch (e) {
+      await this.gate.settle(this.tenant, -worstUsd, scopes).catch(() => {});
+      throw e;
     }
-    // 5. admit — the real model call
-    const turn = await this.inner.generate(messages, tools, opts);
-    // 6. record actual spend (atomic, per turn)
-    await this.gate.recordSpend(this.tenant, estimateCostUsd(this.model, turn.usage));
+    // 4. settle the reservation down to actual cost (delta is usually negative)
+    await this.gate.settle(this.tenant, estimateCostUsd(this.model, turn.usage) - worstUsd, scopes);
     return turn;
   }
 }

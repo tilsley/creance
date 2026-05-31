@@ -75,3 +75,43 @@ test("InMemorySpendStore keeps periods independent and adds atomically", async (
   expect(await store.get("teama", "2026-06")).toBe(0); // other month untouched
   expect(await store.get("teamb", "2026-05")).toBe(0); // other tenant untouched
 });
+
+// --- ADR-0019: atomic reserve/settle + the per-session scope --------------------
+
+test("reserve atomically admits up to the cap and refuses the breach (no spend held)", async () => {
+  const gate = new LocalGate("10");
+  expect((await gate.reserve("teama", 4)).ok).toBe(true); // 4
+  expect((await gate.reserve("teama", 4)).ok).toBe(true); // 8
+  expect((await gate.reserve("teama", 4)).ok).toBe(false); // 12 > 10 — refused
+  expect((await gate.checkBudget("teama")).spentUsd).toBe(8); // the refused one held nothing
+});
+
+test("refuses a single request larger than the whole cap", async () => {
+  const gate = new LocalGate("1");
+  expect((await gate.reserve("teama", 5)).ok).toBe(false);
+  expect((await gate.checkBudget("teama")).spentUsd).toBe(0);
+});
+
+test("concurrent reservations never exceed the cap (TOCTOU closed)", async () => {
+  const gate = new LocalGate("10"); // fits exactly 3 of these $3 reservations
+  const results = await Promise.all(Array.from({ length: 5 }, () => gate.reserve("teama", 3)));
+  expect(results.filter((r) => r.ok).length).toBe(3); // only 3 admitted, not 5
+  expect((await gate.checkBudget("teama")).spentUsd).toBeLessThanOrEqual(10); // never overspent
+});
+
+test("settle reconciles a worst-case reservation down to actual spend", async () => {
+  const gate = new LocalGate("100");
+  await gate.reserve("teama", 5); // reserve worst case
+  await gate.settle("teama", 2 - 5); // actual was $2 → refund the $3 difference
+  expect((await gate.checkBudget("teama")).spentUsd).toBe(2);
+});
+
+test("the per-session cap stops a runaway session while the tenant still has room", async () => {
+  const gate = new LocalGate("100", { sessionLimitUsd: 5 }); // big tenant cap, small session cap
+  expect((await gate.reserve("teama", 2, { sessionId: "run1" })).ok).toBe(true); // session 2/5
+  expect((await gate.reserve("teama", 2, { sessionId: "run1" })).ok).toBe(true); // session 4/5
+  expect((await gate.reserve("teama", 2, { sessionId: "run1" })).ok).toBe(false); // session 6 > 5 — refused
+  // tenant was refunded the failed session reserve, and a DIFFERENT session proceeds
+  expect((await gate.reserve("teama", 2, { sessionId: "run2" })).ok).toBe(true); // new session
+  expect((await gate.checkBudget("teama")).spentUsd).toBe(6); // run1: 4 + run2: 2 (the refused one held nothing)
+});

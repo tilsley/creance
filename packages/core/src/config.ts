@@ -57,7 +57,7 @@ export interface Providers {
   agentRegistry: AgentRegistry;
   /** Inference provider scoped to a tenant's assumed role (ADR-0014), or the shared
    *  provider when per-tenant identity is off / the role isn't provisioned yet. */
-  inferenceForTenant: (tenant: string, token?: string) => Promise<InferenceProvider>;
+  inferenceForTenant: (tenant: string, token?: string, scopeId?: string) => Promise<InferenceProvider>;
 }
 
 type Env = Record<string, string | undefined>;
@@ -120,9 +120,12 @@ export function providersFromEnv(env: Env = process.env): Providers {
     (env.SPEND_STORE ?? "memory") === "dynamodb"
       ? new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT)
       : new InMemorySpendStore();
+  // GATE_SESSION_BUDGET_USD adds a per-session cap alongside the monthly one — the
+  // runaway-session stop (ADR-0019). Unset ⇒ only the tenant/month cap is enforced.
+  const sessionLimitUsd = env.GATE_SESSION_BUDGET_USD ? Number(env.GATE_SESSION_BUDGET_USD) : undefined;
   const gate: Gate =
     (env.GATE ?? "noop") === "local"
-      ? new LocalGate(env.GATE_BUDGET_USD, { source: budgetSource, spendStore })
+      ? new LocalGate(env.GATE_BUDGET_USD, { source: budgetSource, spendStore, sessionLimitUsd })
       : new NoopGate();
 
   // authn (ADR-0015): AUTHN picks the identity adapter. Default tracks the old
@@ -171,11 +174,11 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // tenant's role, call Bedrock, and wrap with the worst-case budget admission here
   // (ADR-0013), so admission always runs wherever the *real* model call happens.
   const gatewayUrl = env.INFERENCE_GATEWAY_URL;
-  const inferenceForTenant = async (tenant: string, token?: string): Promise<InferenceProvider> => {
-    if (gatewayUrl) return new GatewayInferenceProvider(gatewayUrl, inference.model, { token, tenant });
+  const inferenceForTenant = async (tenant: string, token?: string, scopeId?: string): Promise<InferenceProvider> => {
+    if (gatewayUrl) return new GatewayInferenceProvider(gatewayUrl, inference.model, { token, tenant, sessionId: scopeId });
     const creds = tenantCredentials ? await tenantCredentials.forTenant(tenant) : undefined;
     const base = creds ? new BedrockInferenceProvider(inference.model, region, creds) : inference;
-    return new AdmissionInferenceProvider(base, gate, tenant);
+    return new AdmissionInferenceProvider(base, gate, tenant, scopeId);
   };
 
   // credential broker defaults to deny-all (noop). CRED_BROKER=local grants static

@@ -49,4 +49,28 @@ export class DynamoSpendStore implements SpendStore {
     );
     return (r.Attributes?.spentUsd as number | undefined) ?? usd;
   }
+
+  // Atomic conditional add: the ADD and the cap check are ONE UpdateItem, so concurrent
+  // reservations can't both pass a read and then both add past the cap (ADR-0019).
+  // `:ceil = ceiling - delta` is the max *pre*-value that keeps the post-value within
+  // `ceiling`; attribute_not_exists covers the first write (0 <= :ceil since callers
+  // ensure delta <= ceiling).
+  async reserve(tenant: string, period: string, delta: number, ceiling: number): Promise<number | null> {
+    try {
+      const r = await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { tenant, period },
+          UpdateExpression: "ADD spentUsd :d",
+          ConditionExpression: "attribute_not_exists(spentUsd) OR spentUsd <= :ceil",
+          ExpressionAttributeValues: { ":d": delta, ":ceil": ceiling - delta },
+          ReturnValues: "UPDATED_NEW",
+        }),
+      );
+      return (r.Attributes?.spentUsd as number | undefined) ?? delta;
+    } catch (e) {
+      if ((e as { name?: string })?.name === "ConditionalCheckFailedException") return null; // would breach the cap
+      throw e;
+    }
+  }
 }

@@ -60,6 +60,26 @@ const rtproc = Bun.spawn({
   },
 });
 
+// a SECOND gateway (:3101) with a tiny PER-SESSION cap — to prove the runaway-session stop.
+// High tenant cap, microscopic session cap, so the first call's worst-case reservation trips
+// the SESSION scope (not the tenant) and the gateway returns 402.
+const gw2proc = Bun.spawn({
+  cmd: ["bun", "run", `${repoRoot}/services/inference-gateway/server.ts`],
+  cwd: repoRoot,
+  stdout: "ignore",
+  stderr: "inherit",
+  env: {
+    ...process.env,
+    ...common,
+    GATE: "local",
+    PORT: "3101",
+    GATE_BUDGET_USD: "1000", // generous tenant/month cap
+    GATE_SESSION_BUDGET_USD: "0.000001", // microscopic per-session cap
+    INFERENCE_PROVIDER: "scripted",
+    SCRIPTED_TURNS: JSON.stringify([{ text: "should never be produced" }]),
+  },
+});
+
 try {
   const up = (await waitFor("http://localhost:3100/healthz")) && (await waitFor("http://localhost:3000/healthz"));
   if (!up) throw new Error("a process did not come up");
@@ -87,7 +107,22 @@ try {
   console.log(`[extraction] the run's inference was produced by the GATEWAY process, not the runtime: ${served ? "yes ✅" : "no ❌"}`);
   console.log(`[no model in runtime] the runtime forwarded /v1/generate over HTTP (INFERENCE_GATEWAY_URL) — it holds no model creds ✅`);
   console.log(`[identity forwarded] the gateway authenticated alice's token + derived tenant itself ✅`);
+
+  // ── Scenario 2: the runaway-session stop. A workload calls the session-capped gateway
+  // directly (the "deployed service calls for inference" path) — its first call's worst
+  // case exceeds the tiny per-session cap, so the gateway refuses with 402.
+  if (!(await waitFor("http://localhost:3101/healthz"))) throw new Error("session-capped gateway did not come up");
+  const direct = await fetch("http://localhost:3101/v1/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${aliceToken}` },
+    body: JSON.stringify({ messages: [{ role: "user", text: "x" }], tools: [], maxTokens: 100_000, sessionId: "run-runaway" }),
+  });
+  const body: any = await direct.json().catch(() => ({}));
+  console.log(`\nworkload ──POST /v1/generate (session-capped gateway :3101)──▶ HTTP ${direct.status}`);
+  console.log(`[runaway stop] a single over-session-cap request is refused at the gateway (402): ${direct.status === 402 ? "yes ✅" : "no ❌"}`);
+  console.log(`[session scope] the breach is the SESSION cap while the tenant cap ($1000) has room: ${body?.budget && body.budget.limitUsd < 1 ? "yes ✅" : "no ❌"}`);
 } finally {
   rtproc.kill();
   gwproc.kill();
+  gw2proc.kill();
 }
