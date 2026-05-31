@@ -33,6 +33,10 @@ spec:
                 # Budget MR's limitAmount is a string). One claim now provisions
                 # a cost guardrail, not just an inference profile.
                 monthlyBudgetUsd: { type: string, default: "10" }
+                # the workload identity authorized for this tenant (ADR-0019) — the
+                # verified ServiceAccount the OidcServiceAccountAuthenticator binds to.
+                # Tenant is resolved from this, never from a token claim.
+                serviceAccount: { type: string }
               required: [tenant]
             status:
               type: object

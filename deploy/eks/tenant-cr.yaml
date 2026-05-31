@@ -30,6 +30,10 @@ spec:
                 tenant: { type: string }
                 baseModel: { type: string }
                 monthlyBudgetUsd: { type: string }
+                # the workload identity authorized for this tenant — the verified SA the
+                # OidcServiceAccountAuthenticator binds to (ADR-0019). Tenant is resolved
+                # from THIS, never from a token claim, so identity can't be forged.
+                serviceAccount: { type: string }
             status:
               type: object
               properties:
@@ -45,6 +49,7 @@ spec:
   tenant: teama
   baseModel: amazon.nova-lite-v1:0
   monthlyBudgetUsd: "10"
+  serviceAccount: system:serviceaccount:agent-os:agent-runtime # only this SA may act as teama
 status:
   roleArn: arn:aws:iam::233965347831:role/agentos-teama
 ---

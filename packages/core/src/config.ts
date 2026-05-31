@@ -18,6 +18,7 @@ import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
 import { StaticTokenAuthenticator } from "./adapters/static-token-authenticator";
 import { MeshTrustAuthenticator } from "./adapters/mesh-trust-authenticator";
+import { OidcServiceAccountAuthenticator } from "./adapters/oidc-sa-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
@@ -136,6 +137,10 @@ export function providersFromEnv(env: Env = process.env): Providers {
           tenantClaim: env.MESH_TENANT_CLAIM,
           groupsClaim: env.MESH_GROUPS_CLAIM,
         });
+      case "oidc-sa":
+        // verified workload identity (ADR-0019): TokenReview-validate the caller's
+        // ServiceAccount token; tenant comes from the SA→claim binding, not the token.
+        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE });
       case "noop":
         return new NoopAuthenticator();
       default:

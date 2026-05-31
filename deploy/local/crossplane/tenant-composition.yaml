@@ -64,11 +64,13 @@ spec:
                 toFieldPath: status.profileId
 
           # 2. Scoped IAM policy — least-privilege Bedrock invoke for this tenant.
-          # IAM is global (no region). The policy doc is static here: it's scoped to
-          # inference-profile + foundation-model invoke + ApplyGuardrail. We can't
-          # narrow the Resource to *this* profile's ARN because the profile id is
-          # generated at create-time (cross-resource ARN patches are fiddly); a
-          # follow-up could use the composite status.profileId once it's known.
+          # IAM is global (no region). The base policy below is the broad default; a
+          # patch (last in this list) NARROWS the application-inference-profile Resource
+          # to *this* tenant's own profile ARN once its AWS-generated id surfaces on the
+          # composite (status.profileId), closing the cross-tenant-via-profile hole
+          # (ADR-0019). The patch is skipped until profileId is known, so provisioning
+          # is progressive (broad → narrowed) and fail-safe; validate the final narrowed
+          # doc on the next live reconcile. The controller slice will own this directly.
           #
           # foundation-model is region-AGNOSTIC (arn:aws:bedrock:*::foundation-model/*)
           # on purpose: a system-defined cross-region inference profile (e.g.
@@ -128,14 +130,32 @@ spec:
               - type: ToCompositeFieldPath
                 fromFieldPath: status.atProvider.arn
                 toFieldPath: status.policyArn
+              # NARROW to this tenant's OWN application inference profile once its
+              # AWS-generated id is known (ADR-0019). Skipped while status.profileId is
+              # empty (fromFieldPath Optional), so the broad base policy applies first,
+              # then tightens. foundation-model stays region-agnostic (cross-region
+              # profiles); the generic application-inference-profile/* is replaced by the
+              # tenant's exact ARN, so even acting as this role you can't invoke another
+              # tenant's profile.
+              - type: FromCompositeFieldPath
+                fromFieldPath: status.profileId
+                toFieldPath: spec.forProvider.policy
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: |
+                        {"Version":"2012-10-17","Statement":[{"Sid":"InvokeBedrock","Effect":"Allow","Action":["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],"Resource":["arn:aws:bedrock:*::foundation-model/*","arn:aws:bedrock:eu-west-2:*:inference-profile/*","arn:aws:bedrock:eu-west-2:233965347831:application-inference-profile/%s"]},{"Sid":"ApplyGuardrail","Effect":"Allow","Action":"bedrock:ApplyGuardrail","Resource":"arn:aws:bedrock:eu-west-2:*:guardrail/*"}]}
 
           # 3. Per-tenant IAM role — the tenant's cloud principal (ADR-0014). The
           # runtime assumes this role per run (STS, keyless) so a tenant's model
           # calls run as *the tenant*, not the platform's ambient creds; it's also
           # the target the Budget Action attaches a Deny to when the cap is blown.
-          # Trust is delegated to the account root — the assuming principal (the
-          # runtime user locally / agent-os-runtime role on EKS) gates assumption
-          # via its own sts:AssumeRole permission. IAM is global (name via
+          # Trust is scoped to ONLY the gateway/runtime role (agent-os-eks-runtime) —
+          # not the account root (ADR-0019). Enforced on BOTH sides: the runtime can
+          # assume only enumerated tenant roles (its permission policy) AND each tenant
+          # role admits only the runtime principal (this trust). Local dev with a
+          # different principal adds itself via a dev overlay. IAM is global (name via
           # external-name annotation, like the policy).
           - name: role
             base:
@@ -155,7 +175,7 @@ spec:
                       "Statement": [
                         {
                           "Effect": "Allow",
-                          "Principal": { "AWS": "arn:aws:iam::233965347831:root" },
+                          "Principal": { "AWS": "arn:aws:iam::233965347831:role/agent-os-eks-runtime" },
                           "Action": ["sts:AssumeRole", "sts:TagSession"]
                         }
                       ]
@@ -313,7 +333,9 @@ spec:
                 toFieldPath: spec.forProvider.tags.team
 
           # 8. Inline policy on the execution role — lets Budgets attach/detach the
-          # deny policy to the tenant role. Scoped to this account's agentos-* roles.
+          # deny policy to the tenant role. Scoped to ONLY this tenant's own role
+          # (agentos-<tenant>), not agentos-* — a patch below narrows the Resource from
+          # spec.tenant (ADR-0019), so the budget executor can't touch other tenants.
           - name: budget-exec-policy
             base:
               apiVersion: iam.aws.upbound.io/v1beta1
@@ -341,6 +363,16 @@ spec:
                 transforms:
                   - type: string
                     string: { type: Format, fmt: "agentos-%s-budget-exec-attach" }
+              # narrow the attach/detach Resource to this tenant's own role only
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tenant
+                toFieldPath: spec.forProvider.policy
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: |
+                        {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["iam:AttachRolePolicy","iam:DetachRolePolicy"],"Resource":"arn:aws:iam::233965347831:role/agentos-%s"}]}
 
           # 9. The Budget Action — the armed backstop. At 100% of ACTUAL monthly
           # spend, Budgets (via the execution role #7) auto-attaches the deny policy

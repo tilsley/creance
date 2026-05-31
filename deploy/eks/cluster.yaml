@@ -33,7 +33,12 @@ iam:
             # policy (here) and the target role's trust (agentos-<tenant>). (ADR-0014)
             Effect: Allow
             Action: ["sts:AssumeRole", "sts:TagSession"]
-            Resource: "arn:aws:iam::233965347831:role/agentos-*"
+            # NOT agentos-* — isolation requires the runtime to assume ONLY the exact
+            # tenant roles it serves (ADR-0019). The controller maintains this list as
+            # tenants onboard; here it's the slice-1 tenant (teama). A compromised
+            # runtime cannot reach any other tenant's role.
+            Resource:
+              - "arn:aws:iam::233965347831:role/agentos-teama"
           - Sid: StateAndBudget
             Effect: Allow
             Action:

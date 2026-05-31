@@ -16,6 +16,21 @@ metadata:
   name: agent-runtime # bound to agent-os-eks-runtime by Pod Identity (no annotation needed)
   namespace: agent-os
 ---
+# AUTHN=oidc-sa verifies callers' tokens via the TokenReview API — the runtime SA needs
+# the built-in system:auth-delegator role to create TokenReviews (ADR-0019).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-runtime-token-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: agent-os
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -31,12 +46,16 @@ data:
   SPEND_STORE: dynamodb # durable monthly budget counter (ADR-0013)
   SPEND_TABLE: agent-os-budgets
   TELEMETRY: console
-  # gate (ADR-0015): authn = the human (mesh-trust); authz = OPA; budget from the claim
+  # gate: authn = VERIFIED workload identity (ADR-0019); authz = OPA; budget from the claim
   GATE: local
   GATE_BUDGET_SOURCE: kube # reads the teama TenantInferenceProfile CR (cap)
   GATE_BUDGET_USD: "10" # fallback
   TENANT_ASSUME_ROLE: kube # inference runs AS agentos-teama (roleArn from the claim) — keyless
-  AUTHN: mesh # the Slack user's identity arrives in a header / bearer (simulated edge)
+  # oidc-sa: the caller presents its projected ServiceAccount token; we TokenReview-verify
+  # it (signature/audience/expiry) and resolve tenant from the SA→claim binding, NOT a
+  # forgeable header claim (ADR-0019, retiring mesh-trust as the trust root).
+  AUTHN: oidc-sa
+  OIDC_SA_AUDIENCE: agent-os # callers must project their SA token for this audience
   AUTHZ: opa
   OPA_URL: http://localhost:8181/v1/data/agentos/authz
   # downstream = the bot's SERVICE-ACCOUNT creds (the user-vs-SA trade-off), at the mock svcs
