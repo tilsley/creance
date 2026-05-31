@@ -65,8 +65,10 @@ inference with a budget. **Onboarding becomes a policy assertion, not a provisio
   gate, controller = async cross-object + status). Still deferred: a **human-approval workflow**
   (`autoApproveUnderUsd` → a `Pending` state needing sign-off) — this is auto-verdict from the aggregate.
 - **Per-claim model routing/enforcement** — the claim carries `model`; the gateway still uses its configured model id today.
-- **`DynamoClaimSource` + `POST /claims` API** — the non-k8s onboarding path.
-- **Optional status controller** (`agent-controller` pattern) for `status.conditions` / aggregate quota.
+- ✅ **`DynamoClaimSource`** — *built in slice 8*: the non-k8s read adapter (grants in a DynamoDB
+  table next to the spend counter; `CLAIM_SOURCE=dynamo`), satisfying BudgetSource + SaTenantResolver
+  from the same store. Still deferred: a **`POST /claims` self-service write API** (its caller-auth
+  differs from the read path — the tenant can't be claim-derived when creating the first claim).
 
 ## Relationship
 

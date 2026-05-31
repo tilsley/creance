@@ -26,6 +26,7 @@ import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
 import { KubeClaimSource } from "./adapters/kube-claim-source";
+import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
@@ -131,8 +132,14 @@ export function providersFromEnv(env: Env = process.env): Providers {
     : undefined;
   // ONE claim reader (ADR-0021) serves both the gate's budget cap and the authn SA→tenant
   // resolver — built only when something needs it (kube budget source or oidc-sa authn).
-  const claimSource =
-    env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa" ? new KubeClaimSource(claimCrd) : undefined;
+  // CLAIM_SOURCE picks where grants are read from (ADR-0021): kube (CRD, default) or dynamo (a
+  // table, for non-k8s tenants — next to the spend counter). Built only when something needs it.
+  const needClaims = env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa";
+  const claimSource = !needClaims
+    ? undefined
+    : env.CLAIM_SOURCE === "dynamo"
+      ? new DynamoClaimSource(env.CLAIMS_TABLE ?? "agent-os-claims", { region, endpoint: env.CLAIMS_TABLE_ENDPOINT })
+      : new KubeClaimSource(claimCrd);
   const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? claimSource : undefined;
   const spendStore: SpendStore =
     (env.SPEND_STORE ?? "memory") === "dynamodb"
