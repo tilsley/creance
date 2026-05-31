@@ -6,6 +6,7 @@
  */
 export * from "./ports";
 export * from "./loop";
+export * from "./sandboxed-agent"; // sandboxed-agent kind (ADR-0019, Model B)
 export * from "./config";
 export * from "./tools";
 export * from "./tool-gateway"; // #4: assemble per-run toolset from sources
@@ -22,6 +23,7 @@ export * from "./adapters/admission-inference"; // cost hard-stop decorator (ADR
 export * from "./adapters/gateway-inference"; // inference-gateway client (ADR-0019)
 // do
 export * from "./adapters/agentcore-sandbox";
+export * from "./adapters/e2b-sandbox";
 export * from "./adapters/local-sandbox";
 // guard
 export * from "./adapters/bedrock-guard";

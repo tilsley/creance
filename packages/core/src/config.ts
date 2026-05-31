@@ -11,6 +11,7 @@ import { ScriptedInferenceProvider } from "./adapters/scripted-inference";
 import { AdmissionInferenceProvider } from "./adapters/admission-inference";
 import { GatewayInferenceProvider } from "./adapters/gateway-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
+import { E2BSandboxProvider } from "./adapters/e2b-sandbox";
 import { LocalSandboxProvider } from "./adapters/local-sandbox";
 import { BedrockContentGuard } from "./adapters/bedrock-guard";
 import { NoopContentGuard } from "./adapters/noop-guard";
@@ -87,6 +88,8 @@ export function providersFromEnv(env: Env = process.env): Providers {
           region,
           env.AGENTCORE_ENDPOINT,
         );
+      case "e2b": // remote Firecracker microVM per session (ADR-0019); needs E2B_API_KEY
+        return new E2BSandboxProvider({ apiKey: env.E2B_API_KEY, template: env.E2B_TEMPLATE });
       case "local":
         return new LocalSandboxProvider(); // ⚠ DEMO ONLY — runs code on host, no isolation
       default:

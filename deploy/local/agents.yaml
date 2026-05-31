@@ -30,6 +30,11 @@ spec:
                 systemPrompt: { type: string }
                 tools: { type: array, items: { type: string } }
                 maxSteps: { type: integer }
+                # execution kind (ADR-0019): "loop" (default) or "sandboxed" (a delegated
+                # agent runs in the sandbox; its inference routes to the gateway).
+                kind: { type: string, enum: [loop, sandboxed] }
+                # for kind=sandboxed: the command that launches the delegated agent.
+                command: { type: string }
             status:
               type: object
               properties:

@@ -23,8 +23,14 @@ const api = kc.makeApiClient(k8s.CustomObjectsApi);
 
 /** The reconcile decision: is this Agent definition valid? */
 function validate(spec: any): { phase: "Ready" | "Invalid"; message: string } {
-  if (!spec || typeof spec.systemPrompt !== "string" || !spec.systemPrompt.trim())
+  if (!spec) return { phase: "Invalid", message: "spec is required" };
+  if (spec.kind === "sandboxed") {
+    // a sandboxed agent runs a delegated command in the sandbox (ADR-0019) — no systemPrompt
+    if (typeof spec.command !== "string" || !spec.command.trim())
+      return { phase: "Invalid", message: "spec.command is required for kind=sandboxed" };
+  } else if (typeof spec.systemPrompt !== "string" || !spec.systemPrompt.trim()) {
     return { phase: "Invalid", message: "spec.systemPrompt is required" };
+  }
   if (spec.maxSteps != null && (typeof spec.maxSteps !== "number" || spec.maxSteps < 1 || spec.maxSteps > 100))
     return { phase: "Invalid", message: "spec.maxSteps must be between 1 and 100" };
   return { phase: "Ready", message: "validated" };

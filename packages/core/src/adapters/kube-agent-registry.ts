@@ -20,6 +20,8 @@ function toSpec(obj: any): AgentSpec {
     systemPrompt: s.systemPrompt,
     tools: s.tools,
     maxSteps: s.maxSteps,
+    kind: s.kind,
+    command: s.command,
   };
 }
 

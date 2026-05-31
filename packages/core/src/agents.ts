@@ -18,6 +18,15 @@ export interface AgentSpec {
   /** Allowed tool / MCP-server names (policy). Empty/undefined = whatever's configured. */
   tools?: string[];
   maxSteps?: number;
+  /**
+   * Execution kind (ADR-0019). "loop" (default) = the runtime drives the think/do loop.
+   * "sandboxed" = a self-contained delegated agent runs inside the sandbox; its inference
+   * routes to the gateway (the agent speaks to the gateway), its execution stays in the
+   * sandbox. No new primitive — just a different `do` shape.
+   */
+  kind?: "loop" | "sandboxed";
+  /** For kind="sandboxed": the command that launches the delegated agent in the sandbox. */
+  command?: string;
 }
 
 export interface AgentRegistry {

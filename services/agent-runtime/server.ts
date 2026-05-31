@@ -17,6 +17,7 @@
  */
 import {
   runOnSession,
+  runSandboxedAgent,
   providersFromEnv,
   estimateCostUsd,
   UnauthorizedError,
@@ -107,29 +108,38 @@ async function processRun(id: string): Promise<void> {
   // resolve this run's toolset through the gateway (built-in + MCP servers,
   // per-tenant policy, broker creds injected; ADR-0011)
   const toolset = await toolProvider.resolve({ principal, session });
-  // resolve the run's inference provider. DIRECT: assumes the tenant's IAM role (acts
-  // AS the tenant, ADR-0014) + budget admission (ADR-0013). GATEWAY (INFERENCE_GATEWAY_URL
-  // set): an HTTP client to the standalone gateway, which holds the model creds and
-  // enforces budget — this runtime then holds none (ADR-0019). The caller token is
-  // forwarded so the gateway re-derives the tenant. Both modes are built in config.
-  const inference = await providers.inferenceForTenant(tenant, principal.token, id);
   try {
-    const result = await runOnSession({
-      inference,
-      guard: providers.guard,
-      telemetry: providers.telemetry,
-      session,
-      task: existing.task,
-      systemPrompt: spec?.systemPrompt,
-      maxSteps: spec?.maxSteps,
-      maxOutputTokens,
-      tools: () => toolset.tools,
-      onProgress: (messages) => {
-        store.update(id, { messages }).catch(() => {}); // durable per-turn state
-      },
-    });
-    // spend is recorded per-turn by the admission decorator; here we just persist
-    // the run's total cost for the dashboard / run record.
+    let result;
+    if (spec?.kind === "sandboxed") {
+      // Model B (ADR-0019): a self-contained delegated agent runs IN the sandbox; its
+      // inference egress is pointed at the gateway (think governed), its execution stays
+      // in the sandbox (do governed). The gateway is its only sanctioned model egress.
+      const gatewayUrl = process.env.INFERENCE_GATEWAY_URL;
+      if (!gatewayUrl) throw new Error("sandboxed agents require INFERENCE_GATEWAY_URL (the gateway is their only sanctioned model egress)");
+      result = await runSandboxedAgent({ session, task: existing.task, spec, gatewayUrl, token: principal.token, telemetry: providers.telemetry });
+    } else {
+      // Model A: the runtime drives the think/do loop. DIRECT mode assumes the tenant's
+      // role + budget admission (ADR-0013/0014); GATEWAY mode (INFERENCE_GATEWAY_URL) is an
+      // HTTP client to the standalone gateway — this runtime then holds no model creds
+      // (ADR-0019). The caller token is forwarded so the gateway re-derives the tenant.
+      const inference = await providers.inferenceForTenant(tenant, principal.token, id);
+      result = await runOnSession({
+        inference,
+        guard: providers.guard,
+        telemetry: providers.telemetry,
+        session,
+        task: existing.task,
+        systemPrompt: spec?.systemPrompt,
+        maxSteps: spec?.maxSteps,
+        maxOutputTokens,
+        tools: () => toolset.tools,
+        onProgress: (messages) => {
+          store.update(id, { messages }).catch(() => {}); // durable per-turn state
+        },
+      });
+    }
+    // spend is recorded per-turn by the admission decorator (or the gateway's session
+    // counter for B); here we just persist the run's total cost for the run record.
     const costUsd = estimateCostUsd(providers.inference.model, result.usage);
     await store.update(id, { status: result.status, output: result.output, usage: result.usage, costUsd });
   } catch (e: any) {

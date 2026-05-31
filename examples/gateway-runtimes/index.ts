@@ -27,6 +27,14 @@ const waitFor = async (url: string, tries = 40) => {
 const repoRoot = process.cwd();
 const common = { SANDBOX_PROVIDER: "local", AUTHN: "mesh", GATE: "noop", AGENT_REGISTRY: "memory", CRED_BROKER: "noop", TELEMETRY: "console" };
 const GATEWAY_ANSWER = "answer produced by the inference-gateway";
+// the delegated agent for the sandboxed (Model B) demo: a tiny program that runs IN the
+// sandbox and calls the GATEWAY for inference using the injected egress env — proving the
+// agent reaches the gateway while its execution stays in the sandbox.
+const SANDBOX_CMD =
+  `bun -e 'const r=await fetch(process.env.INFERENCE_GATEWAY_URL+"/v1/generate",` +
+  `{method:"POST",headers:{authorization:"Bearer "+process.env.AGENT_TOKEN,"content-type":"application/json"},` +
+  `body:JSON.stringify({messages:[{role:"user",text:process.env.AGENT_TASK}],tools:[],maxTokens:64})});` +
+  `const j=await r.json();console.log(j.text??JSON.stringify(j))'`;
 
 // the GATEWAY (:3100) — the only process with a model backend (scripted) + admission
 const gwproc = Bun.spawn({
@@ -56,7 +64,12 @@ const rtproc = Bun.spawn({
     PORT: "3000",
     INFERENCE_GATEWAY_URL: "http://localhost:3100",
     INFERENCE_PROVIDER: "scripted", // base provider is unused in gateway mode (just a model label)
-    AGENTS_JSON: JSON.stringify([{ name: "demo-bot", tenant: "teama" }]),
+    AGENTS_JSON: JSON.stringify([
+      { name: "demo-bot", tenant: "teama" },
+      // a Model-B sandboxed agent: its command runs IN the sandbox and calls the gateway
+      // for inference (think→gateway), its execution stays in the sandbox (do→sandbox).
+      { name: "sandbox-bot", tenant: "teama", kind: "sandboxed", command: SANDBOX_CMD },
+    ]),
   },
 });
 
@@ -121,6 +134,24 @@ try {
   console.log(`\nworkload ──POST /v1/generate (session-capped gateway :3101)──▶ HTTP ${direct.status}`);
   console.log(`[runaway stop] a single over-session-cap request is refused at the gateway (402): ${direct.status === 402 ? "yes ✅" : "no ❌"}`);
   console.log(`[session scope] the breach is the SESSION cap while the tenant cap ($1000) has room: ${body?.budget && body.budget.limitUsd < 1 ? "yes ✅" : "no ❌"}`);
+
+  // ── Scenario 3: Model B — a sandboxed agent. The runtime launches sandbox-bot in the
+  // (local) sandbox; its command calls the gateway for inference and prints the answer.
+  const bpost = await fetch("http://localhost:3000/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-agentos-identity": aliceToken },
+    body: JSON.stringify({ agent: "sandbox-bot", task: "what is the answer" }),
+  });
+  const brun = (await bpost.json()) as { runId: string };
+  let b: any;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    b = await (await fetch(`http://localhost:3000/runs/${brun.runId}`)).json();
+    if (["completed", "failed", "stuck"].includes(b.status)) break;
+  }
+  const bok = b.status === "completed" && b.output === GATEWAY_ANSWER;
+  console.log(`\nalice ──POST /runs (sandbox-bot, kind=sandboxed)──▶ ${b.status}: ${(b.output ?? b.error ?? "").slice(0, 60)}`);
+  console.log(`[model B] the delegated agent ran IN the sandbox and reached the model only via the gateway: ${bok ? "yes ✅" : "no ❌"}`);
 } finally {
   rtproc.kill();
   gwproc.kill();
