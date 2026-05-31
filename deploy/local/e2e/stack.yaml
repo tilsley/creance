@@ -16,17 +16,28 @@ kind: Namespace
 metadata:
   name: agentos-e2e
 ---
-# The claim (ADR-0021). The InferenceClaim CRD itself is applied from deploy/local/claim-crd.yaml
-# (CEL/pattern validated, Crossplane-free); here we just assert the grant: caller SA → teama.
+# The admin-set ceiling for this namespace (slice 6) — the bound the tenant self-services within.
+apiVersion: agent-os.io/v1alpha1
+kind: InferenceAllowance
+metadata:
+  name: default
+  namespace: agentos-e2e
+spec:
+  maxMonthlyUsd: "100" # claims here may not exceed this
+  allowedModels: [scripted]
+---
+# The claim (ADR-0021), NAMESPACED: tenant = the namespace (agentos-e2e); serviceAccount is the
+# in-namespace SA name. The gateway reads it via KubeClaimSource (TENANT_CLAIM_SCOPE=Namespaced).
+# A ValidatingAdmissionPolicy (deploy/local/claim-policy.yaml) checks it fits the allowance above.
 apiVersion: agent-os.io/v1alpha1
 kind: InferenceClaim
 metadata:
-  name: teama
+  name: caller-claim
+  namespace: agentos-e2e
 spec:
-  tenant: teama
-  serviceAccount: system:serviceaccount:agentos-e2e:caller # only this verified SA acts as teama
+  serviceAccount: caller # → system:serviceaccount:agentos-e2e:caller; only that SA acts as this tenant
   model: scripted
-  monthlyBudgetUsd: "10" # tenant/month cap (read by the gateway via KubeClaimSource)
+  monthlyBudgetUsd: "10" # ≤ allowance; tenant/month cap read by the gateway
 ---
 # --- identities + RBAC ---------------------------------------------------------
 apiVersion: v1
@@ -67,6 +78,23 @@ subjects:
   - { kind: ServiceAccount, name: gateway, namespace: agentos-e2e }
   - { kind: ServiceAccount, name: runtime, namespace: agentos-e2e }
 ---
+# SELF-SERVICE (slice 6): the tenant SA may manage its OWN claims in its OWN namespace — but NOT
+# the allowance (admin-only). RBAC + namespaced claims = a tenant can't escalate or cross tenants.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: claim-self-service, namespace: agentos-e2e }
+rules:
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: claim-self-service, namespace: agentos-e2e }
+roleRef: { kind: Role, name: claim-self-service, apiGroup: rbac.authorization.k8s.io }
+subjects:
+  - { kind: ServiceAccount, name: caller, namespace: agentos-e2e }
+---
 # --- the inference gateway (the privileged choke point) ------------------------
 apiVersion: v1
 kind: ConfigMap
@@ -85,6 +113,7 @@ data:
   TENANT_CLAIM_GROUP: agent-os.io # read the SA->tenant binding + cap from the InferenceClaim CRD
   TENANT_CLAIM_VERSION: v1alpha1
   TENANT_CLAIM_PLURAL: inferenceclaims
+  TENANT_CLAIM_SCOPE: Namespaced # tenant = the claim's namespace (slice 6)
   AGENT_REGISTRY: memory
   CRED_BROKER: noop
   RUN_STORE: memory
@@ -130,6 +159,7 @@ data:
   TENANT_CLAIM_GROUP: agent-os.io # the runtime also authn=oidc-sa → resolves tenant from the claim
   TENANT_CLAIM_VERSION: v1alpha1
   TENANT_CLAIM_PLURAL: inferenceclaims
+  TENANT_CLAIM_SCOPE: Namespaced # tenant = the claim's namespace (slice 6)
   INFERENCE_GATEWAY_URL: http://e2e-gateway.agentos-e2e.svc.cluster.local
   INFERENCE_PROVIDER: scripted # base provider unused in gateway mode (just a label)
   SANDBOX_PROVIDER: local # sandbox-bot runs here, in this pod

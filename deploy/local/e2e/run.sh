@@ -17,12 +17,18 @@ docker build -t agent-runtime:dev -f services/agent-runtime/Dockerfile . >/dev/n
 echo "▶ load image into k3s containerd (colima docker+k3s doesn't auto-share)"
 docker save agent-runtime:dev | colima ssh -- sudo ctr -n k8s.io images import -
 
-echo "▶ apply the InferenceClaim CRD (ADR-0021) + wait established, then the stack"
+echo "▶ apply the claim CRDs (ADR-0021) + the allowance VAP (slice 6), then the stack"
+# CRD scope is immutable — drop a prior cluster-scoped inferenceclaims CRD before (re)creating
+# it Namespaced (slice 6). Deletes its CRs too; the stack recreates them.
+kubectl --context "$CTX" delete crd inferenceclaims.agent-os.io --ignore-not-found --wait=true >/dev/null
 kubectl --context "$CTX" apply -f deploy/local/claim-crd.yaml >/dev/null
-for i in 1 2 3 4 5; do # the just-created CRD's Established condition can lag a beat
-  kubectl --context "$CTX" wait --for condition=established crd/inferenceclaims.agent-os.io --timeout=10s >/dev/null 2>&1 && break || sleep 2
+for crd in inferenceclaims inferenceallowances; do
+  for i in 1 2 3 4 5; do # the just-created CRD's Established condition can lag a beat
+    kubectl --context "$CTX" wait --for condition=established crd/$crd.agent-os.io --timeout=10s >/dev/null 2>&1 && break || sleep 2
+  done
 done
-kubectl --context "$CTX" apply -f deploy/local/e2e/stack.yaml >/dev/null
+kubectl --context "$CTX" apply -f deploy/local/claim-policy.yaml >/dev/null # ValidatingAdmissionPolicy
+kubectl --context "$CTX" apply -f deploy/local/e2e/stack.yaml >/dev/null    # ns → allowance → claim (in order)
 
 # recreate workloads so they pick up the freshly-loaded image (same tag => no auto-roll)
 echo "▶ (re)start workloads on the fresh image"
@@ -38,18 +44,23 @@ kubectl --context "$CTX" -n "$NS" wait --for=condition=ready pod/caller --timeou
 echo "▶ run e2e checks from inside the caller pod"
 kubectl --context "$CTX" -n "$NS" exec -i caller -- sh -c 'cat > /tmp/check.js && bun /tmp/check.js' < deploy/local/e2e/check.js
 
-# ADR-0021: claims are validated by the API server (CEL + OpenAPI patterns), no controller.
-# Prove a bad claim is refused at apply time — sessionBudget > monthlyBudget trips the CEL rule.
-echo "▶ slice 5    invalid claim rejected at apply time (CEL, no controller):"
-BAD=$(kubectl --context "$CTX" apply --dry-run=server -f - 2>&1 <<'YAML' || true
-apiVersion: agent-os.io/v1alpha1
+# Claims are validated by the API server — no controller. Prove apply-time rejection three ways:
+# CEL cross-field (CRD), and the namespace-allowance VAP (budget ceiling + allowed models).
+claim() { # $1=name $2=monthlyUsd $3=model [$4=sessionUsd] → an InferenceClaim in agentos-e2e
+  echo "apiVersion: agent-os.io/v1alpha1
 kind: InferenceClaim
-metadata: { name: bad }
-spec: { tenant: teama, serviceAccount: "system:serviceaccount:agentos-e2e:caller", monthlyBudgetUsd: "1", sessionBudgetUsd: "5" }
-YAML
-)
-echo "$BAD" | grep -qi "sessionBudgetUsd must not exceed" \
-  && echo "✅ rejected by CEL: sessionBudgetUsd must not exceed monthlyBudgetUsd" \
-  || { echo "❌ expected CEL rejection, got: $BAD"; exit 1; }
+metadata: { name: $1, namespace: $NS }
+spec: { serviceAccount: caller, model: $3, monthlyBudgetUsd: \"$2\"${4:+, sessionBudgetUsd: \"$4\"} }"
+}
+check_reject() { # $1=desc $2=manifest $3=expected-substring
+  local out; out=$(printf '%s' "$2" | kubectl --context "$CTX" apply --dry-run=server -f - 2>&1 || true)
+  echo "$out" | grep -qi "$3" && echo "✅ $1" || { echo "❌ $1 — got: $out"; exit 1; }
+}
+echo "▶ slice 6    invalid claims rejected at apply time (no controller):"
+check_reject "VAP rejects budget over the namespace allowance (500 > 100)" "$(claim over 500 scripted)" "exceeds the namespace allowance"
+check_reject "VAP rejects a model not in the allowance"                     "$(claim badmodel 10 gpt-9)"  "not in the namespace allowance"
+check_reject "CEL rejects sessionBudget > monthlyBudget"                    "$(claim sess 1 scripted 5)"  "sessionBudgetUsd must not exceed"
+printf '%s' "$(claim ok 50 scripted)" | kubectl --context "$CTX" apply --dry-run=server -f - >/dev/null 2>&1 \
+  && echo "✅ an in-bounds claim (50 ≤ 100, allowed model) is accepted" || { echo "❌ in-bounds claim was rejected"; exit 1; }
 
-echo "▶ (teardown: kubectl --context $CTX delete ns $NS; kubectl --context $CTX delete -f deploy/local/claim-crd.yaml)"
+echo "▶ (teardown: kubectl --context $CTX delete ns $NS; kubectl --context $CTX delete -f deploy/local/claim-crd.yaml -f deploy/local/claim-policy.yaml)"

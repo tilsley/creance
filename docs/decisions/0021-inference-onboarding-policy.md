@@ -55,7 +55,12 @@ inference with a budget. **Onboarding becomes a policy assertion, not a provisio
 - **−** A self-service budget needs a ceiling — see the deferred `InferenceAllowance`.
 
 ## Out of scope (follow-ups)
-- **Namespaced claims + `InferenceAllowance`** — true self-service *within an admin-set quota* (claim budget ≤ namespace allowance; auto-approve under a threshold). The L2 policy bound.
+- ✅ **Namespaced claims + `InferenceAllowance`** — *built in slice 6*: the claim is Namespaced
+  (tenant = namespace, RBAC-scoped so a tenant grants only its own SAs); an admin-set
+  `InferenceAllowance` per namespace caps budget + allowed models; a **ValidatingAdmissionPolicy**
+  enforces claim ≤ allowance at apply time, controller-free. Still deferred: **aggregate quota**
+  (sum of a namespace's claims ≤ allowance — needs a controller to track the running total) and a
+  status/auto-approve flow.
 - **Per-claim model routing/enforcement** — the claim carries `model`; the gateway still uses its configured model id today.
 - **`DynamoClaimSource` + `POST /claims` API** — the non-k8s onboarding path.
 - **Optional status controller** (`agent-controller` pattern) for `status.conditions` / aggregate quota.

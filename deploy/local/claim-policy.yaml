@@ -1,0 +1,35 @@
+# Controller-free cross-object validation (ADR-0021 / slice 6): an InferenceClaim must fit its
+# namespace's InferenceAllowance. The API server evaluates this at apply time (VAP, GA) using the
+# allowance as a CEL `params` object — no reconciler. parameterNotFoundAction: Deny ⇒ a namespace
+# with no allowance can't create claims at all (admin must grant an allowance first).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: inferenceclaim-within-allowance
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: agent-os.io/v1alpha1
+    kind: InferenceAllowance
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["agent-os.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["inferenceclaims"]
+  validations:
+    - expression: "double(object.spec.monthlyBudgetUsd) <= double(params.spec.maxMonthlyUsd)"
+      messageExpression: "'monthlyBudgetUsd ' + object.spec.monthlyBudgetUsd + ' exceeds the namespace allowance maxMonthlyUsd ' + params.spec.maxMonthlyUsd"
+    - expression: "!has(object.spec.model) || object.spec.model in params.spec.allowedModels"
+      messageExpression: "'model ' + (has(object.spec.model) ? object.spec.model : '') + ' is not in the namespace allowance allowedModels'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: inferenceclaim-within-allowance
+spec:
+  policyName: inferenceclaim-within-allowance
+  validationActions: ["Deny"]
+  paramRef:
+    name: default # the allowance named "default" in the claim's OWN namespace (no namespace set)
+    parameterNotFoundAction: Deny

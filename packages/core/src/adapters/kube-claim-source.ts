@@ -18,9 +18,11 @@ export class KubeClaimSource implements ClaimSource, BudgetSource, SaTenantResol
   readonly name = "kube-claim";
   /** lists the claim CRs' raw objects; kube-backed by default, injectable for tests. */
   private readonly lister: () => Promise<any[]>;
+  private readonly namespaced: boolean;
   private cache?: { at: number; bySa: Map<string, InferenceClaim>; byTenant: Map<string, InferenceClaim> };
 
   constructor(claim: ClaimCrd = {}, private readonly ttlMs = 30_000, lister?: () => Promise<any[]>) {
+    this.namespaced = claim.scope === "Namespaced";
     if (lister) {
       this.lister = lister;
     } else {
@@ -31,7 +33,9 @@ export class KubeClaimSource implements ClaimSource, BudgetSource, SaTenantResol
       kc.loadFromDefault(); // in-cluster SA token, or ~/.kube/config locally
       const api = kc.makeApiClient(k8s.CustomObjectsApi);
       this.lister = async () => {
-        const res: any = await api.listClusterCustomObject({ group, version, plural });
+        const res: any = this.namespaced
+          ? await api.listCustomObjectForAllNamespaces({ group, version, plural })
+          : await api.listClusterCustomObject({ group, version, plural });
         return res?.items ?? [];
       };
     }
@@ -43,7 +47,10 @@ export class KubeClaimSource implements ClaimSource, BudgetSource, SaTenantResol
     const bySa = new Map<string, InferenceClaim>();
     const byTenant = new Map<string, InferenceClaim>();
     for (const o of items) {
-      const claim = toClaim(o?.spec);
+      // Namespaced: tenant = the claim's namespace, SA = the in-namespace SA → full identity
+      // (so a tenant can only bind SAs in its own namespace). Cluster: tenant/SA from spec.
+      const ns = o?.metadata?.namespace;
+      const claim = toClaim(o?.spec, this.namespaced ? ns : undefined);
       if (!claim) continue;
       byTenant.set(claim.tenant, claim);
       if (claim.serviceAccount) bySa.set(claim.serviceAccount, claim);
@@ -69,15 +76,20 @@ export class KubeClaimSource implements ClaimSource, BudgetSource, SaTenantResol
   }
 }
 
-function toClaim(spec: any): InferenceClaim | undefined {
-  if (!spec || typeof spec.tenant !== "string") return undefined;
+/** `namespace` set ⇒ namespaced claim: tenant = namespace, SA = the full in-namespace identity. */
+function toClaim(spec: any, namespace?: string): InferenceClaim | undefined {
+  if (!spec) return undefined;
+  const tenant = namespace ?? (typeof spec.tenant === "string" ? spec.tenant : undefined);
+  if (!tenant) return undefined;
   const num = (v: unknown) => {
     const n = Number(v);
     return v != null && Number.isFinite(n) ? n : undefined;
   };
+  const saName = typeof spec.serviceAccount === "string" ? spec.serviceAccount : undefined;
+  const serviceAccount = saName == null ? undefined : namespace ? `system:serviceaccount:${namespace}:${saName}` : saName;
   return {
-    tenant: spec.tenant,
-    serviceAccount: typeof spec.serviceAccount === "string" ? spec.serviceAccount : undefined,
+    tenant,
+    serviceAccount,
     model: typeof spec.model === "string" ? spec.model : undefined,
     monthlyBudgetUsd: num(spec.monthlyBudgetUsd),
     sessionBudgetUsd: num(spec.sessionBudgetUsd),

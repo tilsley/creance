@@ -21,11 +21,15 @@ export interface InferenceClaim {
   sessionBudgetUsd?: number;
 }
 
-/** The cluster-scoped CRD the claim is read from (group/version/plural). */
+/** The CRD the claim is read from (group/version/plural + scope). Namespaced claims are the
+ *  self-service shape (ADR-0021): tenant = the claim's namespace, so a tenant can only grant
+ *  identities in its own namespace. Cluster-scoped is the legacy TenantInferenceProfile. */
 export interface ClaimCrd {
   group?: string;
   version?: string;
   plural?: string;
+  /** "Namespaced" ⇒ tenant = the claim's namespace; "Cluster" (default) ⇒ tenant = spec.tenant. */
+  scope?: "Namespaced" | "Cluster";
 }
 
 export interface ClaimSource {

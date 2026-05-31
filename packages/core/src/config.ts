@@ -122,7 +122,12 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // standalone binding CRD where the canonical TenantInferenceProfile is Crossplane-owned
   // (and would otherwise try to provision). Defaults to the TenantInferenceProfile claim.
   const claimCrd = env.TENANT_CLAIM_PLURAL
-    ? { group: env.TENANT_CLAIM_GROUP, version: env.TENANT_CLAIM_VERSION, plural: env.TENANT_CLAIM_PLURAL }
+    ? {
+        group: env.TENANT_CLAIM_GROUP,
+        version: env.TENANT_CLAIM_VERSION,
+        plural: env.TENANT_CLAIM_PLURAL,
+        scope: env.TENANT_CLAIM_SCOPE === "Namespaced" ? ("Namespaced" as const) : ("Cluster" as const),
+      }
     : undefined;
   // ONE claim reader (ADR-0021) serves both the gate's budget cap and the authn SA→tenant
   // resolver — built only when something needs it (kube budget source or oidc-sa authn).
