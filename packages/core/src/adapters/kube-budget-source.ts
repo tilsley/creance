@@ -22,15 +22,28 @@ const GROUP = "platform.agent-os.io";
 const VERSION = "v1alpha1";
 const PLURAL = "tenantinferenceprofiles";
 
+/** Override the CRD the cap is read from (group/version/plural). */
+export interface BudgetClaimCrd {
+  group?: string;
+  version?: string;
+  plural?: string;
+}
+
 export class KubeBudgetSource implements BudgetSource {
   readonly name = "kube";
   private readonly api: k8s.CustomObjectsApi;
   private readonly cache = new Map<string, { usd: number | undefined; at: number }>();
+  private readonly group: string;
+  private readonly version: string;
+  private readonly plural: string;
 
-  constructor(private readonly ttlMs = 30_000) {
+  constructor(private readonly ttlMs = 30_000, claim: BudgetClaimCrd = {}) {
     const kc = new k8s.KubeConfig();
     kc.loadFromDefault(); // in-cluster SA token, or ~/.kube/config locally
     this.api = kc.makeApiClient(k8s.CustomObjectsApi);
+    this.group = claim.group ?? GROUP;
+    this.version = claim.version ?? VERSION;
+    this.plural = claim.plural ?? PLURAL;
   }
 
   async limitFor(tenant: string): Promise<number | undefined> {
@@ -43,7 +56,7 @@ export class KubeBudgetSource implements BudgetSource {
 
   /** Find the claim whose `spec.tenant` matches and read its `monthlyBudgetUsd`. */
   private async fetch(tenant: string): Promise<number | undefined> {
-    const res: any = await this.api.listClusterCustomObject({ group: GROUP, version: VERSION, plural: PLURAL });
+    const res: any = await this.api.listClusterCustomObject({ group: this.group, version: this.version, plural: this.plural });
     const claim = (res?.items ?? []).find((o: any) => o?.spec?.tenant === tenant);
     const raw = claim?.spec?.monthlyBudgetUsd;
     if (raw == null) return undefined;

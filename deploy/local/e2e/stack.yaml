@@ -1,0 +1,220 @@
+# Local-k3s end-to-end for ADR-0019 (gateway + budget + sandbox), AWS-FREE.
+# Validates the bits we could only unit-test before — especially the slice-1 OIDC
+# ServiceAccount TokenReview authn, which needs a real cluster API.
+#
+#   caller(SA) --Bearer SA token--> e2e-runtime --(forwards token)--> e2e-gateway --scripted--> answer
+#
+# Both runtime + gateway authn=oidc-sa (TokenReview against k3s); tenant is resolved from
+# the TenantInferenceProfile CR's serviceAccount binding (non-forgeable). Gateway enforces
+# budget (kube-sourced monthly cap + a per-session cap). sandbox-bot runs IN the local
+# sandbox and reaches the model only via the gateway. Inference is scripted — no Bedrock.
+#
+#   bun/Make: see deploy/local/e2e/run.sh
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentos-e2e
+---
+# A STANDALONE binding CRD (cluster-scoped) — the SA->tenant authz binding + cap. Kept
+# separate from the Crossplane-owned TenantInferenceProfile (which provisions AWS and is
+# managed by an XRD here); the readers point at this via TENANT_CLAIM_* env. Crossplane-free.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tenantbindings.e2e.agent-os.io
+spec:
+  group: e2e.agent-os.io
+  scope: Cluster
+  names:
+    kind: TenantBinding
+    plural: tenantbindings
+    singular: tenantbinding
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                tenant: { type: string }
+                monthlyBudgetUsd: { type: string }
+                serviceAccount: { type: string }
+---
+apiVersion: e2e.agent-os.io/v1alpha1
+kind: TenantBinding
+metadata:
+  name: teama
+spec:
+  tenant: teama
+  monthlyBudgetUsd: "10" # tenant/month cap (read by the gateway's KubeBudgetSource)
+  serviceAccount: system:serviceaccount:agentos-e2e:caller # only this verified SA acts as teama
+---
+# --- identities + RBAC ---------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: gateway, namespace: agentos-e2e }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: runtime, namespace: agentos-e2e }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: caller, namespace: agentos-e2e } # the workload that calls in
+---
+# read the cluster-scoped tenant claims (SA->tenant binding + cap)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: agentos-e2e-tenant-reader }
+rules:
+  - apiGroups: ["e2e.agent-os.io"]
+    resources: ["tenantbindings"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: agentos-e2e-tenant-reader }
+roleRef: { kind: ClusterRole, name: agentos-e2e-tenant-reader, apiGroup: rbac.authorization.k8s.io }
+subjects:
+  - { kind: ServiceAccount, name: gateway, namespace: agentos-e2e }
+  - { kind: ServiceAccount, name: runtime, namespace: agentos-e2e }
+---
+# create TokenReviews (verify caller SA tokens) — the built-in system:auth-delegator role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: agentos-e2e-token-review }
+roleRef: { kind: ClusterRole, name: system:auth-delegator, apiGroup: rbac.authorization.k8s.io }
+subjects:
+  - { kind: ServiceAccount, name: gateway, namespace: agentos-e2e }
+  - { kind: ServiceAccount, name: runtime, namespace: agentos-e2e }
+---
+# --- the inference gateway (the privileged choke point) ------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: gateway-config, namespace: agentos-e2e }
+data:
+  PORT: "3100"
+  AUTHN: oidc-sa # TokenReview-verify the caller; tenant from the claim binding
+  OIDC_SA_AUDIENCE: agent-os
+  INFERENCE_PROVIDER: scripted # no Bedrock
+  SCRIPTED_TURNS: '[{"text":"answer-from-gateway"}]'
+  SANDBOX_PROVIDER: local # built by providersFromEnv; unused by the gateway
+  GATE: local
+  GATE_BUDGET_SOURCE: kube # monthly cap from the teama claim
+  GATE_BUDGET_USD: "10" # fallback
+  GATE_SESSION_BUDGET_USD: "0.001" # tiny per-session cap (the runaway-session stop)
+  TENANT_CLAIM_GROUP: e2e.agent-os.io # read the SA->tenant binding + cap from the standalone CRD
+  TENANT_CLAIM_VERSION: v1alpha1
+  TENANT_CLAIM_PLURAL: tenantbindings
+  AGENT_REGISTRY: memory
+  CRED_BROKER: noop
+  RUN_STORE: memory
+  SPEND_STORE: memory
+  TELEMETRY: console
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: e2e-gateway, namespace: agentos-e2e }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: e2e-gateway } }
+  template:
+    metadata: { labels: { app: e2e-gateway } }
+    spec:
+      serviceAccountName: gateway
+      containers:
+        - name: gateway
+          image: agent-runtime:dev # same repo image; override the command to run the gateway
+          imagePullPolicy: IfNotPresent
+          command: ["bun", "run", "services/inference-gateway/server.ts"]
+          ports: [{ containerPort: 3100 }]
+          envFrom: [{ configMapRef: { name: gateway-config } }]
+          readinessProbe: { httpGet: { path: /healthz, port: 3100 }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 384Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: e2e-gateway, namespace: agentos-e2e }
+spec:
+  selector: { app: e2e-gateway }
+  ports: [{ port: 80, targetPort: 3100 }]
+---
+# --- the agent runtime (holds no model creds; forwards inference to the gateway) -
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: runtime-config, namespace: agentos-e2e }
+data:
+  PORT: "3000"
+  AUTHN: oidc-sa
+  OIDC_SA_AUDIENCE: agent-os
+  TENANT_CLAIM_GROUP: e2e.agent-os.io # the runtime also authn=oidc-sa → resolves tenant from the binding
+  TENANT_CLAIM_VERSION: v1alpha1
+  TENANT_CLAIM_PLURAL: tenantbindings
+  INFERENCE_GATEWAY_URL: http://e2e-gateway.agentos-e2e.svc.cluster.local
+  INFERENCE_PROVIDER: scripted # base provider unused in gateway mode (just a label)
+  SANDBOX_PROVIDER: local # sandbox-bot runs here, in this pod
+  GATE: noop # create-time gate; the gateway enforces budget
+  MAX_OUTPUT_TOKENS: "256" # small worst-case so normal runs fit the session cap
+  AGENT_REGISTRY: memory
+  RUN_STORE: memory
+  CRED_BROKER: noop
+  TELEMETRY: console
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  AGENTS_JSON: |
+    [
+      { "name": "demo-bot", "tenant": "teama" },
+      { "name": "sandbox-bot", "tenant": "teama", "kind": "sandboxed",
+        "command": "bun -e 'const r=await fetch(process.env.INFERENCE_GATEWAY_URL+\"/v1/generate\",{method:\"POST\",headers:{authorization:\"Bearer \"+process.env.AGENT_TOKEN,\"content-type\":\"application/json\"},body:JSON.stringify({messages:[{role:\"user\",text:process.env.AGENT_TASK}],tools:[],maxTokens:64})});const j=await r.json();console.log(j.text??JSON.stringify(j))'" }
+    ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: e2e-runtime, namespace: agentos-e2e }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: e2e-runtime } }
+  template:
+    metadata: { labels: { app: e2e-runtime } }
+    spec:
+      serviceAccountName: runtime
+      containers:
+        - name: runtime
+          image: agent-runtime:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 3000 }]
+          envFrom: [{ configMapRef: { name: runtime-config } }]
+          readinessProbe: { httpGet: { path: /healthz, port: 3000 }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 384Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: e2e-runtime, namespace: agentos-e2e }
+spec:
+  selector: { app: e2e-runtime }
+  ports: [{ port: 80, targetPort: 3000 }]
+---
+# --- the caller: a pod with a projected SA token (audience agent-os) we exec into -
+apiVersion: v1
+kind: Pod
+metadata: { name: caller, namespace: agentos-e2e, labels: { app: caller } }
+spec:
+  serviceAccountName: caller
+  containers:
+    - name: caller
+      image: agent-runtime:dev # has bun + the projected token; we exec the e2e checks here
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { cpu: 200m, memory: 128Mi } }
+      volumeMounts:
+        - { name: agentos-token, mountPath: /var/run/secrets/agentos, readOnly: true }
+  volumes:
+    - name: agentos-token
+      projected:
+        sources:
+          - serviceAccountToken: { path: token, audience: agent-os, expirationSeconds: 3600 }

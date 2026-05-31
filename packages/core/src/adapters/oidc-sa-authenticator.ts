@@ -50,11 +50,20 @@ export interface SaTenantResolver {
   tenantFor(serviceAccount: string): Promise<string | undefined>;
 }
 
+/** The cluster-scoped CRD the SA→tenant binding lives in (group/version/plural). */
+export interface ClaimCrd {
+  group?: string;
+  version?: string;
+  plural?: string;
+}
+
 export interface OidcSaOptions {
   /** Expected token audience; also checked against the TokenReview's returned audiences. */
   audience?: string;
   reviewer?: TokenReviewer;
   resolver?: SaTenantResolver;
+  /** Override the binding CRD coords (e.g. a standalone CRD, not the Crossplane claim). */
+  claim?: ClaimCrd;
 }
 
 export class OidcServiceAccountAuthenticator implements Authenticator {
@@ -66,7 +75,7 @@ export class OidcServiceAccountAuthenticator implements Authenticator {
   constructor(opts: OidcSaOptions = {}) {
     this.audience = opts.audience;
     this.reviewer = opts.reviewer ?? new KubeTokenReviewer(opts.audience);
-    this.resolver = opts.resolver ?? new KubeSaTenantResolver();
+    this.resolver = opts.resolver ?? new KubeSaTenantResolver(30_000, opts.claim);
   }
 
   async authenticate(ctx: AuthnContext): Promise<Principal> {
@@ -135,15 +144,21 @@ export class KubeTokenReviewer implements TokenReviewer {
 /** Resolves tenant from the TenantInferenceProfile whose spec.serviceAccount matches. TTL-cached. */
 export class KubeSaTenantResolver implements SaTenantResolver {
   private readonly api: k8s.CustomObjectsApi;
+  private readonly group: string;
+  private readonly version: string;
+  private readonly plural: string;
   private cache?: { at: number; bySa: Map<string, string> };
-  constructor(private readonly ttlMs = 30_000) {
+  constructor(private readonly ttlMs = 30_000, claim: ClaimCrd = {}) {
     const kc = new k8s.KubeConfig();
     kc.loadFromDefault();
     this.api = kc.makeApiClient(k8s.CustomObjectsApi);
+    this.group = claim.group ?? GROUP;
+    this.version = claim.version ?? VERSION;
+    this.plural = claim.plural ?? PLURAL;
   }
   async tenantFor(serviceAccount: string): Promise<string | undefined> {
     if (!this.cache || Date.now() - this.cache.at >= this.ttlMs) {
-      const res: any = await this.api.listClusterCustomObject({ group: GROUP, version: VERSION, plural: PLURAL });
+      const res: any = await this.api.listClusterCustomObject({ group: this.group, version: this.version, plural: this.plural });
       const bySa = new Map<string, string>();
       for (const o of res?.items ?? []) {
         const sa = o?.spec?.serviceAccount;

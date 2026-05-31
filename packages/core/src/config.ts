@@ -118,7 +118,13 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // claim's monthlyBudgetUsd (ADR-0013); GATE_BUDGET_USD is then the fallback default.
   // SPEND_STORE=dynamodb makes the monthly spend counter durable (survives restarts);
   // SPEND_TABLE_ENDPOINT → DynamoDB Local. Defaults to in-memory (lost on restart).
-  const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? new KubeBudgetSource() : undefined;
+  // TENANT_CLAIM_* overrides the CRD the SA->tenant binding + cap are read from — e.g. a
+  // standalone binding CRD where the canonical TenantInferenceProfile is Crossplane-owned
+  // (and would otherwise try to provision). Defaults to the TenantInferenceProfile claim.
+  const claimCrd = env.TENANT_CLAIM_PLURAL
+    ? { group: env.TENANT_CLAIM_GROUP, version: env.TENANT_CLAIM_VERSION, plural: env.TENANT_CLAIM_PLURAL }
+    : undefined;
+  const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? new KubeBudgetSource(30_000, claimCrd) : undefined;
   const spendStore: SpendStore =
     (env.SPEND_STORE ?? "memory") === "dynamodb"
       ? new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT)
@@ -148,7 +154,7 @@ export function providersFromEnv(env: Env = process.env): Providers {
       case "oidc-sa":
         // verified workload identity (ADR-0019): TokenReview-validate the caller's
         // ServiceAccount token; tenant comes from the SA→claim binding, not the token.
-        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE });
+        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE, claim: claimCrd });
       case "noop":
         return new NoopAuthenticator();
       default:
