@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/inference-gateway",
+  "private": true,
+  "type": "module",
+  "description": "The privileged inference choke point — POST /v1/generate; holds model creds + budget admission, callers hold none (ADR-0019)",
+  "scripts": {
+    "start": "bun run server.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

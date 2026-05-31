@@ -19,7 +19,6 @@ import {
   runOnSession,
   providersFromEnv,
   estimateCostUsd,
-  AdmissionInferenceProvider,
   UnauthorizedError,
   type Run,
 } from "@agent-os/core";
@@ -108,13 +107,12 @@ async function processRun(id: string): Promise<void> {
   // resolve this run's toolset through the gateway (built-in + MCP servers,
   // per-tenant policy, broker creds injected; ADR-0011)
   const toolset = await toolProvider.resolve({ principal, session });
-  // resolve a tenant-scoped inference provider — assumes the tenant's IAM role so
-  // the model call acts AS the tenant (ADR-0014); falls back to the shared provider
-  // when per-tenant identity is off. Then wrap in the per-tenant admission decorator:
-  // worst-case cost is priced + checked against the budget before each call, and
-  // actual spend recorded per turn (the cost hard-stop, ADR-0013).
-  const baseInference = await providers.inferenceForTenant(tenant);
-  const inference = new AdmissionInferenceProvider(baseInference, gate, tenant);
+  // resolve the run's inference provider. DIRECT: assumes the tenant's IAM role (acts
+  // AS the tenant, ADR-0014) + budget admission (ADR-0013). GATEWAY (INFERENCE_GATEWAY_URL
+  // set): an HTTP client to the standalone gateway, which holds the model creds and
+  // enforces budget — this runtime then holds none (ADR-0019). The caller token is
+  // forwarded so the gateway re-derives the tenant. Both modes are built in config.
+  const inference = await providers.inferenceForTenant(tenant, principal.token);
   try {
     const result = await runOnSession({
       inference,

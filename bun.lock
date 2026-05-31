@@ -29,6 +29,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/gateway-runtimes": {
+      "name": "@agent-os/gateway-runtimes-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/mcp-gateway": {
       "name": "@agent-os/mcp-gateway-demo",
       "dependencies": {
@@ -99,6 +105,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "services/inference-gateway": {
+      "name": "@agent-os/inference-gateway",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@agent-os/a2a-delegation-demo": ["@agent-os/a2a-delegation-demo@workspace:examples/a2a-delegation"],
@@ -114,6 +126,10 @@
     "@agent-os/credential-broker-demo": ["@agent-os/credential-broker-demo@workspace:examples/credential-broker"],
 
     "@agent-os/dep-migrator": ["@agent-os/dep-migrator@workspace:apps/dep-migrator"],
+
+    "@agent-os/gateway-runtimes-demo": ["@agent-os/gateway-runtimes-demo@workspace:examples/gateway-runtimes"],
+
+    "@agent-os/inference-gateway": ["@agent-os/inference-gateway@workspace:services/inference-gateway"],
 
     "@agent-os/infra": ["@agent-os/infra@workspace:infra"],
 

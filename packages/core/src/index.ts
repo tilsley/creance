@@ -19,6 +19,7 @@ export * from "./adapters/bedrock-inference";
 export * from "./adapters/ollama-inference";
 export * from "./adapters/scripted-inference"; // deterministic demo/test driver (ADR-0017)
 export * from "./adapters/admission-inference"; // cost hard-stop decorator (ADR-0013)
+export * from "./adapters/gateway-inference"; // inference-gateway client (ADR-0019)
 // do
 export * from "./adapters/agentcore-sandbox";
 export * from "./adapters/local-sandbox";

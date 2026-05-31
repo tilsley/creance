@@ -8,6 +8,8 @@
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
 import { OllamaInferenceProvider } from "./adapters/ollama-inference";
 import { ScriptedInferenceProvider } from "./adapters/scripted-inference";
+import { AdmissionInferenceProvider } from "./adapters/admission-inference";
+import { GatewayInferenceProvider } from "./adapters/gateway-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
 import { LocalSandboxProvider } from "./adapters/local-sandbox";
 import { BedrockContentGuard } from "./adapters/bedrock-guard";
@@ -55,7 +57,7 @@ export interface Providers {
   agentRegistry: AgentRegistry;
   /** Inference provider scoped to a tenant's assumed role (ADR-0014), or the shared
    *  provider when per-tenant identity is off / the role isn't provisioned yet. */
-  inferenceForTenant: (tenant: string) => Promise<InferenceProvider>;
+  inferenceForTenant: (tenant: string, token?: string) => Promise<InferenceProvider>;
 }
 
 type Env = Record<string, string | undefined>;
@@ -163,10 +165,17 @@ export function providersFromEnv(env: Env = process.env): Providers {
     env.TENANT_ASSUME_ROLE === "kube" && inferenceKind === "bedrock"
       ? new KubeStsTenantCredentials(region)
       : undefined;
-  const inferenceForTenant = async (tenant: string): Promise<InferenceProvider> => {
-    if (!tenantCredentials) return inference;
-    const creds = await tenantCredentials.forTenant(tenant);
-    return creds ? new BedrockInferenceProvider(inference.model, region, creds) : inference;
+  // INFERENCE_GATEWAY_URL set ⇒ this process is a gateway CLIENT: forward generate over
+  // HTTP to the standalone gateway (ADR-0019). It then holds no model creds and does no
+  // local budget admission — the gateway enforces both. Unset ⇒ DIRECT: assume the
+  // tenant's role, call Bedrock, and wrap with the worst-case budget admission here
+  // (ADR-0013), so admission always runs wherever the *real* model call happens.
+  const gatewayUrl = env.INFERENCE_GATEWAY_URL;
+  const inferenceForTenant = async (tenant: string, token?: string): Promise<InferenceProvider> => {
+    if (gatewayUrl) return new GatewayInferenceProvider(gatewayUrl, inference.model, { token, tenant });
+    const creds = tenantCredentials ? await tenantCredentials.forTenant(tenant) : undefined;
+    const base = creds ? new BedrockInferenceProvider(inference.model, region, creds) : inference;
+    return new AdmissionInferenceProvider(base, gate, tenant);
   };
 
   // credential broker defaults to deny-all (noop). CRED_BROKER=local grants static
