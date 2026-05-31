@@ -16,43 +16,17 @@ kind: Namespace
 metadata:
   name: agentos-e2e
 ---
-# A STANDALONE binding CRD (cluster-scoped) — the SA->tenant authz binding + cap. Kept
-# separate from the Crossplane-owned TenantInferenceProfile (which provisions AWS and is
-# managed by an XRD here); the readers point at this via TENANT_CLAIM_* env. Crossplane-free.
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: tenantbindings.e2e.agent-os.io
-spec:
-  group: e2e.agent-os.io
-  scope: Cluster
-  names:
-    kind: TenantBinding
-    plural: tenantbindings
-    singular: tenantbinding
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                tenant: { type: string }
-                monthlyBudgetUsd: { type: string }
-                serviceAccount: { type: string }
----
-apiVersion: e2e.agent-os.io/v1alpha1
-kind: TenantBinding
+# The claim (ADR-0021). The InferenceClaim CRD itself is applied from deploy/local/claim-crd.yaml
+# (CEL/pattern validated, Crossplane-free); here we just assert the grant: caller SA → teama.
+apiVersion: agent-os.io/v1alpha1
+kind: InferenceClaim
 metadata:
   name: teama
 spec:
   tenant: teama
-  monthlyBudgetUsd: "10" # tenant/month cap (read by the gateway's KubeBudgetSource)
   serviceAccount: system:serviceaccount:agentos-e2e:caller # only this verified SA acts as teama
+  model: scripted
+  monthlyBudgetUsd: "10" # tenant/month cap (read by the gateway via KubeClaimSource)
 ---
 # --- identities + RBAC ---------------------------------------------------------
 apiVersion: v1
@@ -72,8 +46,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: { name: agentos-e2e-tenant-reader }
 rules:
-  - apiGroups: ["e2e.agent-os.io"]
-    resources: ["tenantbindings"]
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -108,9 +82,9 @@ data:
   GATE_BUDGET_SOURCE: kube # monthly cap from the teama claim
   GATE_BUDGET_USD: "10" # fallback
   GATE_SESSION_BUDGET_USD: "0.001" # tiny per-session cap (the runaway-session stop)
-  TENANT_CLAIM_GROUP: e2e.agent-os.io # read the SA->tenant binding + cap from the standalone CRD
+  TENANT_CLAIM_GROUP: agent-os.io # read the SA->tenant binding + cap from the InferenceClaim CRD
   TENANT_CLAIM_VERSION: v1alpha1
-  TENANT_CLAIM_PLURAL: tenantbindings
+  TENANT_CLAIM_PLURAL: inferenceclaims
   AGENT_REGISTRY: memory
   CRED_BROKER: noop
   RUN_STORE: memory
@@ -153,9 +127,9 @@ data:
   PORT: "3000"
   AUTHN: oidc-sa
   OIDC_SA_AUDIENCE: agent-os
-  TENANT_CLAIM_GROUP: e2e.agent-os.io # the runtime also authn=oidc-sa → resolves tenant from the binding
+  TENANT_CLAIM_GROUP: agent-os.io # the runtime also authn=oidc-sa → resolves tenant from the claim
   TENANT_CLAIM_VERSION: v1alpha1
-  TENANT_CLAIM_PLURAL: tenantbindings
+  TENANT_CLAIM_PLURAL: inferenceclaims
   INFERENCE_GATEWAY_URL: http://e2e-gateway.agentos-e2e.svc.cluster.local
   INFERENCE_PROVIDER: scripted # base provider unused in gateway mode (just a label)
   SANDBOX_PROVIDER: local # sandbox-bot runs here, in this pod

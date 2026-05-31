@@ -1,6 +1,6 @@
 # ADR-0019: Promote the inference gateway to a standalone, identity-bound choke point
 
-- **Status:** Proposed (extends [0004](0004-cost-governance.md) + [0013](0013-inference-cost-enforcement.md); hardens identity from [0014](0014-per-tenant-workload-identity.md)/[0015](0015-split-authn-authz-ports.md))
+- **Status:** Accepted — built across slices 1-5 + validated on the local-k3s e2e (extends [0004](0004-cost-governance.md) + [0013](0013-inference-cost-enforcement.md); hardens identity from [0014](0014-per-tenant-workload-identity.md)/[0015](0015-split-authn-authz-ports.md))
 - **Date:** 2026-05-30
 
 ## Context

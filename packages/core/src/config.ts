@@ -25,7 +25,7 @@ import { OidcServiceAccountAuthenticator } from "./adapters/oidc-sa-authenticato
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
-import { KubeBudgetSource } from "./adapters/kube-budget-source";
+import { KubeClaimSource } from "./adapters/kube-claim-source";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
@@ -124,7 +124,11 @@ export function providersFromEnv(env: Env = process.env): Providers {
   const claimCrd = env.TENANT_CLAIM_PLURAL
     ? { group: env.TENANT_CLAIM_GROUP, version: env.TENANT_CLAIM_VERSION, plural: env.TENANT_CLAIM_PLURAL }
     : undefined;
-  const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? new KubeBudgetSource(30_000, claimCrd) : undefined;
+  // ONE claim reader (ADR-0021) serves both the gate's budget cap and the authn SA→tenant
+  // resolver — built only when something needs it (kube budget source or oidc-sa authn).
+  const claimSource =
+    env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa" ? new KubeClaimSource(claimCrd) : undefined;
+  const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? claimSource : undefined;
   const spendStore: SpendStore =
     (env.SPEND_STORE ?? "memory") === "dynamodb"
       ? new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT)
@@ -154,7 +158,7 @@ export function providersFromEnv(env: Env = process.env): Providers {
       case "oidc-sa":
         // verified workload identity (ADR-0019): TokenReview-validate the caller's
         // ServiceAccount token; tenant comes from the SA→claim binding, not the token.
-        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE, claim: claimCrd });
+        return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE, resolver: claimSource });
       case "noop":
         return new NoopAuthenticator();
       default:

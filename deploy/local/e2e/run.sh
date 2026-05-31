@@ -17,9 +17,11 @@ docker build -t agent-runtime:dev -f services/agent-runtime/Dockerfile . >/dev/n
 echo "▶ load image into k3s containerd (colima docker+k3s doesn't auto-share)"
 docker save agent-runtime:dev | colima ssh -- sudo ctr -n k8s.io images import -
 
-echo "▶ apply stack (CRD first — avoid the CR-before-CRD-established race)"
-kubectl --context "$CTX" apply -f deploy/local/e2e/stack.yaml >/dev/null 2>&1 || true
-kubectl --context "$CTX" wait --for condition=established crd/tenantbindings.e2e.agent-os.io --timeout=30s >/dev/null
+echo "▶ apply the InferenceClaim CRD (ADR-0021) + wait established, then the stack"
+kubectl --context "$CTX" apply -f deploy/local/claim-crd.yaml >/dev/null
+for i in 1 2 3 4 5; do # the just-created CRD's Established condition can lag a beat
+  kubectl --context "$CTX" wait --for condition=established crd/inferenceclaims.agent-os.io --timeout=10s >/dev/null 2>&1 && break || sleep 2
+done
 kubectl --context "$CTX" apply -f deploy/local/e2e/stack.yaml >/dev/null
 
 # recreate workloads so they pick up the freshly-loaded image (same tag => no auto-roll)
@@ -36,4 +38,18 @@ kubectl --context "$CTX" -n "$NS" wait --for=condition=ready pod/caller --timeou
 echo "▶ run e2e checks from inside the caller pod"
 kubectl --context "$CTX" -n "$NS" exec -i caller -- sh -c 'cat > /tmp/check.js && bun /tmp/check.js' < deploy/local/e2e/check.js
 
-echo "▶ (teardown: kubectl --context $CTX delete ns $NS)"
+# ADR-0021: claims are validated by the API server (CEL + OpenAPI patterns), no controller.
+# Prove a bad claim is refused at apply time — sessionBudget > monthlyBudget trips the CEL rule.
+echo "▶ slice 5    invalid claim rejected at apply time (CEL, no controller):"
+BAD=$(kubectl --context "$CTX" apply --dry-run=server -f - 2>&1 <<'YAML' || true
+apiVersion: agent-os.io/v1alpha1
+kind: InferenceClaim
+metadata: { name: bad }
+spec: { tenant: teama, serviceAccount: "system:serviceaccount:agentos-e2e:caller", monthlyBudgetUsd: "1", sessionBudgetUsd: "5" }
+YAML
+)
+echo "$BAD" | grep -qi "sessionBudgetUsd must not exceed" \
+  && echo "✅ rejected by CEL: sessionBudgetUsd must not exceed monthlyBudgetUsd" \
+  || { echo "❌ expected CEL rejection, got: $BAD"; exit 1; }
+
+echo "▶ (teardown: kubectl --context $CTX delete ns $NS; kubectl --context $CTX delete -f deploy/local/claim-crd.yaml)"
