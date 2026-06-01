@@ -53,6 +53,24 @@ them muddies both. Reversible if it proves over-split.
 - `inference-gateway` and `tool-gateway` gain a guard enforcement responsibility.
 - More Bedrock dependency (consistent with ADR-0006).
 
+## Amendment (2026-06-01) — coding agents + memory
+
+Coding agents ([ADR-0022](0022-sandbox-backends-for-coding-agents.md)) and long-term
+memory ([ADR-0023](0023-memory-backends-postgres-redis.md)) reshape guard's *use* — the
+`ContentGuard` port is unchanged; its hooks, adapters, policy, and location shift:
+
+- **New ingress crossing — retrieved memory.** Semantic/long-term memory re-enters context;
+  memory poisoning is persistent injection. Add guard call sites on memory **write** and
+  **read**, beyond {model-in, model-out, tool-output}.
+- **Indirect injection via code is the dominant coding-agent threat.** Compose an
+  **injection-specialised detector** (Lakera / LLM-as-judge) on ingress; Bedrock Guardrails
+  alone is weak here. Guard policy must be **code-aware** or it false-positives on legitimate code.
+- **Containment beats content on `do`.** For arbitrary-code execution the sandbox **egress
+  lockdown** is the load-bearing control; guard protects the *reasoning*, it doesn't contain
+  the process.
+- **Model B degrades guard to per-boundary.** A foreign agent CLI's inner loop is opaque, so
+  the **inference-gateway becomes the only guard point** for a B-agent (assembled prompt only).
+
 ## Relationship
 
 Builds on [ADR-0007](0007-tools-and-external-auth.md) (untrusted tool output =

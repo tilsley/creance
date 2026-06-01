@@ -1,5 +1,9 @@
 # Primitives & controls: the layered model
 
+> This is the canonical **L0** model (primitives + controls). For the full top-down
+> story — requirements, the L1/L2 layers, the gate decomposition, the inference
+> gateway — see [`platform.md`](platform.md).
+
 `agent-os` is three vertical layers. The bottom (L0) has **two kinds** of
 foundation: **primitives** — capabilities the agent *acts with* — and
 **controls** — cross-cutting concerns the platform *enforces around* every action.
@@ -48,8 +52,10 @@ What the agent invokes to do work, each step.
 Abstracts the model provider so agents never call it directly.
 - **Backing:** Amazon Bedrock, via per-team **application inference profiles**
   (cost attribution) over **cross-region** profiles (throughput/access).
-- **Component:** `inference-gateway`. Also the enforcement point for cost caps.
-- **Status:** in design. See [ADR-0004](decisions/0004-cost-governance.md).
+- **Component:** `inference-gateway` — now a **real, standalone service** and the sole
+  holder of model credentials + the cost-cap enforcement point (ADR-0019).
+- **Status:** built + proven on EKS/k3s. See [ADR-0004](decisions/0004-cost-governance.md),
+  [ADR-0013](decisions/0013-inference-cost-enforcement.md), [ADR-0019](decisions/0019-inference-gateway.md).
 
 ### 2. Sandbox — *do*  · port `SandboxProvider`
 A persistent **workspace** for untrusted, agent-generated work: run code, run
@@ -62,6 +68,11 @@ install/build (mirrors janey-ops' `WorkspacePort`).
   PUBLIC/VPC mode + git in the image.
 - **Status:** workspace implemented + validated (local incl. real git clone, $0;
   AgentCore runCmd + file roundtrip, live). See [ADR-0006](decisions/0006-agentcore-execution-environment.md), [isolation.md](isolation.md).
+- **Coding agents — backend by profile ([ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md)):**
+  AgentCore Code Interpreter for tool-execution (Model A; Public/Sandbox/**VPC** network
+  modes — not VPC-limited); **E2B** or **self-hosted k8s** (Kata/gVisor + NetworkPolicy)
+  for a sandboxed coding-agent CLI (Model B). For arbitrary code the **egress lockdown is
+  the load-bearing safety control**, not `guard`.
 - **Tools (do's second face) — `ToolProvider`:** the runtime assembles each run's
   toolset from sources (built-in workspace/http + **MCP servers**), namespaced and
   governed by a per-tenant allowlist, with `CredentialBroker` creds injected. **MCP
@@ -77,8 +88,10 @@ Durable, possibly shared state across runs and across agents — long-term memor
   (status + conversation) here, per turn. That's what makes runs **async**
   (submit → poll) and **durable** (inspectable mid-flight; recoverable with a
   persistent adapter). See [`core/runs`](../packages/core/src/runs.ts).
-- **Backing:** in-memory today (dev); DynamoDB / AgentCore Memory next — swappable
-  behind the port. S3 for artifacts; a transactional DB once state is *shared*.
+- **Backing:** in-memory today (dev); **Postgres** as the system of record (run state,
+  long-term/episodic memory, **pgvector** semantic search) with **Redis** as the hot tier
+  (cache, queue, locks) — not DynamoDB ([ADR-0023](decisions/0023-memory-backends-postgres-redis.md)).
+  Swappable behind the port; S3 for artifacts.
 - **Next use — cross-run memory:** the same primitive, holding learnings/results
   across runs and agents (the original "remember" vision).
 - **Status:** realized for run state; cross-run memory still ahead.
@@ -90,25 +103,31 @@ Durable, possibly shared state across runs and across agents — long-term memor
 Enforced *around* every action — the agent doesn't call these to make progress;
 the platform applies them.
 
-### 4. Identity & governance — *gate*  · port `Gate` (→ `CredentialBroker` / `PolicyProvider`)
+### 4. Identity & governance — *gate*  · ports `Authenticator` · `Authorizer` · `Gate` · `CredentialBroker`
 Who/what may do what, with least privilege. A genuinely new problem: an agent
 action carries **two identities at once** — the human who initiated it and the
 agent that executes it (see [ADR-0009](decisions/0009-gate-identity-and-governance.md)).
-- **First use (thin, now):** the runtime authenticates `POST /runs` → a
-  `Principal {tenant, subject}`, attaches it to the `Run`, and enforces a
-  per-tenant budget costed from token usage. `LocalGate` adapter (dev) →
-  `NoopGate` (default open).
-- **Downstream creds (`CredentialBroker`):** mints scoped, short-lived creds for a
-  run's `Principal` to call external systems — applied by tools **server-side, so
-  the model never sees the secret** ([ADR-0010](decisions/0010-credential-broker.md)).
-  `LocalCredentialBroker` (env grants, dev) → `NoopCredentialBroker` (default deny).
-- **Backing / swap-ins:** EKS Pod Identity + STS + IAM (Crossplane) for
-  AWS-downstream creds; AgentCore Identity / Auth0 Token Vault for the human×agent
-  token + third-party OAuth ([ADR-0007](decisions/0007-tools-and-external-auth.md));
-  an AI gateway / Bedrock inference profiles + AWS Budgets for spend
-  ([ADR-0004](decisions/0004-cost-governance.md)); Cedar/OPA for policy.
-- **Component:** `iam-authorizer`. Still ahead: real (minted) credentials + OAuth,
-  a policy engine, mid-run budget hard-stop.
+The gate is **not one check** — it decomposes into four factored, swappable ports
+applied in order (authn → authz → budget → creds); the full flow is in
+[`platform.md` §5](platform.md#5-l1--composition-the-wiring). In summary:
+- **authn — verify, don't trust (`Authenticator`):** caller credential →
+  `Principal {tenant, subject, groups?, token?, actors?}`. `static-token` (dev) →
+  **mesh-trust** and **OIDC-SA** (a real Kubernetes `TokenReview`, ADR-0019); the
+  `tenant` is resolved from a non-forgeable claim binding.
+- **authz — may this actor (`Authorizer`):** allow/deny over `(principal, action,
+  resource)`. `allow-all` (dev) → **OPA** (ADR-0015).
+- **budget — the real hard-stop (`Gate` + `SpendStore`):** atomic, multi-scope
+  `reserve`/`settle` on a conditional DynamoDB write (tenant/month + per-session);
+  worst-case admission up front, breach → 402 (ADR-0013/0019).
+- **downstream creds (`CredentialBroker`):** scoped, short-lived creds applied by
+  tools **server-side, so the model never sees the secret**. env grants (dev) →
+  **OBO token vault, RFC 8693** ([ADR-0010](decisions/0010-credential-broker.md),
+  [ADR-0016](decisions/0016-obo-token-vault.md)).
+- **grants come from claims, not provisioning (`ClaimSource`):** a tenant's budget +
+  model are read from an `InferenceClaim` (Kube CRD or DynamoDB) rather than a
+  per-tenant AWS bundle — the L2-policy layer (ADR-0021).
+- **Component:** `inference-gateway` (the enforcement choke point) + the planned
+  `iam-authorizer`. Still ahead: splitting `iam-authorizer` out of in-process.
 
 ### 5. Observability — *record*  · port `TelemetrySink`
 Structural tracking of non-deterministic agent loops.
@@ -119,8 +138,11 @@ Structural tracking of non-deterministic agent loops.
 ### 6. Safety / Guardrails — *guard*  · port `ContentGuard`
 Is the *content* safe / allowed / grounded? (Distinct axis from `gate`:
 actor-authz vs content-safety.) Applied to every `think` **and** every content
-crossing a trust boundary — input, output, and untrusted ingress (tool/MCP/RAG
-output → model context, the injection defense).
+crossing a trust boundary — input, output, and untrusted ingress: tool/MCP/RAG
+output **and retrieved memory** → model context (the injection defense — memory
+poisoning is persistent injection, [ADR-0023](decisions/0023-memory-backends-postgres-redis.md)).
+For code-ingesting agents, compose an **injection detector** and keep policy
+**code-aware** ([ADR-0008](decisions/0008-guard-content-safety-primitive.md) amendment).
 - **Default adapter (swappable):** Amazon Bedrock Guardrails — content filters
   (incl. Prompt Attack), denied topics, PII filters, contextual grounding;
   **ApplyGuardrail** screens any content, even non-Bedrock. Alternatives below.

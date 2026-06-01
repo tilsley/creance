@@ -1,5 +1,9 @@
 # agent-os architecture
 
+> **New here? Start with [`platform.md`](platform.md)** — the top-down narrative
+> (requirements → layers → primitives → ports → L1/L2). This document is the
+> deeper AWS-mapping reference it links into.
+
 Refined from the original bootstrap blueprint, with the four locked decisions
 baked in and the blueprint's technical errors corrected.
 
@@ -91,13 +95,14 @@ sequenceDiagram
 
 ## Implementation status — logical design vs. what runs
 
-> **Read the component names below as the *logical* architecture.** The services
-> `inference-gateway`, `sandbox-manager`, `iam-authorizer`, `telemetry-processor`,
-> and `tool-gateway` are **not yet separate services** — today their logic lives
-> **in-process** as adapters inside [`@agent-os/core`](../packages/core), driven by
-> the one running service, **`agent-runtime`**. The split into separate services is
-> designed (their READMEs, the ADRs) but not yet done; the clean in-process
-> composition is an assumption about how it decomposes, not yet tested.
+> **Read the component names below as the *logical* architecture.** Four are now
+> **real, separately-deployed services**: `agent-runtime` (the L1 runtime),
+> `inference-gateway` (the model choke point — ADR-0019/0021), `agent-controller`,
+> and `claims-controller` (the reconcilers — ADR-0012/0021). The remaining four —
+> `sandbox-manager`, `iam-authorizer`, `telemetry-processor`, `tool-gateway` — are
+> **not yet split out**: their logic still lives **in-process** as adapters inside
+> [`@agent-os/core`](../packages/core). That split is designed (their READMEs, the
+> ADRs) but not yet done.
 
 Every primitive and control sits behind a port with a thin-local adapter; the
 managed (mostly AWS) swap-ins are documented, several still unwired:
@@ -107,18 +112,23 @@ managed (mostly AWS) swap-ins are documented, several still unwired:
 | `InferenceProvider` (think) | Ollama | **Bedrock** ✅ |
 | `SandboxProvider` (do) | local temp-dir | **AgentCore Code Interpreter** ✅ |
 | `ToolProvider` (do, tools) | built-in + MCP (stdio/HTTP) | AgentCore Gateway |
-| `RunStore` (remember) | in-memory | DynamoDB / AgentCore Memory |
-| `Gate` (gate) | static tokens + budget | AgentCore Identity / Auth0; Cedar/OPA |
-| `CredentialBroker` (gate) | env grants | AgentCore Identity / Auth0 Token Vault; STS |
+| `RunStore` (remember) | in-memory | Postgres (+pgvector) / Redis (ADR-0023) |
+| `Authenticator` (gate/authn) | static tokens | **mesh-trust** ✅ · **OIDC-SA (TokenReview)** ✅ |
+| `Authorizer` (gate/authz) | allow-all | **OPA** ✅ · Cedar |
+| `Gate` + `SpendStore` (gate/budget) | local + in-memory | **DynamoDB atomic, multi-scope** ✅ |
+| `ClaimSource` (gate/grants) | — | **Kube CRD** ✅ · **DynamoDB** ✅ |
+| `CredentialBroker` (gate) | env grants | **OBO token vault (RFC 8693)** ✅ · STS |
 | `ContentGuard` (guard) | noop | **Bedrock Guardrails** ✅ |
 | `TelemetrySink` (record) | console | **OTel/OTLP** ✅ → ADOT/OpenSearch |
 
 ✅ = both sides actually run. **Validated end-to-end:** a real agent
 (dep-migrator) migrated a dependency; the budget gate returned `402`; the
 credential broker kept a secret out of the model transcript; the MCP gateway
-discovered + called a tool under per-tenant policy. **Not yet production:**
-in-memory `RunStore`, static gate tokens + broker secrets, in-process
-fire-and-forget worker, no eval harness, EKS/CDK still skeleton.
+discovered + called a tool under per-tenant policy; **verified workload identity
+(OIDC TokenReview), the standalone inference-gateway, atomic multi-scope budget,
+and cross-pod A2A on-behalf-of were proven on real EKS + local k3s** (ADR-0019/0021).
+**Not yet production:** in-memory `RunStore`, static gate tokens + broker secrets,
+in-process fire-and-forget worker, no eval harness, EKS/CDK still skeleton.
 
 ## The primitives
 
@@ -142,13 +152,21 @@ orchestration loop stays in k8s (trusted, `runc`); only execution goes to
 AgentCore. Crossplane provisions the named CodeInterpreter *config*; sessions are
 runtime. **Egress** is set via AgentCore network mode (sandboxed vs allowlisted).
 Behind the `SandboxProvider` port (ADR-0003), an EKS+gVisor adapter remains
-possible if execution is ever in-sourced.
+possible if execution is ever in-sourced. **For coding agents** the backend is
+chosen by profile ([ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md)):
+Code Interpreter for tool-execution (Model A); E2B or self-hosted-k8s for a
+sandboxed coding-agent CLI (Model B), where the **egress lockdown is the
+load-bearing safety control**. Code Interpreter is *not* VPC-limited — it has
+Public / Sandbox / VPC network modes; VPC mode attaches the managed tool to your
+VPC via ENIs (+ NAT for internet).
 
 ### 3. State / Memory — *remember*
 Durable, possibly shared state across runs/agents — the agent's long-term memory.
 Irreducible (can't be built on the other primitives — see [primitives.md](primitives.md));
-backed by AgentCore Memory or a datastore (DynamoDB/Postgres/Redis/S3). **First use
-is built:** the `RunStore` persists each run (status + conversation) per turn,
+backed by **Postgres** (system of record — run state, long-term/episodic memory,
+pgvector semantic search) with **Redis** as the hot tier (cache, queue, locks) —
+not DynamoDB ([ADR-0023](decisions/0023-memory-backends-postgres-redis.md)). **First
+use is built:** the `RunStore` persists each run (status + conversation) per turn,
 making runs async + durable. Cross-run/shared memory is still ahead. Distinct from
 intra-session sandbox state (#2) and the loop's working state (L1).
 
@@ -171,7 +189,10 @@ collector is infra. Enables step-by-step replay of non-deterministic agent loops
 ### 6. Safety / Guardrails (the filter) — *guard*
 Is the *content* safe / allowed / grounded? (vs `gate` = actor/action authz.)
 Applied to every `think` and every untrusted content crossing (tool/MCP/RAG output
-→ model context — the injection defense).
+**and retrieved memory** → model context — the injection defense). For code-ingesting
+agents the dominant threat is indirect injection via repo/dep content, so compose an
+injection detector and keep policy code-aware ([ADR-0008](decisions/0008-guard-content-safety-primitive.md)
+amendment, [ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md)).
 - **Port `ContentGuard`; default adapter Bedrock Guardrails** (swappable — Llama
   Guard / NeMo / Presidio / LLM-as-judge): content filters (incl. Prompt Attack),
   denied topics, PII, contextual grounding; **ApplyGuardrail** screens any content
