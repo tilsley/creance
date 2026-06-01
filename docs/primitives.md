@@ -30,6 +30,16 @@ The agent runtime (L1) composes them; applications (L2) build on the runtime.
   (authz), record (telemetry), guard (content safety). The agent doesn't "call"
   them to get work done; the platform applies them.
 
+**The concrete test** (when "capability vs concern" feels abstract): *delete it —
+does the agent stop making progress, or just run ungoverned?* Remove a primitive
+(think/do/remember) and the agent **can't do the job**; remove a control
+(gate/record/guard) and it **still does the job, just unmetered/unaudited/unscreened**.
+Equivalently: a primitive is triggered by the *agent* and **advances** the task; a
+control is triggered by the *platform* on every step and **governs** it (and can say
+*no* — 402/403/blocked). It's the **data-plane / control-plane** split you know from
+Kubernetes: primitives are the *pods doing the work*; controls are *RBAC + quotas +
+admission webhooks* — they govern the work, run on everything, and never do it themselves.
+
 Both are foundational, both are **irreducible** (can't be built from each other),
 and — crucially — **both sit behind ports, so their implementations are
 swappable** (see [Everything is swappable](#everything-is-swappable) and

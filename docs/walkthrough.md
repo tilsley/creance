@@ -87,23 +87,28 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  subgraph PRIM["PRIMITIVES — the agent CALLS these"]
+  subgraph PRIM["PRIMITIVES — the agent's work (data plane)"]
     direction LR
     T["think"] ~~~ D["do"] ~~~ R["remember"]
   end
-  subgraph CTRL["CONTROLS — the platform ENFORCES these"]
+  subgraph CTRL["CONTROLS — the platform's checks (control plane)"]
     direction LR
     G["gate"] ~~~ Rec["record"] ~~~ Gu["guard"]
   end
 ```
 
-*Controls wrap primitives — e.g. the **gate** admits + meters each `think` (the 402); **guard** screens what crosses into it; **record** traces every step.*
+*Test — **delete it**: can't make progress = a **primitive** (the agent's work) · runs but ungoverned = a **control** (the platform's checks). Same split as k8s: pods vs RBAC + quota + admission.*
 
-> 🎤 "L0 splits in two. **Primitives** are capabilities the agent actively calls to make progress —
-> *think* (ask a model), *do* (run code or a tool), *remember* (save state). **Controls** are
-> concerns the platform enforces *around* every action, whether the agent likes it or not — *gate*
-> (identity + budget), *record* (tracing), *guard* (content safety). Primitives are what the agent
-> reaches for; controls are the rails it runs on."
+*Controls wrap primitives — the **gate** admits + meters each `think` (the 402); **guard** screens what crosses into it; **record** traces every step.*
+
+> 🎤 "L0 is the parts, in two kinds — and here's the non-abstract way to tell them apart.
+> **Primitives** are what the agent uses to get work done: *think*, *do*, *remember*. **Controls**
+> are what the platform imposes around that work: *gate*, *record*, *guard*. The test is: **delete
+> it — does the agent stop making progress, or just run ungoverned?** Take away *think* and there's
+> no agent; take away the *gate* and the agent still works, it's just unmetered and unsafe. Progress
+> → primitive; governance → control. If you know Kubernetes, it's the exact same split: primitives
+> are the **pods doing the work**; controls are **RBAC, quotas, and admission webhooks** — they
+> govern the work, they can say no, they run on everything, and they never do the workload's job."
 
 ---
 

@@ -55,17 +55,19 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  subgraph PRIM["PRIMITIVES — the agent CALLS these"]
+  subgraph PRIM["PRIMITIVES — the agent's work (data plane)"]
     direction LR
     T["think"] ~~~ D["do"] ~~~ R["remember"]
   end
-  subgraph CTRL["CONTROLS — the platform ENFORCES these"]
+  subgraph CTRL["CONTROLS — the platform's checks (control plane)"]
     direction LR
     G["gate"] ~~~ Rec["record"] ~~~ Gu["guard"]
   end
 ```
 
-*Controls wrap primitives — e.g. the **gate** admits + meters each `think` (the 402); **guard** screens what crosses into it; **record** traces every step.*
+*Test — **delete it**: can't make progress = a **primitive** (the agent's work) · runs but ungoverned = a **control** (the platform's checks). Same split as k8s: pods vs RBAC + quota + admission.*
+
+*Controls wrap primitives — the **gate** admits + meters each `think` (the 402); **guard** screens what crosses into it; **record** traces every step.*
 
 ---
 
