@@ -173,6 +173,14 @@ L1 is where the primitives and controls become *a run*. "The agent" **is** this 
 trusted code that decides → thinks → acts → remembers, with every step gated, recorded, and
 guarded. Full contract in [`runtime.md`](runtime.md); the loop is [`loop.ts`](../packages/core/src/loop.ts).
 
+**It ships two ways — same loop.** As a **library** (`@agent-os/core` — `import { runAgent }`,
+runs in *your* process; what `apps/`+`examples/` use), or as the **`agent-runtime` service** (a
+thin HTTP wrapper — `POST /runs`, an async worker runs the loop *for* you, poll `GET /runs/:id`;
+the multi-tenant, centrally-governed front door). Lib = you host the loop; service = we host and
+govern it. An agent itself is **defined once** as an `AgentSpec` (prompt, tools, model, budget —
+the L2 config) and then **called per task** by name; one loop serves every agent (*define once,
+call many*).
+
 ### The gate decomposes
 
 The `gate` control is not one check — it's **four factored ports** the platform applies in

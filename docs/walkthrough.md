@@ -267,19 +267,30 @@ sequenceDiagram
 ## 12 · L1 vs L2 — one engine, many agents
 
 ```mermaid
-flowchart TB
-  Loop["<b>L1</b>: one loop · runOnSession<br/><i>generic engine</i>"]
-  Loop --> A1["dep-migrator<br/>prompt + tools + $5"]
-  Loop --> A2["ticket-bot<br/>prompt + tools + $2"]
-  Loop --> A3["… your agent<br/>prompt + tools + $"]
+flowchart LR
+  subgraph DEF["① L2 · define once (config + policy)"]
+    A["AgentSpec — prompt · tools · model · budget<br/>+ claim: what it's allowed"]
+  end
+  subgraph RUN["② call per task"]
+    T["POST /runs {agent, task}  (service)<br/>· or runAgent(cfg, task)  (lib)"]
+  end
+  subgraph ONE["L1 · one loop — runOnSession"]
+    M["lib: import @agent-os/core (you host)<br/>service: agent-runtime (we host + govern)"]
+  end
+  A -->|"configures"| ONE
+  T -->|"invokes by name"| ONE
 ```
 
-> 🎤 "Here's the L1/L2 split made concrete. There's **one** loop — the engine. What makes it
-> 'dep-migrator' versus 'ticket-bot' is **L2 config**: a system prompt, a tool list, a budget, an
-> owner. Same engine, different configuration. So a team building an agent works at L2 — they
-> *define* the agent and *register* its tools — and they consume L1 either as a library they import
-> or as our hosted runtime they POST to. They never reach into L0; the loop mediates every primitive
-> call for them."
+*L1 = one loop, shipped as a lib or a service. L2 = define the agent once (config + policy), then call it per task — define once, call many; the same loop serves every agent.*
+
+> 🎤 "This is L1 and L2 made concrete. **L1 is one loop** — `runOnSession` — and it ships two ways:
+> as a **library** you import and host yourself, or as the **agent-runtime service** we host and
+> govern. Same loop either way. **L2 is your config**: you **define an agent once** — its prompt,
+> tools, model, budget, and the claim for what it's allowed — register it, and then **call it per
+> task**: `POST /runs` with the agent name and a task, and the runtime runs the loop with your
+> config. *Define once, call many* — and the *same* loop serves every agent, dep-migrator and
+> ticket-bot alike. A team works at L2 — define, then call; they never reach into L0, the loop
+> mediates every primitive for them."
 
 ---
 

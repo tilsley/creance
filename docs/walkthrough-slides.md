@@ -178,12 +178,21 @@ sequenceDiagram
 ## 12 · L1 vs L2 — one engine, many agents
 
 ```mermaid
-flowchart TB
-  Loop["<b>L1</b>: one loop · runOnSession<br/><i>generic engine</i>"]
-  Loop --> A1["dep-migrator<br/>prompt + tools + $5"]
-  Loop --> A2["ticket-bot<br/>prompt + tools + $2"]
-  Loop --> A3["… your agent<br/>prompt + tools + $"]
+flowchart LR
+  subgraph DEF["① L2 · define once (config + policy)"]
+    A["AgentSpec — prompt · tools · model · budget<br/>+ claim: what it's allowed"]
+  end
+  subgraph RUN["② call per task"]
+    T["POST /runs {agent, task}  (service)<br/>· or runAgent(cfg, task)  (lib)"]
+  end
+  subgraph ONE["L1 · one loop — runOnSession"]
+    M["lib: import @agent-os/core (you host)<br/>service: agent-runtime (we host + govern)"]
+  end
+  A -->|"configures"| ONE
+  T -->|"invokes by name"| ONE
 ```
+
+*L1 = one loop, shipped as a lib or a service. L2 = define the agent once (config + policy), then call it per task — define once, call many; the same loop serves every agent.*
 
 ---
 
