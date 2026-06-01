@@ -304,6 +304,12 @@ live in a Kubernetes CRD or a DynamoDB table:
 > **PEP/PDP split.** The controls (gate/guard) are the *enforcement* points (PEP); claims,
 > allowances, and OPA rules are the *decisions* (PDP). L2 changes a decision; L0/L1 enforce
 > it unchanged. That's why restricting usage is a new layer, not a new primitive.
+>
+> **Invariant vs value.** Distinguish the two kinds of limit: *that* a limit exists — every call
+> gated, every run budgeted, sessions capped, only reachable models — is a **platform invariant**
+> baked into L0/L1 (the control always runs; not an optional knob). L2 only fills in the *value*
+> inside that invariant — the budget number, the allowed-model set — partly admin-set (the
+> `InferenceAllowance` ceiling) and partly tenant self-service (the `InferenceClaim` within it).
 
 ---
 

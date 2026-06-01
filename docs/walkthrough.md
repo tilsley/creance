@@ -76,8 +76,10 @@ flowchart TB
 > 🎤 "The platform is three layers. At the bottom, **L0** — the raw parts: what an agent can *do*,
 > and what the platform *enforces*. In the middle, **L1** — the loop that wires those parts into a
 > running task. On top, **L2** — policy: what a given agent or tenant is actually allowed to do.
-> The key idea: L0 is *what's possible*, L2 is *what's permitted*, and they're deliberately
-> separate layers. Restricting an agent isn't a code change to the parts — it's a layer on top."
+> The key idea: L0 is *what's possible*, L2 sets *what's permitted* — though some limits are
+> baked-in invariants L0/L1 always enforce (we'll see that on the policy slide). They're
+> deliberately separate layers: restricting an agent isn't a code change to the parts — it's a
+> layer on top."
 
 ---
 
@@ -94,6 +96,8 @@ flowchart LR
     G["gate"] ~~~ Rec["record"] ~~~ Gu["guard"]
   end
 ```
+
+*Controls wrap primitives — e.g. the **gate** admits + meters each `think` (the 402); **guard** screens what crosses into it; **record** traces every step.*
 
 > 🎤 "L0 splits in two. **Primitives** are capabilities the agent actively calls to make progress —
 > *think* (ask a model), *do* (run code or a tool), *remember* (save state). **Controls** are
@@ -185,24 +189,38 @@ flowchart TD
 ## 10 · The gate, opened up
 
 ```mermaid
-flowchart LR
-  C["caller"] --> A1["1 · authn<br/>who are you?<br/>(verified, not claimed)"]
-  A1 --> A2["2 · authz<br/>may you do this?"]
-  A2 --> A3["3 · budget<br/>can you afford the<br/>worst case? (atomic)"]
-  A3 --> A4["4 · creds<br/>scoped secret,<br/>server-side"]
-  A4 --> M["model / tool"]
-  A1 -. "401" .-> X1["✗"]
-  A2 -. "403" .-> X2["✗"]
-  A3 -. "402" .-> X3["✗"]
+sequenceDiagram
+  participant Pod as pod · SA token
+  participant GW as inference-gateway
+  participant K8s as k8s API
+  participant Bud as budget store
+  participant Model
+  loop every think
+    Pod->>GW: generate + SA token
+    GW->>K8s: 1 authn — TokenReview
+    K8s-->>GW: verified identity + tenant
+    GW->>GW: 2 authz — may this tenant / model?
+    GW->>Bud: 3 budget — reserve worst-case $, atomic
+    Bud-->>GW: ok — else 402
+    GW->>Model: call with gateway's OWN credential
+    Model-->>GW: tokens
+    GW->>Bud: settle actual $
+    GW-->>Pod: result
+  end
+  Note over Pod,Model: 4 creds — only on a `do` to an external tool:<br/>broker mints a scoped secret, server-side — per do, not per think
 ```
 
-> 🎤 "The gate isn't one check — it's four, in order. **Authn**: prove who you are — we do a real
-> token review, identity is *verified*, never just asserted. **Authz**: are you allowed this action.
-> **Budget**: reserve the worst-case cost up front with an atomic check, so a runaway loop hits a
-> hard 402 *before* it overspends — not a surprise bill later. **Creds**: if it needs to call GitHub,
-> we mint a scoped, short-lived secret and apply it server-side, so the model never sees it. Four
-> gates, four ways to get turned away. And that real-time budget check is the thing no managed
-> platform gives you — it's why this layer exists."
+> 🎤 "Let's zoom into a single think. A pod — say `ticket-bot`, running as ServiceAccount
+> `team-a/ticket-bot` — sends a generate call to the gateway with its SA token. Watch *who the
+> gateway talks to*. It calls the **k8s API** to TokenReview that token — that's authn, verified not
+> asserted — and gets back the identity plus the tenant, `team-a`. It checks **authz** — may team-a
+> use this model? It calls the **budget store** to reserve the worst-case cost atomically — over
+> budget, **402**, and the think never happens. Only then does it call the **model**, with *its own*
+> credential — the pod has none — and settles the actual cost after. Everything inside that loop runs
+> on **every** think, because the gateway is stateless. **Creds are the one exception** — the note at
+> the bottom: they're minted per *do*, not per think, only when the agent calls an external tool like
+> GitHub, applied server-side. And this whole picture is just *one* think — the next slide zooms out
+> to the full run that repeats it."
 
 ---
 
@@ -260,20 +278,26 @@ flowchart TB
 
 ---
 
-## 13 · L2 — policy is data, not provisioning
+## 13 · L2 — policy sets the values; the platform enforces the limits
 
 ```mermaid
-flowchart LR
-  Claim["InferenceClaim<br/>'I want model X,<br/>$Y budget'"] --> Allow{"within the<br/>allowance?"}
-  Allow -- "yes" --> Gate["the gate reads it<br/>→ admits the run"]
-  Allow -- "no" --> Reject["rejected at apply time"]
+flowchart TB
+  INV["<b>Platform invariants — L0/L1, always on, not optional</b><br/>every call gated · every run budgeted · sessions capped · only reachable models"]
+  ADMIN["<b>Admin allowance</b><br/>the ceiling: max $, the model menu"] --> CLAIM["<b>Tenant claim</b> — self-service, within the ceiling<br/>'model X, $Y budget' — just data, not a terraform ticket"]
+  CLAIM -->|"decided at L2"| ENF["enforced at L0/L1 every run<br/>→ admit · 402 · 403"]
+  INV --> ENF
 ```
 
-> 🎤 "How does a tenant get access? Not a terraform ticket — they assert a **claim**: 'I want this
-> model with this budget.' It's just data, validated against an admin-set allowance. The gateway
-> reads the claim and enforces it. That's the scale answer: onboarding a new agent is writing a
-> policy record, not provisioning cloud infrastructure. Per-tenant AWS becomes opt-in. This is the
-> layer that *restricts* the primitives — claims, allowances, authz rules — sitting cleanly on top."
+> 🎤 "Here's the bit people get backwards. The platform has **invariants** it *always* enforces —
+> every model call is gated and metered, every run has a budget, sessions are capped, and you can
+> only use models the platform can actually reach. Those aren't optional admin knobs; they're the
+> platform's reason to exist, and they live in the controls (L0) and the loop (L1) — true for every
+> tenant. What **L2** adds is the *values* inside those invariants: an admin sets the **ceiling** —
+> the max budget and the menu of models on offer — and a tenant **self-services a claim** within it:
+> 'give me model X with a $Y budget,' which is just data, not a terraform ticket. So the rule is:
+> **the limit always exists (L0/L1 invariant); L2 only fills in its value (admin ceiling + tenant
+> self-service); and it's enforced down in L0/L1 on every run.** Decided at the top, checked at the
+> bottom — and onboarding becomes writing a policy record, not provisioning infrastructure."
 
 ---
 
