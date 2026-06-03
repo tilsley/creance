@@ -1,0 +1,24 @@
+# LiteLLM proxy — the bought engine (ADR-0024/0025) in front of Bedrock.
+# It owns wire formats (OpenAI /v1/chat/completions + Anthropic /v1/messages),
+# model routing, and the Bedrock call. The worst-case budget hard-stop (R2) is
+# OURS, loaded as a pre/post-call hook (admission_hook.proxy_handler_instance).
+
+model_list:
+  - model_name: claude-haiku                       # the alias callers ask for (matches the claim's model)
+    litellm_params:
+      model: bedrock/anthropic.claude-3-5-haiku-20241022-v1:0
+      aws_region_name: eu-west-2
+      # KEYLESS (memory: no static keys): uses the proxy's IAM role (IRSA in EKS) or,
+      # locally, the AWS_PROFILE creds in the environment. No aws_access_key here.
+      # NOTE: if the account requires an application inference profile (cross-region /
+      # cost tagging), set `model: bedrock/<inference-profile-arn>` instead of the raw id.
+
+litellm_settings:
+  callbacks: admission_hook.proxy_handler_instance  # our worst-case admission hook
+  drop_params: true                                 # tolerate provider-specific params
+
+general_settings:
+  # POC: no virtual-key DB / master-key gymnastics yet. Tenant is asserted via the
+  # request (`user` / metadata.tenant); mapping a VERIFIED identity onto the tenant
+  # via user_api_key_auth is the next milestone (ADR-0019/0025 identity nuance).
+  telemetry: false

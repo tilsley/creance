@@ -1,0 +1,15 @@
+[project]
+name = "agent-os-litellm-gateway"
+version = "0.1.0"
+description = "LiteLLM inference gateway + worst-case budget admission hook (ADR-0024/0025)"
+requires-python = ">=3.11,<3.14"  # cap below 3.14 — LiteLLM proxy extras lack reliable 3.14 wheels yet
+dependencies = [
+    # Pin to a known-good 1.x: the CustomLogger async_pre/post_call_* hook signatures
+    # have drifted across versions (see README validation caveats).
+    "litellm[proxy]>=1.55,<2",
+    "boto3>=1.34",
+]
+
+[tool.uv]
+# Not an installable package — just the proxy config + admission hook run in place.
+package = false

@@ -1,0 +1,4 @@
+# Python / uv artifacts. uv.lock is intentionally NOT ignored (commit it for reproducible installs).
+.venv/
+__pycache__/
+*.pyc

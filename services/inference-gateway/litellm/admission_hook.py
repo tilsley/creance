@@ -1,0 +1,209 @@
+"""
+Worst-case budget admission — the cost hard-stop (ADR-0013), relocated into a LiteLLM
+proxy callback (ADR-0024/0025: buy the engine, build the policy).
+
+This is the Python port of `AdmissionInferenceProvider` (packages/core/src/adapters/
+admission-inference.ts). LiteLLM owns the undifferentiated 90% — wire formats
+(OpenAI / Anthropic), model routing, the Bedrock call. This hook owns the ~10% nobody
+else does: price each request's WORST case *before* it is sent and refuse pre-flight if
+admitting it would push the tenant over its cap.
+
+    worst = price(input_tokens) + price(max_tokens of output)
+
+Input tokens are knowable now (the prompt is in hand); output is bounded by the
+*required* `max_tokens` (an uncapped request is an unbounded bill, so we reject it). If
+the worst case won't fit, nothing is sent and nothing is spent — the thing that stops a
+single $50 one-shot that accumulation-only budgets (LiteLLM's native max_budget) let
+through and only block on the *next* call.
+
+Store: the existing DynamoSpendStore table (PK `tenant`, SK `period`="YYYY-MM",
+attr `spentUsd`) reused verbatim — same atomic conditional reserve, so the TS runtime
+and this hook share one counter. (Postgres/Redis per ADR-0023 is a later swap.)
+
+Tenant: for this milestone, read from the request (`user` field or `metadata.tenant`).
+Mapping a *verified* identity (SA/IAM token) onto the tenant via `user_api_key_auth` is
+the next milestone — until then the tenant is asserted, not proven.
+
+Register in config.yaml:  litellm_settings: { callbacks: admission_hook.proxy_handler_instance }
+"""
+import os
+from datetime import datetime, timezone
+
+import boto3
+import litellm
+from fastapi import HTTPException
+from litellm.integrations.custom_logger import CustomLogger
+
+# --- pricing (ported from gate.ts PRICE_PER_MTOK) ----------------------------
+# $/token by model, per 1M tokens. Keyed by both the config alias (what data["model"]
+# carries pre-call) and the resolved Bedrock id (what the response may carry), so the
+# lookup hits whichever name LiteLLM reports; `default` covers the rest.
+PRICE_PER_MTOK = {
+    "claude-haiku": {"in": 0.80, "out": 4.00},
+    "anthropic.claude-3-5-haiku-20241022-v1:0": {"in": 0.80, "out": 4.00},
+    "eu.anthropic.claude-3-5-haiku-20241022-v1:0": {"in": 0.80, "out": 4.00},
+    "amazon.nova-lite-v1:0": {"in": 0.06, "out": 0.24},
+    "amazon.nova-pro-v1:0": {"in": 0.80, "out": 3.20},
+    "default": {"in": 0.50, "out": 1.50},
+}
+
+
+def price_tokens_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Price an input/output token split in USD (shared by the worst-case check and
+    the post-call actual-cost settle). Mirror of gate.ts:priceTokensUsd."""
+    p = PRICE_PER_MTOK.get(model, PRICE_PER_MTOK["default"])
+    return (input_tokens * p["in"] + output_tokens * p["out"]) / 1_000_000
+
+
+def current_period(now: datetime | None = None) -> str:
+    """The monthly billing window as 'YYYY-MM' (UTC). A new month is a new key, so the
+    budget resets with no cron. Mirror of gate.ts:currentPeriod."""
+    return (now or datetime.now(timezone.utc)).strftime("%Y-%m")
+
+
+def estimate_input_tokens(messages: list) -> int:
+    """Fallback ~4-chars/token estimate (gate.ts:estimateInputTokens) for when LiteLLM's
+    tokenizer doesn't know the model. Counts text in every message."""
+    chars = 0
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            chars += len(content)
+        elif isinstance(content, list):  # OpenAI content-parts / tool blocks
+            for part in content:
+                chars += len(str(part.get("text", part)))
+    return -(-chars // 4)  # ceil
+
+
+# --- the DynamoDB spend store (parity with adapters/dynamo-spend-store.ts) ----
+class DynamoSpendStore:
+    """Atomic reserve/settle against the same table the TS DynamoSpendStore uses."""
+
+    def __init__(self):
+        self.table = os.getenv("SPEND_TABLE", "agent-os-budgets")
+        kwargs = {"region_name": os.getenv("REGION", "eu-west-2")}
+        if os.getenv("SPEND_TABLE_ENDPOINT"):  # DynamoDB Local (same env as the TS store)
+            kwargs["endpoint_url"] = os.environ["SPEND_TABLE_ENDPOINT"]
+        self.ddb = boto3.client("dynamodb", **kwargs)
+
+    def reserve(self, tenant: str, period: str, delta: float, ceiling: float):
+        """ADD spentUsd :d iff the result stays <= ceiling — the add and the cap check
+        are ONE UpdateItem, closing the check-then-add race. Returns the new total, or
+        None if it would breach. Callers pre-check delta <= ceiling so :ceil >= 0."""
+        try:
+            r = self.ddb.update_item(
+                TableName=self.table,
+                Key={"tenant": {"S": tenant}, "period": {"S": period}},
+                UpdateExpression="ADD spentUsd :d",
+                ConditionExpression="attribute_not_exists(spentUsd) OR spentUsd <= :ceil",
+                ExpressionAttributeValues={
+                    ":d": {"N": str(delta)},
+                    ":ceil": {"N": str(ceiling - delta)},
+                },
+                ReturnValues="UPDATED_NEW",
+            )
+            return float(r["Attributes"]["spentUsd"]["N"])
+        except self.ddb.exceptions.ConditionalCheckFailedException:
+            return None  # would breach the cap — nothing added
+
+    def add(self, tenant: str, period: str, delta: float) -> float:
+        """Unconditional atomic add — used to settle (reconcile to actual) and to refund."""
+        r = self.ddb.update_item(
+            TableName=self.table,
+            Key={"tenant": {"S": tenant}, "period": {"S": period}},
+            UpdateExpression="ADD spentUsd :d",
+            ExpressionAttributeValues={":d": {"N": str(delta)}},
+            ReturnValues="UPDATED_NEW",
+        )
+        return float(r["Attributes"]["spentUsd"]["N"])
+
+
+def _session_key(session_id: str) -> str:
+    return f"session#{session_id}"
+
+
+# --- the hook ----------------------------------------------------------------
+class WorstCaseBudget(CustomLogger):
+    def __init__(self):
+        self.store = DynamoSpendStore()
+        # Tenant cap source. POC: a flat env default (+ optional per-tenant override via
+        # GATE_BUDGET_OVERRIDES='{"acme":5.0}'). Next milestone: read the claim's
+        # monthlyBudgetUsd from the Dynamo claims table (DynamoClaimSource parity).
+        self.default_cap = float(os.getenv("GATE_BUDGET_USD", "1.00"))
+        self.session_cap = (
+            float(os.environ["SESSION_BUDGET_USD"]) if os.getenv("SESSION_BUDGET_USD") else None
+        )
+
+    def _tenant(self, data: dict) -> str:
+        meta = data.get("metadata") or {}
+        return data.get("user") or meta.get("tenant") or "default"
+
+    def _input_tokens(self, model: str, messages: list) -> int:
+        try:
+            return litellm.token_counter(model=model, messages=messages)
+        except Exception:
+            return estimate_input_tokens(messages)
+
+    async def async_pre_call_hook(self, user_api_key_dict, cache, data: dict, call_type):
+        # LiteLLM passes the async variants ("acompletion"/"atext_completion") through the
+        # proxy path — accept both sync and async forms; skip embeddings/other call types.
+        if call_type not in ("completion", "text_completion", "acompletion", "atext_completion"):
+            return data
+
+        model = data.get("model", "default")
+        max_tokens = data.get("max_tokens") or data.get("max_completion_tokens")
+        if not max_tokens:
+            # uncapped output = unbounded cost — refuse (the ADR-0013 invariant)
+            raise HTTPException(status_code=400, detail="max_tokens is required (uncapped output = unbounded cost)")
+
+        worst = price_tokens_usd(model, self._input_tokens(model, data.get("messages", [])), int(max_tokens))
+        tenant, period = self._tenant(data), current_period()
+        cap = self.default_cap
+
+        # a single request larger than the whole cap can never fit
+        if worst > cap:
+            raise HTTPException(status_code=402, detail=f"budget exceeded: worst-case ${worst:.4f} > cap ${cap:.4f}")
+
+        # atomically reserve against tenant/month
+        if self.store.reserve(tenant, period, worst, cap) is None:
+            raise HTTPException(status_code=402, detail=f"budget exceeded for tenant '{tenant}'")
+
+        # then the per-session scope, if active — refund the tenant reserve if it doesn't fit
+        session_id = (data.get("metadata") or {}).get("session_id")
+        if self.session_cap is not None and session_id:
+            fits = worst <= self.session_cap and self.store.reserve(tenant, _session_key(session_id), worst, self.session_cap) is not None
+            if not fits:
+                self.store.add(tenant, period, -worst)  # refund tenant — nothing admitted
+                raise HTTPException(status_code=402, detail=f"session budget exceeded for '{session_id}'")
+
+        # carry the reservation to settle/refund (threaded via metadata)
+        data.setdefault("metadata", {})["_admission"] = {
+            "tenant": tenant, "period": period, "worst": worst, "session_id": session_id, "model": model,
+        }
+        return data
+
+    async def async_post_call_success_hook(self, data: dict, user_api_key_dict, response):
+        res = (data.get("metadata") or {}).get("_admission")
+        if not res:
+            return response
+        usage = getattr(response, "usage", None) or {}
+        prompt = getattr(usage, "prompt_tokens", None) or (usage.get("prompt_tokens") if isinstance(usage, dict) else 0) or 0
+        completion = getattr(usage, "completion_tokens", None) or (usage.get("completion_tokens") if isinstance(usage, dict) else 0) or 0
+        actual = price_tokens_usd(res["model"], prompt, completion)
+        delta = actual - res["worst"]  # usually negative — settle the over-reservation down
+        self.store.add(res["tenant"], res["period"], delta)
+        if self.session_cap is not None and res["session_id"]:
+            self.store.add(res["tenant"], _session_key(res["session_id"]), delta)
+        return response
+
+    async def async_post_call_failure_hook(self, request_data: dict, original_exception, user_api_key_dict, traceback_str=None):
+        res = (request_data.get("metadata") or {}).get("_admission")
+        if not res:
+            return
+        # the call cost nothing — fully refund the reservation
+        self.store.add(res["tenant"], res["period"], -res["worst"])
+        if self.session_cap is not None and res["session_id"]:
+            self.store.add(res["tenant"], _session_key(res["session_id"]), -res["worst"])
+
+
+proxy_handler_instance = WorstCaseBudget()
