@@ -18,7 +18,8 @@ litellm_settings:
   drop_params: true                                 # tolerate provider-specific params
 
 general_settings:
-  # POC: no virtual-key DB / master-key gymnastics yet. Tenant is asserted via the
-  # request (`user` / metadata.tenant); mapping a VERIFIED identity onto the tenant
-  # via user_api_key_auth is the next milestone (ADR-0019/0025 identity nuance).
+  # M2 (ADR-0019/0026): verify the caller's token ourselves via the OSS custom_auth seam,
+  # derive a non-forgeable tenant, look up its claim, return UserAPIKeyAuth. The admission
+  # hook then reads the VERIFIED tenant + cap from that, ignoring the body's `user`.
+  custom_auth: auth_hook.user_api_key_auth
   telemetry: false

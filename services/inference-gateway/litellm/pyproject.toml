@@ -8,6 +8,7 @@ dependencies = [
     # have drifted across versions (see README validation caveats).
     "litellm[proxy]>=1.55,<2",
     "boto3>=1.34",
+    "pyjwt[crypto]>=2.8",  # offline JWT verification in the custom_auth hook (M2)
 ]
 
 [tool.uv]

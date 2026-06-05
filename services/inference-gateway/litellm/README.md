@@ -1,20 +1,37 @@
-# LiteLLM inference gateway — the bought engine + our budget hard-stop
+# LiteLLM inference gateway — the bought engine + our authn & budget hard-stop
 
-**Milestone 1 of the LiteLLM pivot (ADR-0024/0025).** Proves the bet: *buy the engine
-(LiteLLM → Bedrock), build the policy (a worst-case admission hook)* — and the budget
-hard-stop survives on LiteLLM, firing a real `402` before a single token is spent.
+**Milestones 1–2 of the LiteLLM pivot (ADR-0024/0025/0026).** Proves the bet: *buy the
+engine (LiteLLM → Bedrock), build the policy* — verified-identity authn + a worst-case
+budget hard-stop, both in LiteLLM's **OSS hooks** (its native JWT auth is enterprise-only).
 
-LiteLLM owns wire formats, model routing, and the Bedrock call. `admission_hook.py` owns
-the ~10% nobody else does: price each request's worst case (`input + max_tokens` of
-output) **pre-flight** and refuse if it won't fit the tenant's cap — reserving against the
-**same DynamoDB spend table** (`agent-os-budgets`) the TS runtime uses, so one counter
-serves both.
+LiteLLM owns wire formats, model routing, and the Bedrock call. We own the ~10% nobody else
+does:
+- **M1 — `admission_hook.py`:** price each request's worst case (`input + max_tokens` of
+  output) **pre-flight** and refuse (`402`) if it won't fit the cap, reserving against the
+  **DynamoDB spend table** (`agent-os-budgets`) the TS runtime uses.
+- **M2 — `auth_hook.py`:** verify the caller's token *ourselves* (`custom_auth`), derive a
+  **non-forgeable** tenant, look up its claim (grant + budget + model), return
+  `UserAPIKeyAuth`. The admission hook then reads the **verified** tenant + cap from that —
+  the body's `user` field is ignored.
 
 | File | What it is |
 |---|---|
-| `admission_hook.py` | The Python port of `AdmissionInferenceProvider` — `async_pre_call_hook` (price → atomic reserve → 402), `async_post_call_success_hook` (settle actual), `async_post_call_failure_hook` (refund). |
-| `config.yaml` | LiteLLM proxy config — Bedrock Claude Haiku (keyless), loads the hook as a callback. |
-| `pyproject.toml` | `litellm[proxy]` + `boto3`, managed by [uv](https://docs.astral.sh/uv/). |
+| `auth_hook.py` | M2 — `custom_auth`: offline JWT verify (RS256/JWKS prod, HS256 dev) → tenant; TTL-cached claim lookup (Dynamo or static); `401` bad/no token, `403` no claim. |
+| `admission_hook.py` | M1 — `AdmissionInferenceProvider` port: `async_pre_call_hook` (price → reserve → 402), `async_post_call_success_hook` (settle), `async_post_call_failure_hook` (refund). Reads the verified tenant/cap from `user_api_key_dict`. |
+| `config.yaml` | LiteLLM proxy — Bedrock Claude Haiku (keyless), loads `custom_auth` + the admission callback. |
+| `pyproject.toml` | `litellm[proxy]` + `boto3` + `pyjwt`, managed by [uv](https://docs.astral.sh/uv/). |
+
+## Auth (M2) env
+
+| Env | Purpose |
+|---|---|
+| `JWT_JWKS_URL` | prod: verify RS256/ES256 against this JWKS (the cluster's OIDC keys) |
+| `JWT_HS256_SECRET` | dev/test: verify HS256 with a shared secret (no network) |
+| `JWT_TENANT_CLAIM` | which claim is the tenant (default `sub`) |
+| `JWT_AUDIENCE` | if set, the token's `aud` must match |
+| `CLAIMS_STATIC` | dev/test claim map, e.g. `{"bob":{"model":"claude-haiku","monthlyBudgetUsd":50}}` |
+| `CLAIMS_TABLE` / `CLAIMS_TABLE_ENDPOINT` | prod: DynamoDB claims table (default `agent-os-claims`) |
+| `CLAIM_CACHE_TTL` | grant-cache TTL seconds (default 5) — keeps the lookup off the hot path |
 
 ## Run it locally
 
@@ -72,24 +89,25 @@ aws dynamodb get-item --table-name agent-os-budgets \
   --key '{"tenant":{"S":"acme"},"period":{"S":"2026-06"}}' | jq '.Item.spentUsd'
 ```
 
-## Where the tenant comes from (and the honest gap)
+## Where the tenant comes from
 
-This milestone reads the tenant from the request — `user` or `metadata.tenant`. It is
-**asserted, not verified**: a caller could claim any tenant. That's fine for a local
-proof; it is *not* the isolation guarantee ADR-0019 requires.
+**M2 makes it verified.** `auth_hook.py` verifies the caller's token and sets the tenant
+from the signed claim (`sub`); the body's `user` is ignored. A caller cannot spend against
+another tenant by asserting one. The grant (budget + model) comes from the tenant's claim,
+TTL-cached. (The verifier is offline JWT today — RS256/JWKS in prod, HS256 in dev; an
+IAM-SigV4 verifier for non-k8s callers is the documented second adapter.)
 
 ## Next milestones (not in this slice)
 
-1. **Verified-identity mapping** — a `user_api_key_auth` hook that verifies the SA/IAM
-   bearer and derives the tenant (non-forgeable), replacing the asserted `user` field.
-   This is what makes the tenant boundary real (ADR-0019/0025).
-2. **Cap from the claim** — read `monthlyBudgetUsd` from the Dynamo claims table
-   (`DynamoClaimSource` parity) instead of the flat `GATE_BUDGET_USD` env default.
-3. **Point the runtime at it** — switch `GatewayInferenceProvider` from the bespoke
+1. **M3 — happy-path settle** — a real completion against Bedrock + the spend counter:
+   reserve → call → settle actual, confirming the counter moves and the metadata-threaded
+   reservation reconciles. Needs live AWS creds.
+2. **M4 — point the runtime at it** — switch `GatewayInferenceProvider` from the bespoke
    `/v1/generate` to LiteLLM's OpenAI `/v1/chat/completions`, then retire the Bun gateway.
+3. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
+   move the budget reserve to a Postgres conditional `UPDATE`; mesh-trust authn in-cluster.
 4. **Multi-format** — expose Anthropic `/v1/messages` for Claude Code / the Anthropic SDK
-   (the coding-agent use case), same hook in front.
-5. **Postgres/Redis store** — swap the DynamoDB store for the ADR-0023 backends.
+   (the coding-agent use case), same hooks in front.
 
 ## Validated locally (litellm 1.87.0)
 
@@ -104,6 +122,22 @@ Run with `GATE_BUDGET_USD=0.0001`, **no AWS creds needed** — the 402/400 paths
 `call_type="acompletion"` (the *async* form), not `"completion"` — the guard must accept
 both or the hook silently passes every request through to the model. (This is the kind of
 cross-version drift the pin guards against.)
+
+### M2 — verified identity (no AWS, static claim + HS256 dev tokens)
+
+```bash
+export JWT_HS256_SECRET=testsecret
+export CLAIMS_STATIC='{"bob":{"model":"claude-haiku","monthlyBudgetUsd":0.0001}}'
+BOB=$(uv run python -c "import jwt;print(jwt.encode({'sub':'bob'},'testsecret',algorithm='HS256'))")
+uv run litellm --config config.yaml --port 4000
+```
+
+- no token → `401 missing bearer token` ✓
+- garbage token → `401 invalid token …` ✓
+- **token=bob, body `"user":"acme"` → `402 budget exceeded for tenant 'bob'`** ✓ — the body's
+  `acme` is ignored; the verified identity wins, and the cap `$0.0001` came from bob's claim.
+- token=carol (no claim) → `403 no inference claim for 'carol'` ✓
+- none reached Bedrock ✓
 
 ## Validation caveats (read before trusting it)
 

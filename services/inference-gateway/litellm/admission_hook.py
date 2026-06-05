@@ -134,7 +134,12 @@ class WorstCaseBudget(CustomLogger):
             float(os.environ["SESSION_BUDGET_USD"]) if os.getenv("SESSION_BUDGET_USD") else None
         )
 
-    def _tenant(self, data: dict) -> str:
+    def _tenant(self, user_api_key_dict, data: dict) -> str:
+        # M2: the verified identity (auth_hook set team_id) wins over anything in the body —
+        # a caller can't spend against another tenant by setting `user`.
+        verified = getattr(user_api_key_dict, "team_id", None) if user_api_key_dict else None
+        if verified:
+            return verified
         meta = data.get("metadata") or {}
         return data.get("user") or meta.get("tenant") or "default"
 
@@ -157,12 +162,14 @@ class WorstCaseBudget(CustomLogger):
             raise HTTPException(status_code=400, detail="max_tokens is required (uncapped output = unbounded cost)")
 
         worst = price_tokens_usd(model, self._input_tokens(model, data.get("messages", [])), int(max_tokens))
-        tenant, period = self._tenant(data), current_period()
-        cap = self.default_cap
+        # M2: tenant + cap come from the VERIFIED identity (auth_hook → user_api_key_dict),
+        # not the asserted body. Fall back to the body/env only when no auth hook is wired.
+        tenant, period = self._tenant(user_api_key_dict, data), current_period()
+        cap = float(getattr(user_api_key_dict, "max_budget", None) or self.default_cap)
 
         # a single request larger than the whole cap can never fit
         if worst > cap:
-            raise HTTPException(status_code=402, detail=f"budget exceeded: worst-case ${worst:.4f} > cap ${cap:.4f}")
+            raise HTTPException(status_code=402, detail=f"budget exceeded for tenant '{tenant}': worst-case ${worst:.4f} > cap ${cap:.4f}")
 
         # atomically reserve against tenant/month
         if self.store.reserve(tenant, period, worst, cap) is None:
