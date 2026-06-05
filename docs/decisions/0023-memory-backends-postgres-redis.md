@@ -30,9 +30,16 @@ hot-path or coordination needs.**
   memory + pgvector semantic search in one durable, transactional store you likely already run.
 - **Redis is the hot tier**, reached for deliberately: a run/work queue, session-affinity
   cache, resolved-claim/config cache, or hot per-session counters where sub-ms matters.
+  Self-host a Valkey/Redis pod for the POC (near-zero marginal cost on a node you already run);
+  the managed swap-in is **ElastiCache** (Valkey serverless ~$6/mo or a `t4g.micro` node ~$12/mo,
+  **IAM auth** = keyless) — same Redis protocol behind the port, so it's an endpoint+auth change,
+  but it carries **idle cost**, so adopt it only when scale/latency justify it (the cost curve).
 - **Budget stays on Postgres, not Redis.** Redis `INCR` + Lua is tempting and fast, but spend
   is financial state; Postgres ACID beats Redis durability (AOF + replication), and
-  per-tenant/month contention is low. Revisit only for hot per-session rate-limiting.
+  per-tenant/month contention is low. Revisit only for hot per-session rate-limiting. (The POC
+  currently counts spend in **DynamoDB on-demand** — a ~$0-idle stand-in whose 5–10 ms is
+  immaterial next to the model call; the conditional `UPDATE … WHERE spent+delta ≤ ceiling` on
+  Postgres is the durable production home — see [ADR-0026](0026-gateway-hot-path-authn-authz-budget.md).)
 - **Don't split prematurely.** A coding-agent POC can run Postgres-only; introduce Redis at
   the first real queue/cache need.
 
