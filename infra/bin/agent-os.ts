@@ -12,6 +12,7 @@ import { EksClusterStack } from "../lib/eks-cluster-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
+import { PostgresStack } from "../lib/postgres-stack";
 
 const app = new cdk.App();
 
@@ -24,6 +25,11 @@ const env: cdk.Environment = {
 // IMPLEMENTED — deployable now (cheap, no EKS): the remember store + guard/inference.
 new StateStack(app, "AgentOsState", { env });
 new BedrockStack(app, "AgentOsBedrock", { env });
+
+// IMPLEMENTED, OPTIONAL — the full-mode budget/memory store (ADR-0023/0026/0027):
+// Aurora Serverless v2 PostgreSQL scaling to 0 ACUs (~$0 idle). Deploy only for
+// full-mode trips (`cdk deploy AgentOsPostgres -c dbAllowedCidr=<ip>/32`); destroy cleans up.
+new PostgresStack(app, "AgentOsPostgres", { env });
 
 // SKELETON — day-0 EKS control plane, not yet implemented.
 const vpc = new CoreVpcStack(app, "AgentOsCoreVpc", { env });

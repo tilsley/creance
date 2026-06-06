@@ -139,8 +139,11 @@ export MODEL_ID=claude-haiku             # the alias LiteLLM routes (and the cla
 
 ## Next milestones (not in this slice)
 
-1. **Aurora wiring** — provision Aurora Serverless v2 (PostgreSQL, scale-to-zero) via CDK and
-   point `SPEND_DATABASE_URL` at it with **IAM auth** (token-refresh reconnect hook = keyless).
+1. **Aurora IAM auth** — the cluster is **provisioned & validated** (`AgentOsPostgres` CDK
+   stack: Serverless v2 PostgreSQL, Min 0 ACU / auto-pause 300 s ⇒ ~$0 idle; `make
+   deploy-postgres` / `postgres-url` / `destroy-postgres`). Remaining: the **IAM-auth
+   token-refresh** reconnect hook so the hook connects keyless instead of via the
+   Secrets Manager password.
 2. **Valkey/Redis shared grant cache** — only at multi-replica (in-process TTL cache covers
    single-replica); a standalone in-cluster pod, ephemeral by design (the losable tier).
 3. **Mesh-trust authn (ADR-0026)** — in-cluster, Istio mTLS/SPIFFE forwarded identity.

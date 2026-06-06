@@ -67,12 +67,12 @@
         "agent-os": "bin/agent-os.ts",
       },
       "dependencies": {
-        "aws-cdk-lib": "^2.150.0",
+        "aws-cdk-lib": "2.258.0",
         "constructs": "^10.3.0",
       },
       "devDependencies": {
         "@types/node": "^20.0.0",
-        "aws-cdk": "^2.150.0",
+        "aws-cdk": "2.1126.0",
         "typescript": "^5.4.0",
       },
     },
@@ -150,13 +150,13 @@
 
     "@agent-os/tracer-bullet": ["@agent-os/tracer-bullet@workspace:examples/tracer-bullet"],
 
-    "@aws-cdk/asset-awscli-v1": ["@aws-cdk/asset-awscli-v1@2.2.273", "", {}, "sha512-X57HYUtHt9BQrlrzUNcMyRsDUCoakYNnY6qh5lNwRCHPtQoTfXmuISkfLk0AjLkcbS5lw1LLTQFiQhTDXfiTvg=="],
+    "@aws-cdk/asset-awscli-v1": ["@aws-cdk/asset-awscli-v1@2.2.282", "", {}, "sha512-7hKMi5tTxDcKGIMIOq14PnY0GBcugW33Uh/2YHDZiEwSxLeFOCYBwhR+BFXONb/EJeVI3RETFgailNZbkcKF6g=="],
 
     "@aws-cdk/asset-node-proxy-agent-v6": ["@aws-cdk/asset-node-proxy-agent-v6@2.1.2", "", {}, "sha512-pDiuqH+qY3zM9lhhLjbKJ1tnKOHzQ2V4Wr/3qsxyKeKAkuPMI/BVGvZG1PbrikUw949cGVTfVEt4ETKKYnrj0Q=="],
 
-    "@aws-cdk/cloud-assembly-api": ["@aws-cdk/cloud-assembly-api@2.2.4", "", { "dependencies": { "jsonschema": "^1.5.0", "semver": "^7.8.0" }, "peerDependencies": { "@aws-cdk/cloud-assembly-schema": ">=53.25.0" } }, "sha512-ob4M97DuBQ3HpwtUD6Wosuc731pPbqQuNGZuZfRBEcaOwEsJFwbXkZJC0M4JaDUqi2c50uLHkR346v6wIn5GDg=="],
+    "@aws-cdk/cloud-assembly-api": ["@aws-cdk/cloud-assembly-api@2.2.5", "", { "dependencies": { "jsonschema": "^1.5.0", "semver": "^7.8.0" }, "peerDependencies": { "@aws-cdk/cloud-assembly-schema": ">=53.28.0" } }, "sha512-RrjdgAgOjc0rMSGhMmIq1IKRI2lSYEK5XLu+863pQjecxNaNQkrQCyI62Z3JClFnQnjBeFSfDoY78apS9Aa9tA=="],
 
-    "@aws-cdk/cloud-assembly-schema": ["@aws-cdk/cloud-assembly-schema@53.27.0", "", { "dependencies": { "jsonschema": "^1.5.0", "semver": "^7.8.0" } }, "sha512-OTxe/L2Vc60r2nYih7kFaFpn93sa7shJu9T0tQZsryeDE3HHOAuazKNmS6tLInOjJjVx/dvM5XGyUA+lZAiKxA=="],
+    "@aws-cdk/cloud-assembly-schema": ["@aws-cdk/cloud-assembly-schema@54.2.0", "", { "dependencies": { "jsonschema": "^1.5.0", "semver": "^7.8.1" } }, "sha512-u3lFXmiXSBozxGBmKTCVD/2mTDsaXzLZH3KYiIQKcB+zPldXOeE5TnooBgKV9ih2jVTo8ML0HpkhfAq2eiv0eQ=="],
 
     "@aws-crypto/crc32": ["@aws-crypto/crc32@5.2.0", "", { "dependencies": { "@aws-crypto/util": "^5.2.0", "@aws-sdk/types": "^3.222.0", "tslib": "^2.6.2" } }, "sha512-nLbCWqQNgUiwwtFsen1AdzAtvuLRsQS8rYgMuxCrdKf9kOssamGLuPwyTY9wyYblNr9+1XM8v6zoDTPPSIeANg=="],
 
@@ -320,9 +320,9 @@
 
     "asynckit": ["asynckit@0.4.0", "", {}, "sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q=="],
 
-    "aws-cdk": ["aws-cdk@2.1124.1", "", { "bin": { "cdk": "bin/cdk" } }, "sha512-sRYdPMdkX+02EHaT946AFV0w0CMfbHKWpLZPv525xTCkaVu1eYu6DzHFuTdimxdSN0uGQ2D4LHrD1sr94tRhow=="],
+    "aws-cdk": ["aws-cdk@2.1126.0", "", { "bin": { "cdk": "bin/cdk" } }, "sha512-uNoocb3vCPiAT3j9+SwL6pn/VVggHWBsgC2XpxyhNvYQYt6cE9BM/149GWwtdcwnLrPjnwW1+CV/5nSSh5dV+w=="],
 
-    "aws-cdk-lib": ["aws-cdk-lib@2.257.0", "", { "dependencies": { "@aws-cdk/asset-awscli-v1": "2.2.273", "@aws-cdk/asset-node-proxy-agent-v6": "^2.1.1", "@aws-cdk/cloud-assembly-api": "^2.2.4", "@aws-cdk/cloud-assembly-schema": "^53.25.0", "@balena/dockerignore": "^1.0.2", "case": "1.6.3", "fs-extra": "^11.3.3", "ignore": "^5.3.2", "jsonschema": "^1.5.0", "mime-types": "^2.1.35", "minimatch": "^10.2.3", "punycode": "^2.3.1", "semver": "^7.7.4", "table": "^6.9.0", "yaml": "1.10.3" }, "peerDependencies": { "constructs": "^10.5.0" } }, "sha512-GoHfWklrBJcMwLtDlY64pvaT7cD2KyDXC8sik89DR6jHl6nQsBtYTKSJCM+C/k4jgXaecbv8myNX75FySejq0A=="],
+    "aws-cdk-lib": ["aws-cdk-lib@2.258.0", "", { "dependencies": { "@aws-cdk/asset-awscli-v1": "2.2.282", "@aws-cdk/asset-node-proxy-agent-v6": "^2.1.2", "@aws-cdk/cloud-assembly-api": "^2.2.5", "@aws-cdk/cloud-assembly-schema": "^54.0.0", "@balena/dockerignore": "^1.0.2", "case": "1.6.3", "fs-extra": "^11.3.5", "ignore": "^5.3.2", "jsonschema": "^1.5.0", "mime-types": "^2.1.35", "minimatch": "^10.2.5", "punycode": "^2.3.1", "semver": "^7.8.1", "table": "^6.9.0", "yaml": "1.10.3" }, "peerDependencies": { "constructs": "^10.5.0" } }, "sha512-OfFfg30ikBRJ3dimlzsWhPIrj6qug1p2XYsdB38CtMtcur7SufzoUczgI6kWjbQkOVcQgYzhzN29DErV0yZG7A=="],
 
     "b4a": ["b4a@1.8.1", "", { "peerDependencies": { "react-native-b4a": "*" }, "optionalPeers": ["react-native-b4a"] }, "sha512-aiqre1Nr0B/6DgE2N5vwTc+2/oQZ4Wh1t4NznYY4E00y8LCt6NqdRv81so00oo27D8MVKTpUa/MwUUtBLXCoDw=="],
 

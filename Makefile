@@ -38,6 +38,19 @@ outputs: ## print deployed stack outputs (table, role, guardrail id)
 	@aws cloudformation describe-stacks --stack-name AgentOsState   --query 'Stacks[0].Outputs' --output table
 	@aws cloudformation describe-stacks --stack-name AgentOsBedrock --query 'Stacks[0].Outputs' --output table
 
+# --- full-mode store (ADR-0027): Aurora Serverless v2, scale-to-zero — deploy per trip ---
+deploy-postgres: whoami ## deploy the full-mode Aurora store (opens 5432 to YOUR current IP)
+	cd infra && bunx cdk deploy AgentOsPostgres -c dbAllowedCidr=$$(curl -s https://checkip.amazonaws.com)/32 --require-approval never
+
+destroy-postgres: ## tear the Aurora store back down (~$$0 idle while paused anyway)
+	cd infra && bunx cdk destroy AgentOsPostgres --force
+
+postgres-url: ## print the SPEND_DATABASE_URL for the deployed Aurora store
+	@SECRET=$$(aws cloudformation describe-stacks --stack-name AgentOsPostgres --query "Stacks[0].Outputs[?OutputKey=='SecretArn'].OutputValue" --output text); \
+	 HOST=$$(aws cloudformation describe-stacks --stack-name AgentOsPostgres --query "Stacks[0].Outputs[?OutputKey=='Endpoint'].OutputValue" --output text); \
+	 PASS=$$(aws secretsmanager get-secret-value --secret-id $$SECRET --query SecretString --output text | bun -e "const s=JSON.parse(await Bun.stdin.text());console.log(encodeURIComponent(s.password))"); \
+	 echo "postgresql://postgres:$$PASS@$$HOST:5432/agentos"
+
 # --- runtime (local process) ---
 run: ## run agent-runtime locally (in-memory store)
 	SANDBOX_PROVIDER=local bun run services/agent-runtime/server.ts
@@ -69,4 +82,4 @@ k8s-logs: ## tail the runtime logs
 k8s-forward: ## port-forward the runtime to localhost:3000
 	kubectl -n agent-os port-forward svc/agent-runtime 3000:80
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward
