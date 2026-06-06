@@ -1,8 +1,9 @@
 # LiteLLM inference gateway — the bought engine + our authn & budget hard-stop
 
-**Milestones 1–2 of the LiteLLM pivot (ADR-0024/0025/0026).** Proves the bet: *buy the
+**Milestones 1–3 of the LiteLLM pivot (ADR-0024/0025/0026).** Proves the bet: *buy the
 engine (LiteLLM → Bedrock), build the policy* — verified-identity authn + a worst-case
 budget hard-stop, both in LiteLLM's **OSS hooks** (its native JWT auth is enterprise-only).
+Validated live against Bedrock (Claude Haiku 4.5): reserve → call → settle-to-actual.
 
 LiteLLM owns wire formats, model routing, and the Bedrock call. We own the ~10% nobody else
 does:
@@ -49,44 +50,51 @@ does:
 
 ```bash
 cd services/inference-gateway/litellm
-uv sync                                          # creates .venv + installs from pyproject.toml (uv.lock)
+uv sync                                          # .venv + deps from uv.lock
 
 export AWS_PROFILE=nathan-tilsley-developer      # short-lived; refresh on ExpiredToken
 export REGION=eu-west-2
 export SPEND_TABLE=agent-os-budgets
 # export SPEND_TABLE_ENDPOINT=http://localhost:8000   # only for DynamoDB Local
-export GATE_BUDGET_USD=0.001                      # tiny cap so the worst-case trips the 402
-# export SESSION_BUDGET_USD=0.0005                # optional per-session runaway cap
+# --- auth is mandatory (M2): the proxy verifies a token + looks up a claim ---
+export JWT_HS256_SECRET=testsecret               # dev verifier (prod: JWT_JWKS_URL)
+export CLAIMS_STATIC='{"bob":{"model":"claude-haiku","monthlyBudgetUsd":5}}'  # dev claim
+# export SESSION_BUDGET_USD=0.0005               # optional per-session runaway cap
 
 uv run litellm --config config.yaml --port 4000
 ```
 
-## See the 402 (the whole point)
-
-With `GATE_BUDGET_USD=0.001`, a normal request's worst case (`input + max_tokens × out`)
-exceeds the cap, so admission refuses it **before** calling Bedrock:
+Every request now needs a Bearer token (M2). Mint a dev one:
 
 ```bash
-curl -s localhost:4000/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{
-    "model": "claude-haiku",
-    "messages": [{"role":"user","content":"write a haiku about budgets"}],
-    "max_tokens": 200,
-    "user": "acme"
-  }' | jq
-# → HTTP 402  {"error": {"message": "budget exceeded for tenant 'acme'", ...}}
+BOB=$(uv run python -c "import jwt;print(jwt.encode({'sub':'bob'},'testsecret',algorithm='HS256'))")
 ```
 
-Raise the cap (`GATE_BUDGET_USD=5.00`, restart) and the same call returns a normal
-completion; the post-call hook settles the **actual** cost down from the reservation.
-Omit `max_tokens` → `400` (uncapped output is refused by design).
+## See it work (402 hard-stop, then a live call that settles)
 
-Watch the counter move:
+**402 before Bedrock** — set the claim budget tiny (`monthlyBudgetUsd: 0.0001`, restart):
+
+```bash
+curl -s localhost:4000/v1/chat/completions -H "Authorization: Bearer $BOB" \
+  -H 'content-type: application/json' \
+  -d '{"model":"claude-haiku","messages":[{"role":"user","content":"hi"}],"max_tokens":200,"user":"acme"}'
+# → 402  budget exceeded for tenant 'bob'   (the body's user=acme is ignored — verified identity wins)
+```
+
+**A live completion** (budget `$5`) returns a real answer and settles to actual cost:
+
+```bash
+curl -s localhost:4000/v1/chat/completions -H "Authorization: Bearer $BOB" \
+  -H 'content-type: application/json' \
+  -d '{"model":"claude-haiku","messages":[{"role":"user","content":"Reply with one word: ok"}],"max_tokens":500}'
+# → 200  ...{"content":"ok"}...      (omit max_tokens → 400)
+```
+
+Watch the counter settle to **actual**, not the worst-case reserve:
 
 ```bash
 aws dynamodb get-item --table-name agent-os-budgets \
-  --key '{"tenant":{"S":"acme"},"period":{"S":"2026-06"}}' | jq '.Item.spentUsd'
+  --key '{"tenant":{"S":"bob"},"period":{"S":"2026-06"}}' --query 'Item.spentUsd.N' --output text
 ```
 
 ## Where the tenant comes from
@@ -99,14 +107,11 @@ IAM-SigV4 verifier for non-k8s callers is the documented second adapter.)
 
 ## Next milestones (not in this slice)
 
-1. **M3 — happy-path settle** — a real completion against Bedrock + the spend counter:
-   reserve → call → settle actual, confirming the counter moves and the metadata-threaded
-   reservation reconciles. Needs live AWS creds.
-2. **M4 — point the runtime at it** — switch `GatewayInferenceProvider` from the bespoke
+1. **M4 — point the runtime at it** — switch `GatewayInferenceProvider` from the bespoke
    `/v1/generate` to LiteLLM's OpenAI `/v1/chat/completions`, then retire the Bun gateway.
-3. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
+2. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
    move the budget reserve to a Postgres conditional `UPDATE`; mesh-trust authn in-cluster.
-4. **Multi-format** — expose Anthropic `/v1/messages` for Claude Code / the Anthropic SDK
+3. **Multi-format** — expose Anthropic `/v1/messages` for Claude Code / the Anthropic SDK
    (the coding-agent use case), same hooks in front.
 
 ## Validated locally (litellm 1.87.0)
@@ -139,13 +144,27 @@ uv run litellm --config config.yaml --port 4000
 - token=carol (no claim) → `403 no inference claim for 'carol'` ✓
 - none reached Bedrock ✓
 
+### M3 — live reserve → Bedrock → settle (Claude Haiku 4.5, real AWS)
+
+`CLAIMS_STATIC` budget `$5`, `AWS_PROFILE` loaded, `max_tokens=500`:
+
+- request as `bob` → **`200`**, real completion `{"content":"ok"}` (14 in / 4 out) ✓
+- counter before: absent (0); counter after: **`0.000034`** ✓
+- worst-case reserved `(14×$1 + 500×$5)/1M = $0.002514` → **settled down to actual
+  `(14×$1 + 4×$5)/1M = $0.000034`** — exactly the counter value, proving the
+  metadata-threaded reserve→settle reconciliation (the one path the no-AWS tests can't cover).
+
+**Two findings:** (1) the `aws login` credential provider needs **`awscrt`** in the venv
+(the AWS CLI bundles it; boto3 didn't) — added to deps. (2) on-demand Claude in eu-west-2
+requires the **`eu.` cross-region inference profile** id (`eu.anthropic.claude-haiku-4-5-…`);
+the raw model id is rejected as "invalid model identifier".
+
 ## Validation caveats (read before trusting it)
 
 - **Hook signatures** are pinned to `litellm>=1.55,<2` (validated on 1.87.0; see
   `pyproject.toml`). They have drifted across versions — if the proxy errors loading the
   callback, check the installed version's `CustomLogger` signatures against this file.
-- **Reservation carry** (pre → post) is threaded via `data["metadata"]["_admission"]`.
-  Confirm your LiteLLM version threads the same `data`/`metadata` dict into
-  `async_post_call_success_hook`; if not, settle won't fire and reservations won't
-  reconcile down to actual (fails *closed* — conservative, but over-charges). This is the
-  one behaviour to verify on the first real run.
+- **Reservation carry** (pre → post) is threaded via `data["metadata"]["_admission"]` —
+  **verified working on 1.87.0** (M3: counter settled to actual). It fails *closed* if a
+  future version stops threading the same `data` dict (over-charges rather than under-charges);
+  re-check the counter-settles-to-actual behaviour after a LiteLLM bump.

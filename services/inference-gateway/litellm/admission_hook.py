@@ -39,9 +39,9 @@ from litellm.integrations.custom_logger import CustomLogger
 # carries pre-call) and the resolved Bedrock id (what the response may carry), so the
 # lookup hits whichever name LiteLLM reports; `default` covers the rest.
 PRICE_PER_MTOK = {
-    "claude-haiku": {"in": 0.80, "out": 4.00},
-    "anthropic.claude-3-5-haiku-20241022-v1:0": {"in": 0.80, "out": 4.00},
-    "eu.anthropic.claude-3-5-haiku-20241022-v1:0": {"in": 0.80, "out": 4.00},
+    "claude-haiku": {"in": 1.00, "out": 5.00},  # Claude Haiku 4.5 (approx); the config alias
+    "eu.anthropic.claude-haiku-4-5-20251001-v1:0": {"in": 1.00, "out": 5.00},
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0": {"in": 1.00, "out": 5.00},
     "amazon.nova-lite-v1:0": {"in": 0.06, "out": 0.24},
     "amazon.nova-pro-v1:0": {"in": 0.80, "out": 3.20},
     "default": {"in": 0.50, "out": 1.50},
