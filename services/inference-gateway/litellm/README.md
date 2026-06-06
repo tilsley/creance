@@ -1,9 +1,10 @@
 # LiteLLM inference gateway — the bought engine + our authn & budget hard-stop
 
-**Milestones 1–3 of the LiteLLM pivot (ADR-0024/0025/0026).** Proves the bet: *buy the
+**Milestones 1–4 of the LiteLLM pivot (ADR-0024/0025/0026).** Proves the bet: *buy the
 engine (LiteLLM → Bedrock), build the policy* — verified-identity authn + a worst-case
 budget hard-stop, both in LiteLLM's **OSS hooks** (its native JWT auth is enterprise-only).
-Validated live against Bedrock (Claude Haiku 4.5): reserve → call → settle-to-actual.
+Validated live against Bedrock (Claude Haiku 4.5): reserve → call → settle-to-actual, and
+our own runtime drives it through the `InferenceProvider` port (M4).
 
 LiteLLM owns wire formats, model routing, and the Bedrock call. We own the ~10% nobody else
 does:
@@ -105,14 +106,28 @@ another tenant by asserting one. The grant (budget + model) comes from the tenan
 TTL-cached. (The verifier is offline JWT today — RS256/JWKS in prod, HS256 in dev; an
 IAM-SigV4 verifier for non-k8s callers is the documented second adapter.)
 
+## Point the runtime at it (M4)
+
+Our own TS runtime calls LiteLLM through the `InferenceProvider` port via the new
+**`OpenAIGatewayInferenceProvider`** (`packages/core/src/adapters/`), which translates our
+neutral types ↔ OpenAI `/v1/chat/completions` and maps 401/402 to the same errors as the
+in-process path. Selected by env, **alongside** the bespoke Bun-gateway client (not instead
+of it — cheap-mode/fallback stays):
+
+```bash
+export INFERENCE_GATEWAY_URL=http://localhost:4000
+export INFERENCE_GATEWAY_WIRE=openai     # default "bespoke" = the Bun /v1/generate gateway
+export MODEL_ID=claude-haiku             # the alias LiteLLM routes (and the claim allows)
+```
+
 ## Next milestones (not in this slice)
 
-1. **M4 — point the runtime at it** — switch `GatewayInferenceProvider` from the bespoke
-   `/v1/generate` to LiteLLM's OpenAI `/v1/chat/completions`, then retire the Bun gateway.
-2. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
+1. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
    move the budget reserve to a Postgres conditional `UPDATE`; mesh-trust authn in-cluster.
-3. **Multi-format** — expose Anthropic `/v1/messages` for Claude Code / the Anthropic SDK
+2. **Multi-format** — expose Anthropic `/v1/messages` for Claude Code / the Anthropic SDK
    (the coding-agent use case), same hooks in front.
+3. **Two deployment profiles (ADR, deferred)** — cheap AWS-native (Bun gateway, scale-to-zero)
+   vs full-k8s (LiteLLM + mesh + OPA), same contract — write it up when ready.
 
 ## Validated locally (litellm 1.87.0)
 
@@ -158,6 +173,18 @@ uv run litellm --config config.yaml --port 4000
 (the AWS CLI bundles it; boto3 didn't) — added to deps. (2) on-demand Claude in eu-west-2
 requires the **`eu.` cross-region inference profile** id (`eu.anthropic.claude-haiku-4-5-…`);
 the raw model id is rejected as "invalid model identifier".
+
+### M4 — runtime → LiteLLM through the port (OpenAI-wire adapter)
+
+`OpenAIGatewayInferenceProvider` against the running gateway (token=bob, claim $5):
+
+```
+AssistantTurn: {"text":"ok","toolCalls":[],"usage":{"inputTokens":14,"outputTokens":4}}
+```
+
+- the OpenAI response translated back into our neutral `AssistantTurn` ✓
+- through verified identity + budget; bob's counter moved `0.000034 → 0.000068` ✓
+- 6 unit tests cover the type translation + 401/402 mapping (no network).
 
 ## Validation caveats (read before trusting it)
 

@@ -10,6 +10,7 @@ import { OllamaInferenceProvider } from "./adapters/ollama-inference";
 import { ScriptedInferenceProvider } from "./adapters/scripted-inference";
 import { AdmissionInferenceProvider } from "./adapters/admission-inference";
 import { GatewayInferenceProvider } from "./adapters/gateway-inference";
+import { OpenAIGatewayInferenceProvider } from "./adapters/openai-gateway-inference";
 import { AgentCoreSandboxProvider } from "./adapters/agentcore-sandbox";
 import { E2BSandboxProvider } from "./adapters/e2b-sandbox";
 import { LocalSandboxProvider } from "./adapters/local-sandbox";
@@ -223,9 +224,19 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // tenant's role, call Bedrock, and wrap with the worst-case budget admission here
   // (ADR-0013), so admission always runs wherever the *real* model call happens.
   const gatewayUrl = env.INFERENCE_GATEWAY_URL;
+  // Which wire the gateway speaks: "bespoke" = the Bun /v1/generate gateway (default,
+  // back-compat / cheap mode); "openai" = an OpenAI-compatible gateway like LiteLLM
+  // (full mode, ADR-0024/0026). Both sit behind the same InferenceProvider port.
+  const gatewayWire = env.INFERENCE_GATEWAY_WIRE ?? "bespoke";
   const inferenceForTenant = async (tenant: string, token?: string, scopeId?: string, model?: string): Promise<InferenceProvider> => {
-    // gateway-client: the gateway resolves the claim's model server-side; the client doesn't pick.
-    if (gatewayUrl) return new GatewayInferenceProvider(gatewayUrl, inference.model, { token, tenant, sessionId: scopeId });
+    if (gatewayUrl) {
+      const clientOpts = { token, tenant, sessionId: scopeId };
+      // openai/LiteLLM: the client names the model (LiteLLM routes by alias + enforces the
+      // claim's allow-list). bespoke/Bun: the gateway resolves the claim's model server-side.
+      return gatewayWire === "openai"
+        ? new OpenAIGatewayInferenceProvider(gatewayUrl, model ?? inference.model, clientOpts)
+        : new GatewayInferenceProvider(gatewayUrl, inference.model, clientOpts);
+    }
     // direct: route to the claim's model (ADR-0021) when given — Bedrock only; scripted/ollama ignore it.
     const creds = tenantCredentials ? await tenantCredentials.forTenant(tenant) : undefined;
     const base = creds
