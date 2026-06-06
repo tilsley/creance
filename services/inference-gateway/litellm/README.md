@@ -35,6 +35,23 @@ does:
 | `CLAIMS_TABLE` / `CLAIMS_TABLE_ENDPOINT` | prod: DynamoDB claims table (default `agent-os-claims`) |
 | `CLAIM_CACHE_TTL` | grant-cache TTL seconds (default 5) — keeps the lookup off the hot path |
 
+## Budget store env (ADR-0023/0026/0027)
+
+| Env | Purpose |
+|---|---|
+| `SPEND_STORE` | `dynamo` (default — cheap mode, ~$0 idle) or `postgres` (full mode) |
+| `SPEND_DATABASE_URL` | Postgres connection for `SPEND_STORE=postgres`. **Not `DATABASE_URL`** — LiteLLM claims that for its own Prisma DB and mutates it (appends `connection_limit`, which psycopg rejects). |
+| `SPEND_TABLE` / `SPEND_TABLE_ENDPOINT` | the DynamoDB table (dynamo mode) |
+
+Postgres reserve = one conditional upsert (`spent+delta ≤ ceiling … RETURNING`) — atomic **and**
+ACID-durable in a single statement. Prod target: **Aurora Serverless v2** (PostgreSQL engine,
+scale-to-zero ⇒ ~$0 idle; IAM-auth token refresh is a documented follow-up). Dev:
+
+```bash
+docker run -d --name agentos-pg -e POSTGRES_PASSWORD=test -p 5432:5432 postgres:16-alpine
+export SPEND_STORE=postgres SPEND_DATABASE_URL='postgresql://postgres:test@localhost:5432/postgres'
+```
+
 ## Run it locally
 
 > Not run in this repo's CI — it needs a Python env, live AWS creds, and Bedrock access.
@@ -122,12 +139,16 @@ export MODEL_ID=claude-haiku             # the alias LiteLLM routes (and the cla
 
 ## Next milestones (not in this slice)
 
-1. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
-   move the budget reserve to a Postgres conditional `UPDATE`; mesh-trust authn in-cluster.
-2. **Shared conformance suite (ADR-0027)** — assert the gate contract (identity → claim →
+1. **Aurora wiring** — provision Aurora Serverless v2 (PostgreSQL, scale-to-zero) via CDK and
+   point `SPEND_DATABASE_URL` at it with **IAM auth** (token-refresh reconnect hook = keyless).
+2. **Valkey/Redis shared grant cache** — only at multi-replica (in-process TTL cache covers
+   single-replica); a standalone in-cluster pod, ephemeral by design (the losable tier).
+3. **Mesh-trust authn (ADR-0026)** — in-cluster, Istio mTLS/SPIFFE forwarded identity.
+4. **Shared conformance suite (ADR-0027)** — assert the gate contract (identity → claim →
    reserve → 402 / admit / settle) against *both* gateways so they don't drift.
 
-*Done since M1–M4: multi-format Anthropic `/v1/messages` (above); two-profiles decision
+*Done since M1–M4: multi-format Anthropic `/v1/messages`; the **Postgres budget reserve**
+(ADR-0026's conditional `UPDATE`, validated vs a local container); two-profiles decision
 recorded in [ADR-0027](../../../docs/decisions/0027-two-deployment-profiles.md).*
 
 ## Validated locally (litellm 1.87.0)
@@ -203,6 +224,18 @@ LiteLLM exposes `/v1/messages` natively and routes it through the **same** hooks
 
 So a coding agent (Claude Code) can point at `…/v1/messages` and a generic app at
 `…/v1/chat/completions` — one gateway, one set of hooks, both governed.
+
+### Postgres budget store (full mode, ADR-0023/0026)
+
+Against a local `postgres:16-alpine` container (`SPEND_STORE=postgres`):
+
+- store semantics direct: reserve / **deny-on-breach (atomic, nothing written)** / settle /
+  session scope ✓
+- gateway integrated: tiny budget → `402` ✓; $5 budget → `200` live Haiku completion and the
+  `budgets` table settled to the actual: `bob | 2026-06 | 0.000033` ✓
+
+**Gotcha found:** `DATABASE_URL` collides with LiteLLM's own Prisma DB env — LiteLLM *mutates*
+it (appends `connection_limit`), which psycopg rejects; hence `SPEND_DATABASE_URL`.
 
 ## Validation caveats (read before trusting it)
 

@@ -16,9 +16,13 @@ the worst case won't fit, nothing is sent and nothing is spent — the thing tha
 single $50 one-shot that accumulation-only budgets (LiteLLM's native max_budget) let
 through and only block on the *next* call.
 
-Store: the existing DynamoSpendStore table (PK `tenant`, SK `period`="YYYY-MM",
-attr `spentUsd`) reused verbatim — same atomic conditional reserve, so the TS runtime
-and this hook share one counter. (Postgres/Redis per ADR-0023 is a later swap.)
+Store — selected by SPEND_STORE (ADR-0023/0026/0027):
+  - "dynamo" (default, cheap mode): the existing DynamoSpendStore table (PK `tenant`,
+    SK `period`="YYYY-MM", attr `spentUsd`) — same atomic conditional reserve as the TS
+    runtime, one shared counter, ~$0 idle.
+  - "postgres" (full mode): PostgresSpendStore via SPEND_DATABASE_URL — the reserve is a
+    single conditional upsert (`spent+delta ≤ ceiling`), atomic AND ACID-durable in one
+    statement; targets Aurora Serverless v2 (scale-to-zero) in prod, a local container in dev.
 
 Tenant: for this milestone, read from the request (`user` field or `metadata.tenant`).
 Mapping a *verified* identity (SA/IAM token) onto the tenant via `user_api_key_auth` is
@@ -118,6 +122,72 @@ class DynamoSpendStore:
         return float(r["Attributes"]["spentUsd"]["N"])
 
 
+class PostgresSpendStore:
+    """Atomic reserve/settle on Postgres — the production home for the budget (ADR-0023/0026).
+    The reserve is ONE conditional upsert: insert-or-add iff the new total stays <= ceiling,
+    RETURNING the new total; no row returned = would breach (nothing written). The check and
+    the add are a single statement, so concurrent reservations can't both slip past the cap —
+    and unlike a cache counter it's ACID-durable. Targets Aurora Serverless v2 (scale-to-zero)
+    in prod; any Postgres (local container) in dev. SPEND_DATABASE_URL carries the connection —
+    deliberately NOT `DATABASE_URL`, which LiteLLM claims for its own Prisma DB and mutates
+    (appends `connection_limit`, which psycopg rejects).
+    NOTE: Aurora IAM auth (keyless) needs a token-refresh reconnect hook — documented follow-up;
+    dev uses password auth in the URL."""
+
+    def __init__(self):
+        from psycopg_pool import ConnectionPool  # lazy — dynamo/cheap mode doesn't need psycopg
+
+        self.pool = ConnectionPool(
+            os.environ["SPEND_DATABASE_URL"],
+            min_size=1,
+            max_size=int(os.getenv("DB_POOL_MAX", "5")),
+            open=True,
+        )
+        with self.pool.connection() as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS budgets (
+                       tenant    TEXT    NOT NULL,
+                       period    TEXT    NOT NULL,
+                       spent_usd NUMERIC NOT NULL DEFAULT 0,
+                       PRIMARY KEY (tenant, period))"""
+            )
+
+    def reserve(self, tenant: str, period: str, delta: float, ceiling: float):
+        """Add `delta` iff the result stays <= ceiling — one atomic statement (the conditional
+        UPDATE *is* the reserve). Returns the new total, or None if it would breach. Callers
+        pre-check delta <= ceiling so the first-write (INSERT) case is safe."""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """INSERT INTO budgets (tenant, period, spent_usd) VALUES (%s, %s, %s)
+                   ON CONFLICT (tenant, period) DO UPDATE
+                     SET spent_usd = budgets.spent_usd + EXCLUDED.spent_usd
+                     WHERE budgets.spent_usd + EXCLUDED.spent_usd <= %s
+                   RETURNING spent_usd""",
+                (tenant, period, delta, ceiling),
+            ).fetchone()
+            return float(row[0]) if row else None
+
+    def add(self, tenant: str, period: str, delta: float) -> float:
+        """Unconditional atomic add — settle (reconcile to actual) and refund."""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """INSERT INTO budgets (tenant, period, spent_usd) VALUES (%s, %s, %s)
+                   ON CONFLICT (tenant, period) DO UPDATE
+                     SET spent_usd = budgets.spent_usd + EXCLUDED.spent_usd
+                   RETURNING spent_usd""",
+                (tenant, period, delta),
+            ).fetchone()
+            return float(row[0])
+
+
+def _build_spend_store():
+    """SPEND_STORE picks the budget backend: dynamo (default — cheap mode, ~$0 idle) or
+    postgres (full mode — durable conditional-UPDATE reserve; ADR-0027 profiles)."""
+    if os.getenv("SPEND_STORE", "dynamo") == "postgres":
+        return PostgresSpendStore()
+    return DynamoSpendStore()
+
+
 def _session_key(session_id: str) -> str:
     return f"session#{session_id}"
 
@@ -137,7 +207,7 @@ def _usage_field(usage, *names) -> int:
 # --- the hook ----------------------------------------------------------------
 class WorstCaseBudget(CustomLogger):
     def __init__(self):
-        self.store = DynamoSpendStore()
+        self.store = _build_spend_store()
         # Tenant cap source. POC: a flat env default (+ optional per-tenant override via
         # GATE_BUDGET_OVERRIDES='{"acme":5.0}'). Next milestone: read the claim's
         # monthlyBudgetUsd from the Dynamo claims table (DynamoClaimSource parity).
