@@ -46,7 +46,7 @@ flowchart TB
   Q["Run agents at scale & securely — buy or build?"]
   Q --> B1["<b>BUY</b> · all-in managed<br/>AgentCore · Claude MA · Vertex<br/>~$0 idle, fast — but lock-in &<br/>no real-time budget cap"]
   Q --> B2["<b>BUILD</b> · self-host everything<br/>control + cheapest at scale —<br/>but upfront build + idle cost"]
-  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← what this platform enables"]
+  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: LiteLLM engine<br/>+ our OSS policy hooks"]
 ```
 
 > 🎤 "Before any architecture, here's the question that actually drives the decision — and the bill.
@@ -56,9 +56,12 @@ flowchart TB
 > hard-stop. Building gives you control and the cheapest unit cost at scale, but you pay upfront to
 > build it and you pay for idle capacity. The real answer is **both** — choose per capability, and let
 > cost decide where each lands: managed while you're small and idle, self-hosted once you're at scale
-> and never idle. **This is the axis that matters most.** Everything else in this talk is how the
-> platform keeps that choice open and adds the two things managed can't. We'll come back with the
-> actual numbers at the end."
+> and never idle. **This is the axis that matters most** — and we've executed it where it counts: the
+> inference gateway is a **bought engine, LiteLLM, carrying our policy as ~250 lines of OSS hooks** —
+> verified identity plus the worst-case budget hard-stop, proven live against Bedrock
+> ([ADR-0024](decisions/0024-build-vs-buy-managed-agent-platforms.md)). Everything else in this talk
+> is how the platform keeps that choice open and adds the two things managed can't. We'll come back
+> with the actual numbers at the end."
 
 ---
 
@@ -376,8 +379,12 @@ flowchart LR
 > thousands a month, and self-hosting on spot or reserved comes out **2–3× cheaper**. The break-even
 > is low: above ~15% sustained utilization on spot, self-host already wins. So you **start managed
 > and swap the sandbox port to self-hosted when volume crosses your ops cost** — the agent-os shell,
-> the gateway and budget and identity, stays constant across that swap. The full model, the per-port
-> vendor list, and the worked Python-to-Go example are in [`costs.md`](costs.md)."
+> the gateway and budget and identity, stays constant across that swap. We've made the curve a
+> **deployment choice, not a rewrite**: two named profiles — cheap AWS-native, scale-to-zero, versus
+> full-k8s — same contract, R1 and R2 invariant in both
+> ([ADR-0027](decisions/0027-two-deployment-profiles.md)); the full-mode store is already live as
+> Aurora Serverless v2 that **pauses itself to $0 compute after five idle minutes**. The full model,
+> the per-port vendor list, and the worked Python-to-Go example are in [`costs.md`](costs.md)."
 
 ---
 
@@ -385,17 +392,23 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  subgraph RUNS["proven (EKS + local k3s)"]
-    R1["verified identity"] ~~~ R2["budget 402"] ~~~ R3["A2A on-behalf-of"]
+  subgraph RUNS["proven · live"]
+    R1["verified identity<br/>+ forgery defense"] ~~~ R2["budget 402 +<br/>reserve→settle vs Bedrock"] ~~~ R3["LiteLLM gateway<br/>OpenAI + Anthropic wire"] ~~~ R4["A2A on-behalf-of<br/>(EKS)"] ~~~ R5["store: Dynamo +<br/>Aurora scale-to-zero"]
   end
   subgraph NEXT["next"]
-    N1["egress lockdown"] ~~~ N2["cross-run memory"] ~~~ N3["scale-out"]
+    N1["egress lockdown<br/>(the sandbox pillar)"] ~~~ N2["cross-run memory"] ~~~ N3["conformance suite ·<br/>mesh-trust · scale-out"]
   end
 ```
 
-> 🎤 "And it's real, not a slide deck. Verified workload identity, the budget hard-stop returning
-> 402, secrets kept out of the transcript, agent-to-agent calls with identity intact — all proven
-> on real EKS and locally on k3s. What's next is the egress lockdown that makes coding-agent
-> sandboxing airtight, cross-run memory, and then scale-out — deliberately last, because the
-> interesting problems were isolation and cost, not throughput. That's the platform: a boring loop,
-> made secure and multi-tenant, one governed step at a time."
+> 🎤 "And it's real, not a slide deck. Verified workload identity — including the forgery test: a
+> request *claiming* tenant A with a token *proving* tenant B spends as B. The budget hard-stop
+> returning 402 pre-flight, and the full reserve-call-settle loop against live Bedrock, with the
+> counter landing on the actual cost. The gateway is the bought engine, LiteLLM, governing **both**
+> wire formats — OpenAI for generic apps and Anthropic `/v1/messages` for coding agents — through
+> the same two hooks. Agent-to-agent with identity intact, proven on EKS. And the budget store runs
+> on both deployment profiles: DynamoDB at ~$0 idle, or Aurora Serverless that pauses itself to
+> zero. What's next is the egress lockdown that makes coding-agent sandboxing airtight — the third
+> pillar, and the least built — then cross-run memory, the gateway conformance suite, mesh-trust,
+> and scale-out deliberately last, because the interesting problems were isolation and cost, not
+> throughput. That's the platform: a boring loop, made secure and multi-tenant, one governed step
+> at a time."

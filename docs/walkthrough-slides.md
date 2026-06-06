@@ -33,7 +33,7 @@ flowchart TB
   Q["Run agents at scale & securely — buy or build?"]
   Q --> B1["<b>BUY</b> · all-in managed<br/>AgentCore · Claude MA · Vertex<br/>~$0 idle, fast — but lock-in &<br/>no real-time budget cap"]
   Q --> B2["<b>BUILD</b> · self-host everything<br/>control + cheapest at scale —<br/>but upfront build + idle cost"]
-  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← what this platform enables"]
+  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: LiteLLM engine<br/>+ our OSS policy hooks"]
 ```
 
 ---
@@ -244,7 +244,7 @@ flowchart LR
   M -. "same agent code —<br/>swap one port" .-> S
 ```
 
-*Unit rates & worked example → [`costs.md`](costs.md). Managed ≈ 2× on-demand, 5–7× spot; break-even ~15% utilization on spot.*
+*Unit rates & worked example → [`costs.md`](costs.md). Managed ≈ 2× on-demand, 5–7× spot; break-even ~15% utilization on spot. The curve is now a deployment choice: two profiles, one contract ([ADR-0027](decisions/0027-two-deployment-profiles.md)) — full-mode store live as Aurora Serverless v2, pausing to $0 after 5 idle min.*
 
 ---
 
@@ -252,10 +252,10 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  subgraph RUNS["proven (EKS + local k3s)"]
-    R1["verified identity"] ~~~ R2["budget 402"] ~~~ R3["A2A on-behalf-of"]
+  subgraph RUNS["proven · live"]
+    R1["verified identity<br/>+ forgery defense"] ~~~ R2["budget 402 +<br/>reserve→settle vs Bedrock"] ~~~ R3["LiteLLM gateway<br/>OpenAI + Anthropic wire"] ~~~ R4["A2A on-behalf-of<br/>(EKS)"] ~~~ R5["store: Dynamo +<br/>Aurora scale-to-zero"]
   end
   subgraph NEXT["next"]
-    N1["egress lockdown"] ~~~ N2["cross-run memory"] ~~~ N3["scale-out"]
+    N1["egress lockdown<br/>(the sandbox pillar)"] ~~~ N2["cross-run memory"] ~~~ N3["conformance suite ·<br/>mesh-trust · scale-out"]
   end
 ```

@@ -330,7 +330,8 @@ Honest status — the logical architecture names components that aren't all sepa
 | Service | Role | ADR |
 |---|---|---|
 | `agent-runtime` | the L1 runtime — `POST /runs` (async), the worker loop, A2A | 0012, 0017/0018 |
-| `inference-gateway` | the model choke point — sole credential holder, budget admission, `POST /claims` | 0019, 0021 |
+| `inference-gateway` (LiteLLM) | the model choke point, **full mode**: the bought engine carrying our OSS hooks — verified-identity authn + worst-case budget admission, OpenAI **and** Anthropic wire | 0019, 0024, 0026 |
+| `inference-gateway` (Bun) | the same gate, **cheap mode / reference impl**: bespoke `/v1/generate`, `POST /claims` self-service — kept for scale-to-zero, not retired | 0019, 0021, 0027 |
 | `agent-controller` | reconciles `Agent` CRs → status | 0012 |
 | `claims-controller` | aggregate quota over claims vs allowance → status | 0021 |
 
@@ -342,14 +343,21 @@ ADRs define the split; it isn't done.
 k3s) · the budget hard-stop returning 402 · the credential broker keeping a secret out of the
 transcript · the MCP gateway discovering + calling a tool under per-tenant policy · cross-pod
 A2A with on-behalf-of identity (CloudTrail-confirmed on EKS) · apply-time CEL rejection of a
-bad claim.
+bad claim · **the LiteLLM gateway live against Bedrock**: verified identity → claim → worst-case
+reserve → Claude Haiku 4.5 → settle-to-actual, including the **forgery defense** (a request
+*claiming* tenant A with a token *proving* B spends as B) and **both wire formats** (OpenAI +
+Anthropic `/v1/messages`) through the same hooks · the **Postgres budget reserve** (one
+conditional `UPDATE`) validated locally **and** on **Aurora Serverless v2 scale-to-zero**
+(`make deploy-postgres`, pauses to $0 compute after 5 idle min).
 
 **Not yet:** cross-run/shared memory (Postgres + pgvector, [ADR-0023](decisions/0023-memory-backends-postgres-redis.md))
 · the sandbox-egress lockdown — now the *load-bearing* safety control for coding agents, not a
 nicety ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md),
-documented not enforced) · repointing the Run/Spend stores off DynamoDB to Postgres
-([ADR-0023](decisions/0023-memory-backends-postgres-redis.md)) · IAM-SigV4/OIDC verifiers for
-the non-k8s read path · scale-out (deferred) · EKS/CDK still skeleton.
+documented not enforced) · repointing the **RunStore** off DynamoDB to Postgres (the SpendStore
+half is done) · Aurora **IAM-auth** token refresh (keyless DB connections) · the gateway
+**conformance suite** ([ADR-0027](decisions/0027-two-deployment-profiles.md)) · IAM-SigV4/OIDC
+verifiers for non-k8s callers · mesh-trust authn · scale-out (deferred) · EKS/CDK still mostly
+skeleton (the `AgentOsPostgres` stack is real).
 
 ---
 
@@ -367,3 +375,4 @@ Each layer above is the consequence of a recorded decision. The full set:
 | **Identity (R1, R4, R9)** — per-tenant identity, creds, A2A | [0014](decisions/0014-per-tenant-workload-identity.md) · [0010](decisions/0010-credential-broker.md) · [0016](decisions/0016-obo-token-vault.md) · [0017](decisions/0017-a2a-identity-propagation.md) · [0018](decisions/0018-a2a-protocol-transport.md) |
 | **Tools & sandbox (R3)** — tools/auth, MCP gateway, sandbox model, coding-agent backends | [0007](decisions/0007-tools-and-external-auth.md) · [0011](decisions/0011-tool-mcp-gateway.md) · [0020](decisions/0020-sandbox-execution-model.md) · [0022](decisions/0022-sandbox-backends-for-coding-agents.md) |
 | **Onboarding (R5)** — control plane, policy-not-provisioning | [0005](decisions/0005-crossplane-control-plane.md) · [0012](decisions/0012-agent-control-plane.md) · [0021](decisions/0021-inference-onboarding-policy.md) |
+| **Build-vs-buy, executed** — buy the engine (LiteLLM) / build the policy (OSS hooks); cost buckets in the ledger; the hot path; two deployment profiles | [0024](decisions/0024-build-vs-buy-managed-agent-platforms.md) · [0025](decisions/0025-cost-allocation-in-the-ledger.md) · [0026](decisions/0026-gateway-hot-path-authn-authz-budget.md) · [0027](decisions/0027-two-deployment-profiles.md) |

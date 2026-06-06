@@ -142,6 +142,16 @@ the gateway, budget hard-stop, identity, and tenancy that supply **R2 + R6**, wh
 gives you. So agent-os isn't competing with the managed platforms; it's the thin, portable layer that
 lets you use them as the cheapest-today option *and* keeps the two requirements they can't.
 
+**Status — this strategy is executed, not proposed.** The gateway *is* a bought engine — LiteLLM —
+carrying the policy that can't be bought as ~250 lines of OSS hooks (verified-identity authn + the
+worst-case budget hard-stop; LiteLLM's own JWT authn is enterprise-only and its budgets are
+accumulation-only at every tier — [ADR-0024](decisions/0024-build-vs-buy-managed-agent-platforms.md)/[0026](decisions/0026-gateway-hot-path-authn-authz-budget.md)).
+Proven live against Bedrock on **both wire formats** (OpenAI + Anthropic). And the curve itself is now a
+**deployment choice**: two named profiles — cheap AWS-native (Bun gateway, DynamoDB, scale-to-zero) vs
+full-k8s (LiteLLM, Postgres/Redis, mesh, OPA) — same contract, R1+R2 invariant in both
+([ADR-0027](decisions/0027-two-deployment-profiles.md)); the full-mode store runs on **Aurora
+Serverless v2 that pauses itself to $0 compute after 5 idle minutes**.
+
 ---
 
 ## 9 · Caveats
