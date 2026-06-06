@@ -124,10 +124,11 @@ export MODEL_ID=claude-haiku             # the alias LiteLLM routes (and the cla
 
 1. **Hot-path production shape (ADR-0026)** — Redis/in-process grant cache across replicas;
    move the budget reserve to a Postgres conditional `UPDATE`; mesh-trust authn in-cluster.
-2. **Multi-format** — expose Anthropic `/v1/messages` for Claude Code / the Anthropic SDK
-   (the coding-agent use case), same hooks in front.
-3. **Two deployment profiles (ADR, deferred)** — cheap AWS-native (Bun gateway, scale-to-zero)
-   vs full-k8s (LiteLLM + mesh + OPA), same contract — write it up when ready.
+2. **Shared conformance suite (ADR-0027)** — assert the gate contract (identity → claim →
+   reserve → 402 / admit / settle) against *both* gateways so they don't drift.
+
+*Done since M1–M4: multi-format Anthropic `/v1/messages` (above); two-profiles decision
+recorded in [ADR-0027](../../../docs/decisions/0027-two-deployment-profiles.md).*
 
 ## Validated locally (litellm 1.87.0)
 
@@ -185,6 +186,23 @@ AssistantTurn: {"text":"ok","toolCalls":[],"usage":{"inputTokens":14,"outputToke
 - the OpenAI response translated back into our neutral `AssistantTurn` ✓
 - through verified identity + budget; bob's counter moved `0.000034 → 0.000068` ✓
 - 6 unit tests cover the type translation + 401/402 mapping (no network).
+
+### Multi-format — Anthropic `/v1/messages` (Claude Code / Anthropic SDK)
+
+LiteLLM exposes `/v1/messages` natively and routes it through the **same** hooks. Validated:
+
+- `/v1/messages`, tiny budget → `402 budget exceeded for tenant 'bob'` ✓ (admission fires)
+- `/v1/messages`, $5 budget → `200` Anthropic message; counter `0.000068 → 0.000101` ✓
+
+**Bug found & fixed — without it, `/v1/messages` was a budget bypass + under-bill:**
+1. LiteLLM tags this route `call_type="anthropic_messages"` — the admission guard must accept
+   it, or admission is skipped entirely (no 402).
+2. the success hook receives a **dict** response (not a ModelResponse object), so usage must be
+   read from `response["usage"]`, and as `input/output_tokens` (not `prompt/completion_tokens`)
+   — else `actual=0` silently refunds the whole reserve and spend never accumulates.
+
+So a coding agent (Claude Code) can point at `…/v1/messages` and a generic app at
+`…/v1/chat/completions` — one gateway, one set of hooks, both governed.
 
 ## Validation caveats (read before trusting it)
 

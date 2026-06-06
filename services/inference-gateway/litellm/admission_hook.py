@@ -122,6 +122,18 @@ def _session_key(session_id: str) -> str:
     return f"session#{session_id}"
 
 
+def _usage_field(usage, *names) -> int:
+    """Read a token count from a usage object/dict under any of the given names — covers both
+    OpenAI (prompt/completion_tokens) and Anthropic (input/output_tokens) response shapes."""
+    for n in names:
+        v = getattr(usage, n, None)
+        if v is None and isinstance(usage, dict):
+            v = usage.get(n)
+        if v:
+            return v
+    return 0
+
+
 # --- the hook ----------------------------------------------------------------
 class WorstCaseBudget(CustomLogger):
     def __init__(self):
@@ -150,9 +162,10 @@ class WorstCaseBudget(CustomLogger):
             return estimate_input_tokens(messages)
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data: dict, call_type):
-        # LiteLLM passes the async variants ("acompletion"/"atext_completion") through the
-        # proxy path — accept both sync and async forms; skip embeddings/other call types.
-        if call_type not in ("completion", "text_completion", "acompletion", "atext_completion"):
+        # LiteLLM tags the call_type by route: "(a)completion"/"(a)text_completion" for the
+        # OpenAI endpoints, "anthropic_messages" for /v1/messages. Accept ALL the chat routes —
+        # missing one (e.g. anthropic_messages) silently bypasses admission = a budget hole.
+        if call_type not in ("completion", "text_completion", "acompletion", "atext_completion", "anthropic_messages"):
             return data
 
         model = data.get("model", "default")
@@ -193,9 +206,15 @@ class WorstCaseBudget(CustomLogger):
         res = (data.get("metadata") or {}).get("_admission")
         if not res:
             return response
-        usage = getattr(response, "usage", None) or {}
-        prompt = getattr(usage, "prompt_tokens", None) or (usage.get("prompt_tokens") if isinstance(usage, dict) else 0) or 0
-        completion = getattr(usage, "completion_tokens", None) or (usage.get("completion_tokens") if isinstance(usage, dict) else 0) or 0
+        # response is a ModelResponse object (OpenAI path) OR a dict (Anthropic /v1/messages) —
+        # read usage from either, else actual=0 silently refunds the whole reserve (under-billing).
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        usage = usage or {}
+        # OpenAI usage is prompt/completion_tokens; Anthropic is input/output_tokens.
+        prompt = _usage_field(usage, "prompt_tokens", "input_tokens")
+        completion = _usage_field(usage, "completion_tokens", "output_tokens")
         actual = price_tokens_usd(res["model"], prompt, completion)
         delta = actual - res["worst"]  # usually negative — settle the over-reservation down
         self.store.add(res["tenant"], res["period"], delta)
