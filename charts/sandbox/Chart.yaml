@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sandbox
+description: agent-os sandbox egress lockdown — the `do` containment control (ADR-0020/0022). The wall (default-deny egress) + named doors (DNS, egress proxy) + an optional demo (gateway stand-in + sandbox pod).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

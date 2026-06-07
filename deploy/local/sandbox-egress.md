@@ -1,22 +1,23 @@
-# Sandbox egress lockdown — slice 1 (the wall)
+# Sandbox egress lockdown — the `do` containment control
 
-The `do` containment control (ADR-0020/0022). The invariant: **no anonymous egress** —
-a sandbox gets zero internet by default; the only way out is a named, policied door.
+ADR-0020/0022. The invariant: **no anonymous egress** — a sandbox gets zero internet by
+default; the only way out is a named, policied door. **Deployed by the Helm chart
+[`charts/sandbox`](../../charts/sandbox)** (the maintained source of truth — no ad-hoc yaml).
 
 ```
-  agentos-sandbox namespace
+  charts/sandbox  (helm install sandbox -n agentos-sandbox)
   ├─ NetworkPolicy default-deny-egress   ← the WALL: all pods, deny all egress
-  ├─ NetworkPolicy allow-dns             ← DOOR 1: kube-dns only (no open :53 tunnel)
-  ├─ NetworkPolicy allow-sandbox→gateway ← DOOR 2: app=sandbox → app=gateway:80 only
-  ├─ gateway (nginx stand-in for the inference gateway)
-  └─ sandbox pod (Model B stand-in: curl + sleep)
+  ├─ NetworkPolicy allow-dns             ← DOOR: kube-dns only (no open :53 tunnel)
+  ├─ NetworkPolicy allow-sandbox→proxy   ← DOOR: app=sandbox → egress-proxy:3128 only
+  ├─ egress-proxy (Squid)                ← named-domain allowlist (values.proxy.allowDomains)
+  └─ demo (values.demo.enabled): gateway stand-in + sandbox pod + allow-sandbox→gateway
 ```
 
 ## Run it
 
 ```bash
-bash deploy/local/sandbox-egress-test.sh     # or: make sandbox-egress-test
-# teardown: kubectl --context colima delete ns agentos-sandbox
+make sandbox-test        # helm install + assert wall + allowlist, then tear down (KEEP=1 to inspect)
+# or by hand: helm --kube-context colima install sandbox charts/sandbox -n agentos-sandbox --create-namespace
 ```
 
 Proves: `sandbox → gateway = 200` (the door + DNS), `sandbox → {1.1.1.1, example.com,
@@ -45,7 +46,7 @@ was the problem.
 
 NetworkPolicy can't allowlist *domains* (registries sit behind shifting CDN IPs), so the
 named-domain door is a **forward proxy** (Squid) the sandbox is forced through:
-`sandbox-egress-proxy.yaml`, tested by `make sandbox-egress-proxy-test`.
+the `egress-proxy` template in `charts/sandbox`, asserted by `make sandbox-test`.
 
 Two independent locks, both proven: allowlisted domains (`.npmjs.org`, `.pypi.org`) tunnel
 through; non-listed (`github.com`, `evil.example`) get **`TCP_DENIED/403` at the proxy** —

@@ -1,0 +1,21 @@
+# Sandbox egress lockdown — no anonymous egress (ADR-0020/0022).
+# Install:  helm install sandbox charts/sandbox -n agentos-sandbox --create-namespace
+
+proxy:
+  image: ubuntu/squid:6.6-24.04_edge
+  # the named outbound domains a coding agent legitimately needs (the allowlist).
+  # Everything else is denied at the proxy; non-proxy egress is denied at the wall.
+  allowDomains:
+    - .npmjs.org
+    - .pypi.org
+    - .pythonhosted.org
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 300m, memory: 192Mi }
+
+# Demo/test pods: a gateway stand-in + a sandbox pod (+ the gateway egress door).
+# Disable for a real sandbox namespace (you bring your own workloads).
+demo:
+  enabled: true
+  gatewayImage: nginx:alpine
+  sandboxImage: curlimages/curl:8.11.1

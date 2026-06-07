@@ -85,11 +85,8 @@ k8s-logs: ## tail the runtime logs
 k8s-forward: ## port-forward the runtime to localhost:3000
 	kubectl -n agent-os port-forward svc/agent-runtime 3000:80
 
-sandbox-egress-test: ## prove egress lockdown slice 1 — the wall (think-works / exfil-dies)
-	bash deploy/local/sandbox-egress-test.sh
-
-sandbox-egress-proxy-test: ## prove egress lockdown slice 2 — named-domain allowlist via the proxy
-	bash deploy/local/sandbox-egress-proxy-test.sh
+sandbox-test: ## deploy charts/sandbox + prove egress lockdown (wall + allowlist), then tear down
+	bash deploy/local/sandbox-test.sh
 
 gate-conformance: ## assert the gate contract (R1+R2) holds identically on both gateways (ADR-0027)
 	bash deploy/local/gate-conformance.sh
@@ -98,4 +95,4 @@ gate-conformance: ## assert the gate contract (R1+R2) holds identically on both 
 spine-agent: ## run the spine test agent through the live gateway (small Bedrock spend)
 	bash examples/spine-agent/run.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test gate-conformance spine-agent
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-test gate-conformance spine-agent

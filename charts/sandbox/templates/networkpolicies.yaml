@@ -1,0 +1,73 @@
+# The wall + the always-on doors (ADR-0020/0022). The gateway door lives in demo.yaml
+# (it targets the demo gateway); these are the real egress-lockdown invariants.
+---
+# THE WALL — every pod in the namespace: deny all egress by default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress: []
+---
+# DOOR — DNS (kube-dns only; no open :53 exfil tunnel).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+# DOOR — the sandbox may reach the egress proxy (and only the proxy) for outbound.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sandbox-to-proxy
+spec:
+  podSelector:
+    matchLabels: { app: sandbox }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: egress-proxy }
+      ports:
+        - { port: 3128, protocol: TCP }
+---
+# The proxy itself: broad egress (allowlisted domains resolve to many IPs) + DNS.
+# Its Squid allowlist — NOT NetworkPolicy — does the domain enforcement.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxy-egress
+spec:
+  podSelector:
+    matchLabels: { app: egress-proxy }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+      ports:
+        - { port: 443, protocol: TCP }
+        - { port: 80, protocol: TCP }

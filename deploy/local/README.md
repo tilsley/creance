@@ -4,8 +4,9 @@
 > `agentos*` namespaces) because each test script picked its own and none tore down.
 > The rule now: a persistent dev deploy lives in **`agentos`**; every *test* script owns an
 > **ephemeral** namespace it tears down on exit (`trap`), with `KEEP=1` to leave it for
-> inspection. So `make sandbox-egress-test` / `sandbox-egress-proxy-test` no longer leave
-> anything running.
+> inspection. Our resources are **Helm charts** ([`charts/`](../../charts)) — `charts/sandbox`
+> for the egress harness, `charts/agent-os` for the apps — not ad-hoc `kubectl apply`.
+> (Crossplane and LiteLLM are deployed separately, their own thing.)
 
 Runs `agent-runtime` in-cluster on **colima + k3s** (lean, 16 GB-friendly). Two
 manifests, the same you'd apply on EKS (only the local-image + creds bits differ):

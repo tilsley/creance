@@ -1,0 +1,54 @@
+# The domain-allowlisting forward proxy (Squid) — the named-domain door. The sandbox
+# is forced through it (NetworkPolicy); it allows CONNECT only to allowlisted domains.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-proxy-conf
+data:
+  squid.conf: |
+    acl SSL_ports port 443
+    acl Safe_ports port 80 443
+    acl CONNECT method CONNECT
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+    acl allowlist dstdomain {{ range .Values.proxy.allowDomains }}{{ . }} {{ end }}
+    http_access allow allowlist
+    http_access deny all
+    http_port 3128
+    cache deny all
+    access_log stdio:/var/log/squid/access.log
+    cache_log /var/log/squid/cache.log
+    buffered_logs off
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: egress-proxy } }
+  template:
+    metadata:
+      labels: { app: egress-proxy }
+    spec:
+      containers:
+        - name: squid
+          image: {{ .Values.proxy.image | quote }}
+          # foreground squid (the image entrypoint exits after cache-init -> crashloop)
+          command: ["squid"]
+          args: ["-N", "-d1", "-f", "/etc/squid/squid.conf"]
+          ports: [{ containerPort: 3128 }]
+          volumeMounts:
+            - { name: conf, mountPath: /etc/squid/squid.conf, subPath: squid.conf }
+          resources: {{ .Values.proxy.resources | toYaml | nindent 12 }}
+      volumes:
+        - name: conf
+          configMap: { name: egress-proxy-conf }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+spec:
+  selector: { app: egress-proxy }
+  ports: [{ port: 3128, targetPort: 3128 }]
