@@ -138,6 +138,18 @@ export INFERENCE_GATEWAY_WIRE=openai     # default "bespoke" = the Bun /v1/gener
 export MODEL_ID=claude-haiku             # the alias LiteLLM routes (and the claim allows)
 ```
 
+## In k8s — gateway as a pod, real SA-token identity (validated)
+
+`Dockerfile` (uv-based image) + the **`charts/litellm-gateway`** chart run the gateway as a pod
+in k3s, verifying **real Kubernetes ServiceAccount tokens** against the cluster JWKS (`JWT_JWKS_URL`,
+default mode). Proven: a real projected SA token (`kubectl create token … --audience=agent-os-gateway`)
+→ the in-cluster gateway → `402 budget exceeded for tenant 'system:serviceaccount:default:default'`
+— JWKS-verified identity + claim + budget, no hand-minted JWT.
+
+**k8s gotchas found:** the cluster's `/openid/v1/jwks` needs **auth** (anonymous access off), so the
+hook authenticates the JWKS fetch with the gateway pod's **own SA token**; and `SSL_CERT_FILE` =
+the auto-mounted cluster CA so the TLS fetch verifies. (See `auth_hook.py:_verify`.)
+
 ## Next milestones (not in this slice)
 
 1. ✅ **Aurora + IAM auth — done & validated.** `AgentOsPostgres` CDK stack (Serverless v2

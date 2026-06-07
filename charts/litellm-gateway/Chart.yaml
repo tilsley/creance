@@ -1,0 +1,6 @@
+apiVersion: v2
+name: litellm-gateway
+description: The LiteLLM inference gateway (ADR-0024/0026) as a pod — the bought engine + our OSS hooks (verified-identity authn, worst-case budget). Its own chart (LiteLLM is a separate deployable from the platform apps). Defaults to verifying real Kubernetes ServiceAccount tokens against the cluster JWKS.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

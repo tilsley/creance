@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-gateway
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: litellm-gateway }
+  template:
+    metadata:
+      labels: { app: litellm-gateway }
+    spec:
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 4000
+          env:
+{{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
+          {{- if .Values.awsCredsSecret }}
+          envFrom:
+            - secretRef: { name: {{ .Values.awsCredsSecret | quote }}, optional: true }
+          {{- end }}
+          readinessProbe:
+            httpGet: { path: /health/readiness, port: 4000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 768Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-gateway
+spec:
+  selector: { app: litellm-gateway }
+  ports:
+    - { port: {{ .Values.servicePort }}, targetPort: 4000 }

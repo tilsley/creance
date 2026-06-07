@@ -92,12 +92,25 @@ class TTLCache:
 
 
 # --- the verifier ------------------------------------------------------------
+_SA_TOKEN = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+
 def _verify(token: str) -> dict:
     opts = {"verify_aud": AUDIENCE is not None}
-    if os.getenv("JWT_JWKS_URL"):
+    jwks_url = os.getenv("JWT_JWKS_URL")
+    if jwks_url:
         from jwt import PyJWKClient
 
-        key = PyJWKClient(os.environ["JWT_JWKS_URL"]).get_signing_key_from_jwt(token).key
+        # The k8s JWKS endpoint (/openid/v1/jwks) usually needs auth (anonymous access is
+        # off); authenticate the fetch with the gateway pod's OWN SA token. SSL_CERT_FILE
+        # (the cluster CA) lets PyJWKClient verify the TLS. Override the token path with
+        # JWKS_TOKEN_FILE; for a public JWKS, neither is needed.
+        headers = {}
+        tok_file = os.getenv("JWKS_TOKEN_FILE", _SA_TOKEN)
+        if os.path.exists(tok_file):
+            with open(tok_file) as f:
+                headers["Authorization"] = "Bearer " + f.read().strip()
+        key = PyJWKClient(jwks_url, headers=headers).get_signing_key_from_jwt(token).key
         return jwt.decode(token, key, algorithms=["RS256", "ES256"], audience=AUDIENCE, options=opts)
     secret = os.environ["JWT_HS256_SECRET"]  # dev/test
     return jwt.decode(token, secret, algorithms=["HS256"], audience=AUDIENCE, options=opts)
