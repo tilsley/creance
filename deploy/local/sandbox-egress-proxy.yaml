@@ -1,0 +1,121 @@
+# Sandbox egress lockdown — slice 2 (the doors): a domain-allowlisting forward proxy.
+#
+# NetworkPolicy can't allowlist DOMAINS (registries sit behind shifting CDN IPs), so
+# the named-domain door is a forward proxy the sandbox is *forced through*:
+#   - the WALL (slice 1) still denies all direct egress;
+#   - a new policy lets the sandbox reach ONLY the proxy;
+#   - the proxy (Squid) allows CONNECT only to allowlisted domains, denies the rest.
+# Layered: bypassing the proxy (curl an IP direct) is blocked by NetworkPolicy;
+# using the proxy for a non-listed domain is blocked by Squid. Two independent locks.
+#
+# CAVEAT (ADR-0022): allowed domains are still exfil channels — a push to an allowed
+# git host leaks. The allowlist is a per-tenant RISK DIAL, and guard+record watch the
+# doors. Containment shrinks the channel set; it doesn't make exfil impossible.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: egress-proxy-conf
+  namespace: agentos-sandbox
+data:
+  squid.conf: |
+    acl SSL_ports port 443
+    acl Safe_ports port 80 443
+    acl CONNECT method CONNECT
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+    # the allowlist — the named outbound domains a coding agent legitimately needs
+    acl allowlist dstdomain .npmjs.org .pypi.org .pythonhosted.org
+    http_access allow allowlist
+    http_access deny all
+    http_port 3128
+    # POC: forward proxy only, no caching; keep the surface small
+    cache deny all
+    # squid drops to user 'proxy' and can't write root's /dev/stdout; log to its own
+    # writable dir instead (tail it via kubectl exec). access_log = the door record.
+    access_log stdio:/var/log/squid/access.log
+    cache_log /var/log/squid/cache.log
+    buffered_logs off
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+  namespace: agentos-sandbox
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: egress-proxy } }
+  template:
+    metadata:
+      labels: { app: egress-proxy }
+    spec:
+      containers:
+        - name: squid
+          image: ubuntu/squid:6.6-24.04_edge
+          # run squid in the foreground ourselves (the image's entrypoint does a
+          # cache-init pass and exits → crashloop); -N no-daemon, -d1 log to stdout.
+          command: ["squid"]
+          args: ["-N", "-d1", "-f", "/etc/squid/squid.conf"]
+          ports: [{ containerPort: 3128 }]
+          volumeMounts:
+            - { name: conf, mountPath: /etc/squid/squid.conf, subPath: squid.conf }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 300m, memory: 192Mi }
+      volumes:
+        - name: conf
+          configMap: { name: egress-proxy-conf }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+  namespace: agentos-sandbox
+spec:
+  selector: { app: egress-proxy }
+  ports: [{ port: 3128, targetPort: 3128 }]
+---
+# DOOR 3 — the sandbox may reach the proxy (and only the proxy) for outbound.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sandbox-to-proxy
+  namespace: agentos-sandbox
+spec:
+  podSelector:
+    matchLabels: { app: sandbox }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: egress-proxy }
+      ports:
+        - { port: 3128, protocol: TCP }
+---
+# The proxy itself needs broad egress (allowlisted domains resolve to many IPs) +
+# DNS — its Squid allowlist, NOT NetworkPolicy, does the domain enforcement. The
+# proxy is the trusted chokepoint; the sandbox is not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxy-egress
+  namespace: agentos-sandbox
+spec:
+  podSelector:
+    matchLabels: { app: egress-proxy }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] # internet only, not cluster/RFC1918
+      ports:
+        - { port: 443, protocol: TCP }
+        - { port: 80, protocol: TCP }

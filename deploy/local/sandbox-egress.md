@@ -41,14 +41,32 @@ API-server need**, so default-deny egress is clean here. Pod-backed ClusterIP se
 (the gateway, kube-dns) match egress policy fine post-DNAT; only the host-network API path
 was the problem.
 
+## Slice 2 — the named-domain door (egress proxy + allowlist) ✅
+
+NetworkPolicy can't allowlist *domains* (registries sit behind shifting CDN IPs), so the
+named-domain door is a **forward proxy** (Squid) the sandbox is forced through:
+`sandbox-egress-proxy.yaml`, tested by `make sandbox-egress-proxy-test`.
+
+Two independent locks, both proven: allowlisted domains (`.npmjs.org`, `.pypi.org`) tunnel
+through; non-listed (`github.com`, `evil.example`) get **`TCP_DENIED/403` at the proxy** —
+a recorded policy decision in squid's access log, the `record` watching the door; a direct
+bypass (no proxy) is killed by the slice-1 wall. The proxy gets broad NetworkPolicy egress
+(its *Squid allowlist* does domain enforcement; NetworkPolicy can't); the sandbox may reach
+*only* the proxy.
+
+> **Allowed domains are still exfil channels** (a push to an allowed git host leaks). The
+> allowlist is a per-tenant **risk dial**; `guard` + `record` watch the doors. Containment
+> shrinks the channel set — it doesn't make exfil impossible.
+
+Squid-in-k8s lessons (cost a few iterations): the Canonical `ubuntu/squid` entrypoint does a
+cache-init pass and exits → run `squid -N -f …` in the foreground; squid drops to user
+`proxy` and **can't write root's `/dev/stdout`** → log to its own `/var/log/squid/`; and set
+`buffered_logs off` so the door record is real-time.
+
 ## Next slices
 
-1. **Egress proxy + allowlist** — named outbound domains (npm/PyPI registry, your git host)
-   via a forward proxy, so real coding agents work without reopening the wall. Allowed
-   domains are still exfil channels (a commit to an allowed git host leaks) → per-tenant
-   risk dial, with `guard` + `record` watching the doors.
-2. **Research-as-a-tool** — `web_search`/`fetch_url` execute *outside* the sandbox behind
+1. **Research-as-a-tool** — `web_search`/`fetch_url` execute *outside* the sandbox behind
    the tool gateway; content comes back through `guard` (inbound injection vector). The
    sandbox keeps zero egress.
-3. **Runtime isolation** — gVisor/Kata `RuntimeClass` on EKS (the kernel/VM boundary the
+2. **Runtime isolation** — gVisor/Kata `RuntimeClass` on EKS (the kernel/VM boundary the
    network wall complements); E2B / AgentCore as managed adapters (ADR-0022).

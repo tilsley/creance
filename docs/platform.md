@@ -350,15 +350,17 @@ Anthropic `/v1/messages`) through the same hooks · the **Postgres budget reserv
 conditional `UPDATE`) validated locally **and** on **Aurora Serverless v2 scale-to-zero**
 (`make deploy-postgres`, pauses to $0 compute after 5 idle min).
 
-**Sandbox egress lockdown — slice 1 proven (local k3s):** default-deny egress + a single
-allowed door (the gateway) + DNS — a sandbox pod reaches the gateway (200) but every internet
-destination (raw IP, hostname, github) is blocked, DNS still resolving. The *wall* of the `do`
-containment control ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md));
-`make sandbox-egress-test`.
+**Sandbox egress lockdown — slices 1–2 proven (local k3s):** *(1, the wall)* default-deny
+egress + a gateway door + DNS — the sandbox reaches the gateway (200), every internet
+destination is blocked, DNS still resolves. *(2, the named-domain door)* a Squid forward proxy
+the sandbox is forced through: allowlisted registries (`.npmjs.org`/`.pypi.org`) tunnel,
+non-listed (`github.com`) get a recorded `TCP_DENIED/403`, a direct bypass dies at the wall.
+The `do` containment control ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md));
+`make sandbox-egress-test` / `sandbox-egress-proxy-test`.
 
 **Not yet:** cross-run/shared memory (Postgres + pgvector, [ADR-0023](decisions/0023-memory-backends-postgres-redis.md))
-· the sandbox-egress *doors* — egress proxy + allowlist (npm/git), research-as-a-tool, and
-gVisor/Kata runtime isolation on EKS (slices 2–3 of [ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md))
+· the remaining sandbox slices — research-as-a-tool, and gVisor/Kata runtime isolation on EKS
+([ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md))
 · repointing the **RunStore** off DynamoDB to Postgres (the SpendStore
 half is done) · Aurora **IAM-auth** token refresh (keyless DB connections) · the gateway
 **conformance suite** ([ADR-0027](decisions/0027-two-deployment-profiles.md)) · IAM-SigV4/OIDC
