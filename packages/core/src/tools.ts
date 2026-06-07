@@ -144,6 +144,116 @@ export function callAgentTool(broker: CredentialBroker, principal: Principal): A
   };
 }
 
+// --- web research: a guarded, SSRF-safe fetch tool (ADR-0008/0011; Model A) -------
+// In Model A the loop is a TRUSTED app; research is a tool it calls, executed HERE
+// (in the runtime, outside the zero-egress sandbox). The tool returns fetched text;
+// the loop screens it via guard as untrusted ingress (loop.ts) — fetched pages are
+// the indirect-injection vector. THIS tool owns the *egress policy*: only public
+// http(s), never private/loopback/metadata addresses (SSRF — the runtime has the
+// network the sandbox doesn't), and an optional per-tenant domain allowlist. In the
+// full deployment the runtime also sits behind the egress proxy (slice 2), so the
+// allowlist is enforced twice — app-layer here, network-layer there.
+
+const BLOCKED_HOSTNAME = /^(localhost|.*\.local|.*\.localhost)$/i;
+
+/** True for hosts a research fetch must never reach: localhost + private / loopback /
+ *  link-local / cloud-metadata (169.254.169.254) IP literals. */
+export function isBlockedHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, ""); // strip ipv6 brackets
+  if (!h || BLOCKED_HOSTNAME.test(h)) return true;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true; // link-local + cloud metadata
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+  }
+  if (h === "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) return true; // ipv6 loopback/ULA/link-local
+  return false;
+}
+
+/** Validate a URL is safe to fetch for research, or throw. Public http(s) only, no
+ *  private/metadata host, and within the per-tenant allowlist when one is set. */
+export function assertFetchable(rawUrl: string, allowDomains?: string[]): URL {
+  let u: URL;
+  try { u = new URL(rawUrl); } catch { throw new Error(`invalid url: ${rawUrl}`); }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error(`blocked scheme: ${u.protocol}`);
+  if (isBlockedHost(u.hostname)) throw new Error(`blocked host (private/metadata/loopback): ${u.hostname}`);
+  if (allowDomains?.length) {
+    const ok = allowDomains.some((d) => u.hostname === d || u.hostname.endsWith("." + d));
+    if (!ok) throw new Error(`host not in research allowlist: ${u.hostname}`);
+  }
+  return u;
+}
+
+export interface WebResearchOptions {
+  /** Per-tenant fetchable domains; empty/undefined ⇒ any public host (still SSRF-guarded). */
+  allowDomains?: string[];
+  /** Body cap returned to the model (default 8000 bytes). */
+  maxBytes?: number;
+  /** Optional search backend (Tavily/Brave/MCP/…). When given, exposes `web_search`. */
+  search?: (query: string) => Promise<string>;
+}
+
+/** `fetch_url` — GET a public page, return its text (SSRF-guarded, allowlisted, capped).
+ *  Refuses redirects so a public URL can't 302 into a private one. */
+export function fetchUrlTool(opts: WebResearchOptions = {}): AgentTool {
+  const maxBytes = opts.maxBytes ?? 8000;
+  return {
+    spec: {
+      name: "fetch_url",
+      description:
+        "Fetch a PUBLIC web page (http/https) and return its text for research. Private, " +
+        "loopback, and cloud-metadata addresses are refused; the platform screens the " +
+        "returned content for safety. Args: url.",
+      inputSchema: {
+        type: "object",
+        properties: { url: { type: "string", description: "Public http(s) URL to fetch." } },
+        required: ["url"],
+      },
+    },
+    run: async (i) => {
+      let u: URL;
+      try { u = assertFetchable(String(i.url ?? ""), opts.allowDomains); }
+      catch (e: any) { return `error: ${e.message}`; }
+      try {
+        const res = await fetch(u, { redirect: "error", signal: AbortSignal.timeout(10_000), headers: { accept: "text/*, */*" } });
+        const body = (await res.text()).slice(0, maxBytes);
+        return `HTTP ${res.status} ${u.hostname}\n${body}`;
+      } catch (e: any) {
+        return `error: fetch failed: ${e?.message ?? String(e)}`;
+      }
+    },
+  };
+}
+
+/** `web_search` — a thin wrapper over an injected backend (we don't build search). */
+export function webSearchTool(search: (query: string) => Promise<string>): AgentTool {
+  return {
+    spec: {
+      name: "web_search",
+      description: "Search the web and return result snippets for research. Args: query.",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+    run: async (i) => {
+      try { return await search(String(i.query ?? "")); }
+      catch (e: any) { return `error: search failed: ${e?.message ?? String(e)}`; }
+    },
+  };
+}
+
+/** The research tool set: fetch_url always; web_search when a backend is configured. */
+export function webResearchTools(opts: WebResearchOptions = {}): AgentTool[] {
+  const tools: AgentTool[] = [fetchUrlTool(opts)];
+  if (opts.search) tools.push(webSearchTool(opts.search));
+  return tools;
+}
+
 export function runCodeTool(session: SandboxSession): AgentTool {
   return {
     spec: {

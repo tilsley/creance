@@ -63,10 +63,27 @@ cache-init pass and exits → run `squid -N -f …` in the foreground; squid dro
 `proxy` and **can't write root's `/dev/stdout`** → log to its own `/var/log/squid/`; and set
 `buffered_logs off` so the door record is real-time.
 
+## Slice 3 — research-as-a-tool (Model A) ✅
+
+The inbound mirror of egress lockdown, built for the **first customer (Model A — our own
+loop)**: research is a tool the *trusted loop* calls — `fetch_url` (+ `web_search` over an
+injected backend) in `packages/core/src/tools.ts` (`webResearchTools`). It executes in the
+runtime, *outside* the zero-egress sandbox, and the loop screens its output via `guard` as
+untrusted ingress (`loop.ts` — fetched pages are the indirect-injection vector).
+
+The tool owns the **egress policy**: public http(s) only, **SSRF-guarded** (no
+private/loopback/cloud-metadata hosts — the runtime has the network the sandbox doesn't),
+redirects refused (no 302-into-private), an optional **per-tenant domain allowlist**, and a
+body cap. Tested (`bun test tools.web.test.ts`): SSRF/non-allowlisted URLs are refused *before
+any network call*; `web_search` is a thin wrapper over a backend we don't build (Tavily/Brave/
+MCP). The Model-B routing wrinkle (Claude Code's own web tools fighting the wall) is deferred —
+not our first customer.
+
+> Known limit: the literal-IP + redirect refusal covers URL-level SSRF; a *hostname* that
+> resolves to a private IP (DNS rebinding) isn't caught app-side — the slice-2 egress proxy is
+> the network-layer backstop in full deployments.
+
 ## Next slices
 
-1. **Research-as-a-tool** — `web_search`/`fetch_url` execute *outside* the sandbox behind
-   the tool gateway; content comes back through `guard` (inbound injection vector). The
-   sandbox keeps zero egress.
-2. **Runtime isolation** — gVisor/Kata `RuntimeClass` on EKS (the kernel/VM boundary the
+1. **Runtime isolation** — gVisor/Kata `RuntimeClass` on EKS (the kernel/VM boundary the
    network wall complements); E2B / AgentCore as managed adapters (ADR-0022).

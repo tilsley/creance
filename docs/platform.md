@@ -358,8 +358,14 @@ non-listed (`github.com`) get a recorded `TCP_DENIED/403`, a direct bypass dies 
 The `do` containment control ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md));
 `make sandbox-egress-test` / `sandbox-egress-proxy-test`.
 
+**Research-as-a-tool — built (Model A, the first customer):** `webResearchTools` (`fetch_url`
++ pluggable `web_search`) — the trusted loop calls it *outside* the zero-egress sandbox and
+guards the result as untrusted ingress; the tool enforces SSRF safety (no private/metadata
+hosts), refused redirects, and a per-tenant domain allowlist. The inbound mirror of egress
+lockdown.
+
 **Not yet:** cross-run/shared memory (Postgres + pgvector, [ADR-0023](decisions/0023-memory-backends-postgres-redis.md))
-· the remaining sandbox slices — research-as-a-tool, and gVisor/Kata runtime isolation on EKS
+· gVisor/Kata runtime isolation on EKS + the Model-B research routing
 ([ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md))
 · repointing the **RunStore** off DynamoDB to Postgres (the SpendStore
 half is done) · Aurora **IAM-auth** token refresh (keyless DB connections) · the gateway
