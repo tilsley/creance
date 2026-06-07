@@ -350,10 +350,16 @@ Anthropic `/v1/messages`) through the same hooks · the **Postgres budget reserv
 conditional `UPDATE`) validated locally **and** on **Aurora Serverless v2 scale-to-zero**
 (`make deploy-postgres`, pauses to $0 compute after 5 idle min).
 
+**Sandbox egress lockdown — slice 1 proven (local k3s):** default-deny egress + a single
+allowed door (the gateway) + DNS — a sandbox pod reaches the gateway (200) but every internet
+destination (raw IP, hostname, github) is blocked, DNS still resolving. The *wall* of the `do`
+containment control ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md));
+`make sandbox-egress-test`.
+
 **Not yet:** cross-run/shared memory (Postgres + pgvector, [ADR-0023](decisions/0023-memory-backends-postgres-redis.md))
-· the sandbox-egress lockdown — now the *load-bearing* safety control for coding agents, not a
-nicety ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md),
-documented not enforced) · repointing the **RunStore** off DynamoDB to Postgres (the SpendStore
+· the sandbox-egress *doors* — egress proxy + allowlist (npm/git), research-as-a-tool, and
+gVisor/Kata runtime isolation on EKS (slices 2–3 of [ADR-0022](decisions/0022-sandbox-backends-for-coding-agents.md))
+· repointing the **RunStore** off DynamoDB to Postgres (the SpendStore
 half is done) · Aurora **IAM-auth** token refresh (keyless DB connections) · the gateway
 **conformance suite** ([ADR-0027](decisions/0027-two-deployment-profiles.md)) · IAM-SigV4/OIDC
 verifiers for non-k8s callers · mesh-trust authn · scale-out (deferred) · EKS/CDK still mostly

@@ -82,4 +82,7 @@ k8s-logs: ## tail the runtime logs
 k8s-forward: ## port-forward the runtime to localhost:3000
 	kubectl -n agent-os port-forward svc/agent-runtime 3000:80
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward
+sandbox-egress-test: ## prove egress lockdown on local k3s (think-works / exfil-dies)
+	bash deploy/local/sandbox-egress-test.sh
+
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test

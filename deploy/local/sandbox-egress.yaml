@@ -1,0 +1,124 @@
+# Sandbox egress lockdown — the `do` containment control (ADR-0020/0022), slice 1.
+#
+# The invariant: NO ANONYMOUS EGRESS. A sandbox gets zero internet by default; the
+# only way out is a named, policied door. This is the *wall*; later slices add the
+# egress proxy + allowlist (npm/git) and the gVisor/Kata runtime class on EKS.
+#
+# Model A (loop-as-app): the sandbox runs only untrusted CODE and never thinks, so
+#   its door set is empty (or registry-only) — strictest case, zero network.
+# Model B (agent-in-box, e.g. Claude Code): the harness lives inside and must reach
+#   the inference gateway to think — so the gateway is the one door we open here.
+# Either way the WALL is identical; only which doors open differs.
+#
+# k3s LESSON (see namespace.yaml): k3s enforces NetworkPolicy via built-in
+# kube-router. Tight egress broke the *agent-runtime* because it needs the k8s API
+# server (10.43.0.1 → host:6443 DNAT, which port-based egress doesn't match). A
+# SANDBOX pod has no API-server need — that's exactly why egress lockdown is
+# tractable here where it wasn't for the runtime.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentos-sandbox
+  labels:
+    agent-os/tenant: sandbox
+    kubernetes.io/metadata.name: agentos-sandbox
+---
+# DOOR 0 — the wall. Every pod in the namespace: deny ALL egress by default.
+# (Ingress left untouched — this slice is about what gets OUT.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: agentos-sandbox
+spec:
+  podSelector: {} # all pods
+  policyTypes: [Egress]
+  egress: [] # nothing
+---
+# DOOR 1 — DNS. Without this even the gateway's service name can't resolve. Scoped
+# to kube-dns/coredns only (open DNS is a classic exfil tunnel — port 53 stays shut
+# to everything else).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: agentos-sandbox
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+# DOOR 2 — the gateway (Model B's `think` route). Only app=sandbox pods, only to
+# the app=gateway pod, only its port. This is THE door egress lockdown opens; remove
+# it and you have Model A (zero egress).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sandbox-to-gateway
+  namespace: agentos-sandbox
+spec:
+  podSelector:
+    matchLabels: { app: sandbox }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: gateway }
+      ports:
+        - { port: 80, protocol: TCP }
+---
+# Gateway stand-in — an in-cluster echo for the test (the real one is the LiteLLM
+# inference gateway). Labelled app=gateway so DOOR 2 selects it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: agentos-sandbox
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      containers:
+        - name: echo
+          image: nginx:alpine
+          ports: [{ containerPort: 80 }]
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: agentos-sandbox
+spec:
+  selector: { app: gateway }
+  ports: [{ port: 80, targetPort: 80 }]
+---
+# A sandbox-shaped pod (Model B stand-in): has curl, just sleeps so we can exec the
+# two-sided test against it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sandbox
+  namespace: agentos-sandbox
+  labels: { app: sandbox }
+spec:
+  containers:
+    - name: box
+      image: curlimages/curl:8.11.1
+      command: ["sleep", "infinity"]
+      resources:
+        requests: { cpu: 50m, memory: 32Mi }
+        limits: { cpu: 200m, memory: 64Mi }
