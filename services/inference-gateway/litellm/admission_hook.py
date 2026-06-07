@@ -128,21 +128,43 @@ class PostgresSpendStore:
     RETURNING the new total; no row returned = would breach (nothing written). The check and
     the add are a single statement, so concurrent reservations can't both slip past the cap —
     and unlike a cache counter it's ACID-durable. Targets Aurora Serverless v2 (scale-to-zero)
-    in prod; any Postgres (local container) in dev. SPEND_DATABASE_URL carries the connection —
-    deliberately NOT `DATABASE_URL`, which LiteLLM claims for its own Prisma DB and mutates
-    (appends `connection_limit`, which psycopg rejects).
-    NOTE: Aurora IAM auth (keyless) needs a token-refresh reconnect hook — documented follow-up;
-    dev uses password auth in the URL."""
+    in prod; any Postgres (local container) in dev.
+
+    Two auth modes:
+      - password: SPEND_DATABASE_URL (deliberately NOT `DATABASE_URL`, which LiteLLM claims for
+        its own Prisma DB and mutates — appends `connection_limit`, which psycopg rejects).
+      - IAM (keyless, SPEND_DB_IAM=true): mint a fresh 15-min RDS auth token as the password on
+        every NEW physical connection (the token only matters at connect; live sessions persist).
+        Needs SPEND_DB_HOST (+ optional SPEND_DB_USER=agentos_app / SPEND_DB_NAME=agentos). The
+        caller's IAM identity needs rds-db:connect (laptop: admin; EKS: the pod role via IRSA)."""
 
     def __init__(self):
         from psycopg_pool import ConnectionPool  # lazy — dynamo/cheap mode doesn't need psycopg
 
-        self.pool = ConnectionPool(
-            os.environ["SPEND_DATABASE_URL"],
-            min_size=1,
-            max_size=int(os.getenv("DB_POOL_MAX", "5")),
-            open=True,
-        )
+        max_size = int(os.getenv("DB_POOL_MAX", "5"))
+        if os.getenv("SPEND_DB_IAM") == "true":
+            import boto3
+            import psycopg
+
+            host = os.environ["SPEND_DB_HOST"]
+            port = int(os.getenv("SPEND_DB_PORT", "5432"))
+            user = os.getenv("SPEND_DB_USER", "agentos_app")
+            dbname = os.getenv("SPEND_DB_NAME", "agentos")
+            region = os.getenv("AWS_REGION") or os.getenv("REGION", "eu-west-2")
+            rds = boto3.client("rds", region_name=region)
+
+            class _IamConnection(psycopg.Connection):
+                @classmethod
+                def connect(cls, conninfo="", **kw):  # called by the pool for each new connection
+                    kw["password"] = rds.generate_db_auth_token(DBHostname=host, Port=port, DBUsername=user, Region=region)
+                    return super().connect(conninfo, **kw)
+
+            self.pool = ConnectionPool(
+                f"host={host} port={port} dbname={dbname} user={user} sslmode=require",
+                connection_class=_IamConnection, min_size=1, max_size=max_size, open=True,
+            )
+        else:
+            self.pool = ConnectionPool(os.environ["SPEND_DATABASE_URL"], min_size=1, max_size=max_size, open=True)
         with self.pool.connection() as conn:
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS budgets (

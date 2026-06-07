@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as rds from "aws-cdk-lib/aws-rds";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 
 /**
@@ -61,6 +62,28 @@ export class PostgresStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // IAM database auth (the keyless app path): a managed policy granting rds-db:connect
+    // to the `agentos_app` DB user (created with the rds_iam role). This is the reusable
+    // ARTIFACT — in EKS it attaches to the pod's role (IRSA). For the local laptop test,
+    // pass `-c dbConnectUser=<iam-user>` to attach it — but only if that user LACKS the
+    // permission and has policy headroom (an Administrator/dev user already has rds-db:connect,
+    // and is often at the 10-managed-policies-per-user limit, so leave dbConnectUser unset).
+    // The ARN's resource is the cluster's resource id, not its name.
+    const dbUser = "agentos_app";
+    const connectPolicy = new iam.ManagedPolicy(this, "RdsIamConnect", {
+      statements: [
+        new iam.PolicyStatement({
+          actions: ["rds-db:connect"],
+          resources: [`arn:aws:rds-db:${this.region}:${this.account}:dbuser:${db.clusterResourceIdentifier}/${dbUser}`],
+        }),
+      ],
+    });
+    const connectUser = this.node.tryGetContext("dbConnectUser") as string | undefined;
+    if (connectUser) connectPolicy.attachToUser(iam.User.fromUserName(this, "DbConnectUser", connectUser));
+
+    new cdk.CfnOutput(this, "RdsIamUser", { value: dbUser });
+    new cdk.CfnOutput(this, "RdsIamConnectPolicyArn", { value: connectPolicy.managedPolicyArn });
+    new cdk.CfnOutput(this, "ClusterResourceId", { value: db.clusterResourceIdentifier });
     new cdk.CfnOutput(this, "Endpoint", { value: db.clusterEndpoint.hostname });
     new cdk.CfnOutput(this, "Port", { value: cdk.Token.asString(db.clusterEndpoint.port) });
     new cdk.CfnOutput(this, "SecretArn", { value: db.secret?.secretArn ?? "n/a" });

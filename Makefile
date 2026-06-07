@@ -45,6 +45,9 @@ deploy-postgres: whoami ## deploy the full-mode Aurora store (opens 5432 to YOUR
 destroy-postgres: ## tear the Aurora store back down (~$$0 idle while paused anyway)
 	cd infra && bunx cdk destroy AgentOsPostgres --force
 
+aurora-bootstrap: ## create the rds_iam DB user (agentos_app) from tracked SQL — run once after deploy-postgres
+	cd services/inference-gateway/litellm && uv run python ../../../deploy/aurora/bootstrap.py
+
 postgres-url: ## print the SPEND_DATABASE_URL for the deployed Aurora store
 	@SECRET=$$(aws cloudformation describe-stacks --stack-name AgentOsPostgres --query "Stacks[0].Outputs[?OutputKey=='SecretArn'].OutputValue" --output text); \
 	 HOST=$$(aws cloudformation describe-stacks --stack-name AgentOsPostgres --query "Stacks[0].Outputs[?OutputKey=='Endpoint'].OutputValue" --output text); \
@@ -88,4 +91,4 @@ sandbox-egress-test: ## prove egress lockdown slice 1 — the wall (think-works 
 sandbox-egress-proxy-test: ## prove egress lockdown slice 2 — named-domain allowlist via the proxy
 	bash deploy/local/sandbox-egress-proxy-test.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test

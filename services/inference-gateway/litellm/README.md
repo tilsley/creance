@@ -40,7 +40,8 @@ does:
 | Env | Purpose |
 |---|---|
 | `SPEND_STORE` | `dynamo` (default — cheap mode, ~$0 idle) or `postgres` (full mode) |
-| `SPEND_DATABASE_URL` | Postgres connection for `SPEND_STORE=postgres`. **Not `DATABASE_URL`** — LiteLLM claims that for its own Prisma DB and mutates it (appends `connection_limit`, which psycopg rejects). |
+| `SPEND_DATABASE_URL` | Postgres connection (password auth) for `SPEND_STORE=postgres`. **Not `DATABASE_URL`** — LiteLLM claims that for its own Prisma DB and mutates it (appends `connection_limit`, which psycopg rejects). |
+| `SPEND_DB_IAM=true` | **keyless** Aurora IAM auth instead of a URL/password: mint a fresh 15-min RDS token per connection. Needs `SPEND_DB_HOST` (+ optional `SPEND_DB_USER=agentos_app` / `SPEND_DB_NAME=agentos`); the caller's IAM identity needs `rds-db:connect` (laptop: admin; EKS: pod role via IRSA). |
 | `SPEND_TABLE` / `SPEND_TABLE_ENDPOINT` | the DynamoDB table (dynamo mode) |
 
 Postgres reserve = one conditional upsert (`spent+delta ≤ ceiling … RETURNING`) — atomic **and**
@@ -139,11 +140,12 @@ export MODEL_ID=claude-haiku             # the alias LiteLLM routes (and the cla
 
 ## Next milestones (not in this slice)
 
-1. **Aurora IAM auth** — the cluster is **provisioned & validated** (`AgentOsPostgres` CDK
-   stack: Serverless v2 PostgreSQL, Min 0 ACU / auto-pause 300 s ⇒ ~$0 idle; `make
-   deploy-postgres` / `postgres-url` / `destroy-postgres`). Remaining: the **IAM-auth
-   token-refresh** reconnect hook so the hook connects keyless instead of via the
-   Secrets Manager password.
+1. ✅ **Aurora + IAM auth — done & validated.** `AgentOsPostgres` CDK stack (Serverless v2
+   PostgreSQL, Min 0 ACU / auto-pause 300 s ⇒ ~$0 idle) + `rds-db:connect` policy artifact;
+   the `agentos_app` rds_iam user via a tracked migration (`deploy/aurora/iam-bootstrap.sql`,
+   `make aurora-bootstrap`); `SPEND_DB_IAM=true` connects keyless (fresh token per connection),
+   reserve/settle proven live against the cluster. `make deploy-postgres` / `aurora-bootstrap`
+   / `postgres-url` / `destroy-postgres`.
 2. **Valkey/Redis shared grant cache** — only at multi-replica (in-process TTL cache covers
    single-replica); a standalone in-cluster pod, ephemeral by design (the losable tier).
 3. **Mesh-trust authn (ADR-0026)** — in-cluster, Istio mTLS/SPIFFE forwarded identity.
