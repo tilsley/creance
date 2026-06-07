@@ -1,0 +1,78 @@
+# agent-os platform apps. Install:
+#   helm install agent-os charts/agent-os -n agentos --create-namespace
+# Local (k3s) defaults below; for EKS override image.pullPolicy/repository and the
+# runtime.env adapters (e.g. real stores), and drop the local aws-creds secret (IRSA).
+
+image:
+  repository: agent-runtime
+  tag: dev
+  pullPolicy: Never # local k3s docker image; EKS: IfNotPresent/Always + a registry repo
+
+runtime:
+  enabled: true
+  replicas: 1
+  # adapter selection — the ports/adapters seam as config. Override per environment.
+  # (AGENTS_NAMESPACE is injected as the release namespace by the template.)
+  env:
+    REGION: eu-west-2
+    INFERENCE_PROVIDER: bedrock
+    MODEL_ID: amazon.nova-lite-v1:0
+    SANDBOX_PROVIDER: agentcore
+    RUN_STORE: dynamodb
+    RUNS_TABLE: agent-os-runs
+    SPEND_STORE: dynamodb
+    SPEND_TABLE: agent-os-budgets
+    TELEMETRY: console
+    GATE: local
+    GATE_BUDGET_SOURCE: kube
+    GATE_BUDGET_USD: "1.00"
+    TENANT_ASSUME_ROLE: kube
+    AUTHZ: opa
+    OPA_URL: http://localhost:8181/v1/data/agentos/authz
+    GUARDRAIL_ID: svs60qf8fqff
+    AGENT_REGISTRY: kube
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  # local-only credential secrets (envFrom). awsCreds: the StateStack role creds (EKS uses IRSA,
+  # set false); gateTokens: GATE_TOKENS=token:tenant:subject,… (optional, created out of band).
+  awsCredsSecret: aws-creds
+  gateTokensSecret: gate-tokens
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilization: 70
+
+# OPA policy sidecar (ADR-0015) — allow/deny over loopback.
+opa:
+  enabled: true
+  image: openpolicyagent/opa:latest
+
+# the agent control-plane reconciler (ADR-0012) — same image, different entrypoint.
+controller:
+  enabled: true
+  reconcileIntervalMs: "10000"
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+# the per-tenant compute bounds (pairs with the per-tenant $ budget).
+quota:
+  enabled: true
+  requestsCpu: "2"
+  requestsMemory: 2Gi
+  limitsCpu: "4"
+  limitsMemory: 4Gi
+  pods: "10"
+
+# the gate's k8s-side ingress containment (default-deny except :3000 in-namespace).
+networkPolicy:
+  enabled: true
+
+# install the InferenceClaim VAP + sample Agent CRs (math-helper / haiku-writer).
+claimPolicy:
+  enabled: true
+sampleAgents:
+  enabled: true

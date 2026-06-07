@@ -1,7 +1,6 @@
-# Controller-free cross-object validation (ADR-0021 / slice 6): an InferenceClaim must fit its
-# namespace's InferenceAllowance. The API server evaluates this at apply time (VAP, GA) using the
-# allowance as a CEL `params` object — no reconciler. parameterNotFoundAction: Deny ⇒ a namespace
-# with no allowance can't create claims at all (admin must grant an allowance first).
+{{- if .Values.claimPolicy.enabled }}
+# Controller-free cross-object validation (ADR-0021): an InferenceClaim must fit its
+# namespace's InferenceAllowance. The API server enforces it at apply time (VAP).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -31,5 +30,6 @@ spec:
   policyName: inferenceclaim-within-allowance
   validationActions: ["Deny"]
   paramRef:
-    name: default # the allowance named "default" in the claim's OWN namespace (no namespace set)
+    name: default
     parameterNotFoundAction: Deny
+{{- end }}

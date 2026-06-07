@@ -1,0 +1,43 @@
+# Agent CRD (ADR-0012) — the agent control plane's object model. Helm installs CRDs
+# from crds/ before templates (and does not template or auto-upgrade them).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agents.agent-os.io
+spec:
+  group: agent-os.io
+  scope: Namespaced
+  names:
+    kind: Agent
+    plural: agents
+    singular: agent
+    shortNames: [ag]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                tenant: { type: string }
+                model: { type: string }
+                systemPrompt: { type: string }
+                tools: { type: array, items: { type: string } }
+                maxSteps: { type: integer }
+                kind: { type: string, enum: [loop, sandboxed] }
+                command: { type: string }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                message: { type: string }
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - { name: Tenant, type: string, jsonPath: .spec.tenant }
+        - { name: Model, type: string, jsonPath: .spec.model }
+        - { name: Phase, type: string, jsonPath: .status.phase }

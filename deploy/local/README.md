@@ -8,12 +8,13 @@
 > for the egress harness, `charts/agent-os` for the apps — not ad-hoc `kubectl apply`.
 > (Crossplane and LiteLLM are deployed separately, their own thing.)
 
-Runs `agent-runtime` in-cluster on **colima + k3s** (lean, 16 GB-friendly). Two
-manifests, the same you'd apply on EKS (only the local-image + creds bits differ):
-- [`namespace.yaml`](namespace.yaml) — the **per-tenant isolation** set: Namespace,
-  ResourceQuota, LimitRange, NetworkPolicy (the k8s side of `gate`).
-- [`agent-runtime.yaml`](agent-runtime.yaml) — the **workload**: ServiceAccount,
-  ConfigMap (adapter selection), Deployment (hardened), Service, HPA.
+Runs `agent-runtime` in-cluster on **colima + k3s** (lean, 16 GB-friendly), deployed by the
+**[`charts/agent-os`](../../charts/agent-os)** Helm chart (same chart on EKS — only `values`
+differ: image pull policy, adapter env, IRSA-vs-secret creds). The chart bundles the
+**isolation set** (namespace ResourceQuota/LimitRange/NetworkPolicy — the k8s side of `gate`),
+the **workload** (agent-runtime SA/ConfigMap/Deployment+OPA sidecar/Service/HPA), the
+**agent-controller**, the control-plane **CRDs** (Agent, InferenceClaim/Allowance) and the
+onboarding **VAP**.
 
 ## 1. Cluster (colima ships k3s — no k3d needed)
 ```bash
@@ -32,10 +33,7 @@ docker build -t agent-runtime:dev -f services/agent-runtime/Dockerfile .
 > On a containerd-runtime cluster (e.g. EKS, or `colima --runtime containerd`)
 > you'd push to a registry / `ctr images import` instead.
 
-## 3. Namespace + AWS creds (local only)
-```bash
-kubectl apply -f deploy/local/namespace.yaml
-```
+## 3. AWS creds (local only) — `make k8s-creds`
 The pod calls Bedrock (+ DynamoDB if `RUN_STORE=dynamodb`), so give it creds via a
 Secret. On EKS this is **Pod Identity** binding the ServiceAccount to the
 `agent-os-runtime` IAM role — no secret (ADR-0001/0006). That keyless binding is the
@@ -61,8 +59,7 @@ kubectl -n agent-os create secret generic gate-tokens \
 
 ## 4. Deploy + test
 ```bash
-kubectl apply -f deploy/local/agent-runtime.yaml
-kubectl -n agent-os rollout status deploy/agent-runtime
+make k8s-deploy   # helm upgrade --install agent-os charts/agent-os -n agent-os --create-namespace
 kubectl -n agent-os port-forward svc/agent-runtime 3000:80 &
 
 curl localhost:3000/healthz
@@ -72,8 +69,8 @@ curl -s localhost:3000/runs/$ID            # poll until terminal
 ```
 
 ## Notes
-- **Object set (what you're learning):** `namespace.yaml` = isolation
-  (Namespace + ResourceQuota + LimitRange + NetworkPolicy); `agent-runtime.yaml` =
+- **Object set (what you're learning):** the chart's `templates/namespace-primitives.yaml` =
+  isolation (ResourceQuota + LimitRange + NetworkPolicy); `templates/agent-runtime.yaml` =
   workload (ServiceAccount + ConfigMap + Deployment + Service + HPA). Maps to the
   "secured by" + "scales via" columns of [resource-model.md](../../docs/resource-model.md).
 - **Caveats on this cluster:** the **NetworkPolicy** isn't enforced by k3s' default

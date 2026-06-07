@@ -15,7 +15,7 @@ controller (reconciler, writes status) are distinct components.
   command — no separate image to maintain.
 
 ```bash
-kubectl apply -f deploy/local/agent-controller.yaml
+make k8s-deploy                          # deployed by the charts/agent-os Helm chart (controller.enabled)
 kubectl -n agent-os get agents          # PHASE column fills in (Ready / Invalid)
 kubectl -n agent-os logs deploy/agent-controller
 ```

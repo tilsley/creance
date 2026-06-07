@@ -1,0 +1,45 @@
+# The per-tenant isolation set — the k8s side of `gate`. Namespaced resources land in
+# the release namespace (helm -n). The Namespace itself: `helm install --create-namespace`.
+{{- if .Values.quota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+spec:
+  hard:
+    requests.cpu: {{ .Values.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.quota.requestsMemory | quote }}
+    limits.cpu: {{ .Values.quota.limitsCpu | quote }}
+    limits.memory: {{ .Values.quota.limitsMemory | quote }}
+    pods: {{ .Values.quota.pods | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+spec:
+  limits:
+    - type: Container
+      default: { cpu: 250m, memory: 256Mi }
+      defaultRequest: { cpu: 100m, memory: 128Mi }
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# Ingress containment: default-deny except :3000 from within the namespace. (Egress is
+# left open here — fine-grained egress is CNI-specific; see deploy/local/sandbox-egress.md.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-runtime
+spec:
+  podSelector:
+    matchLabels: { app: agent-runtime }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - { port: 3000, protocol: TCP }
+  egress:
+    - {}
+{{- end }}

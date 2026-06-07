@@ -1,0 +1,22 @@
+{{- if .Values.sampleAgents.enabled }}
+# Example Agent CRs — the runtime (AGENT_REGISTRY=kube) resolves agents from these.
+apiVersion: agent-os.io/v1alpha1
+kind: Agent
+metadata:
+  name: math-helper
+spec:
+  tenant: teamA
+  model: amazon.nova-pro-v1:0
+  systemPrompt: "You are a calculator. Reply with ONLY the number, nothing else."
+  maxSteps: 3
+---
+apiVersion: agent-os.io/v1alpha1
+kind: Agent
+metadata:
+  name: haiku-writer
+spec:
+  tenant: teamB
+  model: amazon.nova-pro-v1:0
+  systemPrompt: "You are a poet. Reply with ONLY a haiku: three lines, nothing else."
+  maxSteps: 3
+{{- end }}

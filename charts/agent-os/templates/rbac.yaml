@@ -1,0 +1,47 @@
+# RBAC for the agent-runtime SA: read cluster-scoped TenantInferenceProfile claims
+# (budget source) + read namespaced Agent CRs (agent registry).
+{{- if .Values.runtime.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-budget-reader
+rules:
+  - apiGroups: ["platform.agent-os.io"]
+    resources: ["tenantinferenceprofiles"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-budget-reader
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-budget-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-reader
+rules:
+  - apiGroups: ["agent-os.io"]
+    resources: ["agents"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-runtime-reads-agents
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: agent-reader
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

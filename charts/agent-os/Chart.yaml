@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-os
+description: agent-os platform apps — the agent-runtime (+ OPA sidecar), the agent-controller, the gate's namespace primitives (quota/limits/NetworkPolicy), and the control-plane CRDs (Agent, InferenceClaim/Allowance) + the onboarding VAP. The maintained deploy for OUR apps (Crossplane + LiteLLM are their own thing).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

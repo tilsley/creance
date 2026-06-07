@@ -1,19 +1,12 @@
-# InferenceClaim + InferenceAllowance (ADR-0021 / slice 6) — "I want model X with budget Y",
-# as policy not provisioning, and self-service WITHIN admin-set bounds.
-#
-# - InferenceClaim is NAMESPACED: tenant = the claim's namespace, serviceAccount = an SA *in
-#   that namespace*. So a tenant (RBAC'd to its namespace) can only grant its own identities —
-#   no escalation. The gateway reads it via KubeClaimSource (TENANT_CLAIM_SCOPE=Namespaced).
-# - InferenceAllowance is the admin-set ceiling per namespace (maxMonthlyUsd + allowedModels).
-# - A ValidatingAdmissionPolicy (deploy/local/claim-policy.yaml) validates each claim against
-#   its namespace's allowance at apply time — controller-free cross-object validation.
+# InferenceClaim + InferenceAllowance CRDs (ADR-0021) — onboarding as policy, self-service
+# within admin-set bounds. Namespaced: tenant = the claim's namespace.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: inferenceclaims.agent-os.io
 spec:
   group: agent-os.io
-  scope: Namespaced # tenant = namespace; a tenant manages claims only in its own namespace
+  scope: Namespaced
   names:
     kind: InferenceClaim
     plural: inferenceclaims
@@ -32,18 +25,13 @@ spec:
               type: object
               required: [serviceAccount, monthlyBudgetUsd]
               properties:
-                # the in-namespace ServiceAccount name authorized (NOT the full system:... id —
-                # the namespace supplies that, so a tenant can't name another namespace's SA)
                 serviceAccount: { type: string, minLength: 1, pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
-                model: { type: string } # catalog alias; enforced against the allowance by the VAP
-                # numeric strings (the AWS Budget MR also took strings); enforced by the API server
+                model: { type: string }
                 monthlyBudgetUsd: { type: string, pattern: "^[0-9]+(\\.[0-9]+)?$" }
                 sessionBudgetUsd: { type: string, pattern: "^[0-9]+(\\.[0-9]+)?$" }
-              # CEL cross-field rule — a session cap can't exceed the monthly cap. Rejected at apply.
               x-kubernetes-validations:
                 - rule: "!has(self.sessionBudgetUsd) || double(self.sessionBudgetUsd) <= double(self.monthlyBudgetUsd)"
                   message: "sessionBudgetUsd must not exceed monthlyBudgetUsd"
-            # the claims-controller writes status.conditions[Ready] (aggregate quota; slice 7)
             status:
               type: object
               properties:
@@ -66,8 +54,6 @@ spec:
         - { name: Budget, type: string, jsonPath: .spec.monthlyBudgetUsd }
         - { name: Ready, type: string, jsonPath: '.status.conditions[?(@.type=="Ready")].status' }
 ---
-# The admin-set ceiling for a namespace — the bound the tenant self-services within. Tenants
-# get NO write RBAC on this; the VAP reads it (as a param) to validate each claim.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:

@@ -68,15 +68,15 @@ dep-migrator: ## run the dep-migrator agent (local sandbox + Bedrock)
 image: ## build the agent-runtime image for k3s
 	docker build -t agent-runtime:dev -f services/agent-runtime/Dockerfile .
 
-k8s-creds: ## create the aws-creds secret from this profile (local only; short-lived for SSO/role)
-	kubectl apply -f deploy/local/namespace.yaml
+k8s-creds: ## create the aws-creds secret in agent-os from this profile (local only; short-lived for SSO/role)
+	kubectl create namespace agent-os --dry-run=client -o yaml | kubectl apply -f -
 	@eval "$$(aws configure export-credentials --format env-no-export)"; \
 	  args="--from-literal=AWS_ACCESS_KEY_ID=$$AWS_ACCESS_KEY_ID --from-literal=AWS_SECRET_ACCESS_KEY=$$AWS_SECRET_ACCESS_KEY"; \
 	  [ -n "$$AWS_SESSION_TOKEN" ] && args="$$args --from-literal=AWS_SESSION_TOKEN=$$AWS_SESSION_TOKEN"; \
 	  kubectl -n agent-os create secret generic aws-creds $$args --dry-run=client -o yaml | kubectl apply -f -
 
-k8s-deploy: ## apply the k8s manifests (namespace + workload)
-	kubectl apply -f deploy/local/namespace.yaml -f deploy/local/agent-runtime.yaml
+k8s-deploy: ## deploy the platform apps via Helm (charts/agent-os) into agent-os
+	helm upgrade --install agent-os charts/agent-os -n agent-os --create-namespace
 	kubectl -n agent-os rollout status deploy/agent-runtime
 
 k8s-logs: ## tail the runtime logs

@@ -1,0 +1,159 @@
+{{- if .Values.runtime.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runtime
+---
+# adapter selection (the ports/adapters seam as config). AGENTS_NAMESPACE is the release ns.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-runtime-config
+data:
+{{- range $k, $v := .Values.runtime.env }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+  AGENTS_NAMESPACE: {{ .Release.Namespace | quote }}
+{{- if .Values.opa.enabled }}
+---
+# OPA policy for the sidecar (ADR-0015). Source of truth: deploy/local/opa/authz.rego.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policy
+data:
+  authz.rego: |
+    package agentos.authz
+
+    import rego.v1
+
+    default allow := false
+
+    allow if {
+      input.action == "run:create"
+      input.principal.tenant != "default"
+      input.principal.subject != "anonymous"
+      not sensitive_agent
+    }
+
+    allow if {
+      input.action == "run:create"
+      sensitive_agent
+      "admins" in input.principal.groups
+    }
+
+    sensitive_agent if input.resource == "admin-bot"
+
+    reason := "permitted" if allow
+
+    reason := "unauthenticated principal" if {
+      not allow
+      input.principal.tenant == "default"
+    }
+
+    reason := sprintf("agent %q requires the 'admins' group", [input.resource]) if {
+      not allow
+      sensitive_agent
+      input.principal.tenant != "default"
+    }
+
+    reason := sprintf("not permitted: %s / %s", [input.action, input.resource]) if {
+      not allow
+      not sensitive_agent
+      input.principal.tenant != "default"
+    }
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-runtime
+spec:
+  replicas: {{ .Values.runtime.replicas }}
+  selector:
+    matchLabels: { app: agent-runtime }
+  template:
+    metadata:
+      labels: { app: agent-runtime }
+    spec:
+      serviceAccountName: agent-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent-runtime
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: agent-runtime-config }
+          {{- if .Values.runtime.awsCredsSecret }}
+            - secretRef: { name: {{ .Values.runtime.awsCredsSecret | quote }} }
+          {{- end }}
+          {{- if .Values.runtime.gateTokensSecret }}
+            - secretRef: { name: {{ .Values.runtime.gateTokensSecret | quote }}, optional: true }
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 5
+          resources: {{ .Values.runtime.resources | toYaml | nindent 12 }}
+      {{- if .Values.opa.enabled }}
+        - name: opa
+          image: {{ .Values.opa.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: ["run", "--server", "--addr=:8181", "--log-level=error", "/policy/authz.rego"]
+          ports:
+            - containerPort: 8181
+          volumeMounts:
+            - { name: opa-policy, mountPath: /policy, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /health, port: 8181 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 10m, memory: 24Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+      volumes:
+        - name: opa-policy
+          configMap: { name: opa-policy }
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-runtime
+spec:
+  selector: { app: agent-runtime }
+  ports:
+    - { port: 80, targetPort: 3000 }
+{{- if .Values.runtime.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-runtime
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-runtime
+  minReplicas: {{ .Values.runtime.hpa.minReplicas }}
+  maxReplicas: {{ .Values.runtime.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.runtime.hpa.targetCPUUtilization }} }
+{{- end }}
+{{- end }}

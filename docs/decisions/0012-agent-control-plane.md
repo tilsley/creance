@@ -23,7 +23,7 @@ Build both halves, behind ports + as k8s objects, same discipline as the rest.
   an agent is a declarative definition (`name, tenant, model, systemPrompt, tools,
   maxSteps`). `InMemoryAgentRegistry` (dev, seeded from `AGENTS_JSON`) →
   `KubeAgentRegistry` (reads **Agent custom resources**).
-- **`Agent` CRD** (`agent-os.io/v1alpha1`, [deploy/local/agents.yaml](../../deploy/local/agents.yaml)):
+- **`Agent` CRD** (`agent-os.io/v1alpha1`, [charts/agent-os/crds/agents.yaml](../../charts/agent-os/crds/agents.yaml)):
   agents are first-class k8s objects — `kubectl get agents`, RBAC, printer columns.
 - **`agent-registry` (catalog):** the runtime resolves `POST /runs {agent}` →
   `AgentRegistry.get` → applies the def (systemPrompt, maxSteps). Read-only path.
