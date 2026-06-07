@@ -94,4 +94,8 @@ sandbox-egress-proxy-test: ## prove egress lockdown slice 2 — named-domain all
 gate-conformance: ## assert the gate contract (R1+R2) holds identically on both gateways (ADR-0027)
 	bash deploy/local/gate-conformance.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test gate-conformance
+# --- test agents (exercise the platform end-to-end) ---
+spine-agent: ## run the spine test agent through the live gateway (small Bedrock spend)
+	bash examples/spine-agent/run.sh
+
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test gate-conformance spine-agent

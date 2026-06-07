@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/spine-agent-demo",
+  "private": true,
+  "type": "module",
+  "description": "spine-agent: the smallest real agent run end-to-end through the platform — runAgent → inference gateway (verified identity + budget) → Bedrock",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

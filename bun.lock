@@ -48,6 +48,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/spine-agent": {
+      "name": "@agent-os/spine-agent-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/ticket-bot": {
       "name": "@agent-os/ticket-bot-demo",
       "dependencies": {
@@ -145,6 +151,8 @@
     "@agent-os/mcp-gateway-demo": ["@agent-os/mcp-gateway-demo@workspace:examples/mcp-gateway"],
 
     "@agent-os/obo-token-vault-demo": ["@agent-os/obo-token-vault-demo@workspace:examples/obo-token-vault"],
+
+    "@agent-os/spine-agent-demo": ["@agent-os/spine-agent-demo@workspace:examples/spine-agent"],
 
     "@agent-os/ticket-bot-demo": ["@agent-os/ticket-bot-demo@workspace:examples/ticket-bot"],
 
