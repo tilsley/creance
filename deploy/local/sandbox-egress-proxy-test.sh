@@ -8,6 +8,8 @@ set -euo pipefail
 CTX=colima
 NS=agentos-sandbox
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# ephemeral by convention — torn down on exit (KEEP=1 to inspect)
+trap '[ -n "${KEEP:-}" ] || kubectl --context "$CTX" delete ns "$NS" --wait=false >/dev/null 2>&1' EXIT
 
 echo "▶ apply slice 1 (wall) + slice 2 (proxy)"
 kubectl --context "$CTX" apply -f "$ROOT/deploy/local/sandbox-egress.yaml" >/dev/null
@@ -42,4 +44,4 @@ kubectl --context "$CTX" -n "$NS" exec deploy/egress-proxy -- sh -c 'grep "CONNE
   || fail "expected a TCP_DENIED record for github.com"
 
 echo "▶ slice 2 PASS — named-domain allowlist enforced at the proxy; the wall stops the bypass"
-echo "  (teardown: kubectl --context $CTX delete ns $NS)"
+echo "  (namespace $NS torn down on exit; re-run with KEEP=1 to inspect it)"

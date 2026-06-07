@@ -1,5 +1,12 @@
 # deploy/local — run agent-os on a local cluster
 
+> **Namespace convention (read this first).** Local namespaces had sprawled (three
+> `agentos*` namespaces) because each test script picked its own and none tore down.
+> The rule now: a persistent dev deploy lives in **`agentos`**; every *test* script owns an
+> **ephemeral** namespace it tears down on exit (`trap`), with `KEEP=1` to leave it for
+> inspection. So `make sandbox-egress-test` / `sandbox-egress-proxy-test` no longer leave
+> anything running.
+
 Runs `agent-runtime` in-cluster on **colima + k3s** (lean, 16 GB-friendly). Two
 manifests, the same you'd apply on EKS (only the local-image + creds bits differ):
 - [`namespace.yaml`](namespace.yaml) — the **per-tenant isolation** set: Namespace,

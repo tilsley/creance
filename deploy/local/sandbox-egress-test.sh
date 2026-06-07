@@ -7,6 +7,9 @@ set -euo pipefail
 CTX=colima
 NS=agentos-sandbox
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# convention: local test namespaces are EPHEMERAL — torn down on exit so they don't sprawl.
+# Set KEEP=1 to leave the namespace up for inspection.
+trap '[ -n "${KEEP:-}" ] || kubectl --context "$CTX" delete ns "$NS" --wait=false >/dev/null 2>&1' EXIT
 
 echo "▶ apply the wall + doors + gateway stand-in + sandbox pod"
 kubectl --context "$CTX" apply -f "$ROOT/deploy/local/sandbox-egress.yaml" >/dev/null
@@ -31,4 +34,4 @@ kubectl --context "$CTX" -n "$NS" exec sandbox -- nslookup example.com >/dev/nul
   && echo "  ✅ DNS resolves" || fail "DNS should resolve"
 
 echo "▶ slice 1 PASS — no anonymous egress: think-works / exfil-dies"
-echo "  (teardown: kubectl --context $CTX delete ns $NS)"
+echo "  (namespace $NS torn down on exit; re-run with KEEP=1 to inspect it)"
