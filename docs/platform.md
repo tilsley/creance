@@ -358,6 +358,13 @@ non-listed (`github.com`) get a recorded `TCP_DENIED/403`, a direct bypass dies 
 The `do` containment control ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md));
 `make sandbox-egress-test` / `sandbox-egress-proxy-test`.
 
+**Gate conformance — both gateways agree (ADR-0027):** a suite (`make gate-conformance`) asserts
+the load-bearing contract — R1 (no/bad credential → 401) + R2 (no `max_tokens` → 400, worst-case
+> budget → 402) — holds *identically* on the Bun bespoke gateway (cheap mode) and the LiteLLM
+OpenAI-wire gateway (full mode), each in its own dialect. 4/4 identical; the one profile
+difference (un-claimed identity → cheap-mode flat-budget vs full-mode default-deny) is reported,
+not failed — "same contract, only richness differs."
+
 **Research-as-a-tool — built (Model A, the first customer):** `webResearchTools` (`fetch_url`
 + pluggable `web_search`) — the trusted loop calls it *outside* the zero-egress sandbox and
 guards the result as untrusted ingress; the tool enforces SSRF safety (no private/metadata

@@ -91,4 +91,7 @@ sandbox-egress-test: ## prove egress lockdown slice 1 — the wall (think-works 
 sandbox-egress-proxy-test: ## prove egress lockdown slice 2 — named-domain allowlist via the proxy
 	bash deploy/local/sandbox-egress-proxy-test.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test
+gate-conformance: ## assert the gate contract (R1+R2) holds identically on both gateways (ADR-0027)
+	bash deploy/local/gate-conformance.sh
+
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-egress-test sandbox-egress-proxy-test gate-conformance
