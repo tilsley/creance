@@ -41,5 +41,13 @@ kubectl -n agentos-gw logs spine-agent
 
 The agent presents an identity it never had to *verify*; the gateway does all the auth — and the
 agent's own code (and process) carries none of it. Without a mesh, the gateway self-verifies via
-JWKS (cheap mode); with Istio/Linkerd it'd trust a mesh-forwarded identity instead (full mode,
-`MeshTrustAuthenticator`) — same `Authenticator` port, no agent/gateway change.
+JWKS (cheap mode); with Istio/Linkerd it'd trust a mesh-forwarded identity instead (full mode).
+
+### Full mode — Linkerd, the agent carries NO token (`k8s-pod-mesh.yaml`)
+
+Validated locally: with `agentos-gw` meshed and the gateway in `MESH_IDENTITY_HEADER=l5d-client-id`
+mode, `k8s-pod-mesh.yaml` runs the agent with **no token and no projected-token volume** — a plain
+call. Linkerd mTLS-authenticates it; the gateway maps `l5d-client-id` → the same tenant the JWKS
+path used → `status=completed`, output `Paris.`. The agent process is fully identity-unaware. Setup
++ gotchas: [`deploy/local/linkerd.md`](../../deploy/local/linkerd.md). Same `Authenticator` port — no
+agent or gateway *code* change, just env (`JWT_JWKS_URL` ↔ `MESH_IDENTITY_HEADER`).

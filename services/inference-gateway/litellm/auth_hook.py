@@ -25,6 +25,7 @@ Register:  general_settings: { custom_auth: auth_hook.user_api_key_auth }
 """
 import json
 import os
+import re
 import time
 
 import jwt
@@ -125,23 +126,39 @@ def _verify(token: str) -> dict:
     return jwt.decode(token, secret, algorithms=["HS256"], audience=AUDIENCE, options=opts)
 
 
+def _mesh_tenant(request, header: str) -> str:
+    """Mesh-trust (full mode): the mesh (Linkerd) mTLS-authenticated the caller and stamped its
+    identity in `header` (it strips any client-set copy), so we trust it — no token to verify.
+    Linkerd's l5d-client-id is `<sa>.<ns>.serviceaccount.identity.linkerd.cluster.local`; map it
+    to the SA-token `sub` convention so the SAME claim works in both authn modes."""
+    val = (request.headers.get(header) or "").strip()
+    if not val:
+        raise HTTPException(status_code=401, detail=f"no mesh identity ({header}) — call did not arrive via the mesh")
+    m = re.match(r"^([^.]+)\.([^.]+)\.serviceaccount\.identity\.", val)
+    return f"system:serviceaccount:{m.group(2)}:{m.group(1)}" if m else val
+
+
 _claims = _build_claim_source()
 _cache = TTLCache(float(os.getenv("CLAIM_CACHE_TTL", "5")))
 
 
 async def user_api_key_auth(request, api_key: str) -> UserAPIKeyAuth:
-    token = (api_key or "").removeprefix("Bearer ").strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="missing bearer token")
-
-    # 1. authn — verify the token; the tenant is the signed identity, not the body's `user`
-    try:
-        claims = _verify(token)
-    except Exception as e:  # bad signature / expired / wrong aud
-        raise HTTPException(status_code=401, detail=f"invalid token: {e}")
-    tenant = claims.get(TENANT_CLAIM)
-    if not tenant:
-        raise HTTPException(status_code=401, detail=f"token missing '{TENANT_CLAIM}' claim")
+    # 1. authn — derive a non-forgeable tenant. MESH_IDENTITY_HEADER set ⇒ trust the mesh's
+    #    forwarded identity (full mode); else self-verify the caller's token (cheap mode).
+    mesh_header = os.getenv("MESH_IDENTITY_HEADER")
+    if mesh_header:
+        tenant = _mesh_tenant(request, mesh_header)
+    else:
+        token = (api_key or "").removeprefix("Bearer ").strip()
+        if not token:
+            raise HTTPException(status_code=401, detail="missing bearer token")
+        try:
+            claims = _verify(token)
+        except Exception as e:  # bad signature / expired / wrong aud
+            raise HTTPException(status_code=401, detail=f"invalid token: {e}")
+        tenant = claims.get(TENANT_CLAIM)
+        if not tenant:
+            raise HTTPException(status_code=401, detail=f"token missing '{TENANT_CLAIM}' claim")
 
     # 2. grant — TTL-cached claim lookup; default-deny when there's none
     now = time.time()

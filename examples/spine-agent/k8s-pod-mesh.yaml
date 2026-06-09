@@ -1,0 +1,30 @@
+# The spine agent in MESH mode (full-mode authn, Linkerd) — the agent process is fully
+# identity-unaware: NO token, NO AGENT_TOKEN_FILE, no projected-token volume. It makes a plain
+# HTTP call; Linkerd's mTLS authenticates it and the gateway's inbound proxy stamps
+# l5d-client-id, which the gateway maps to the tenant. Apply in the meshed agentos-gw namespace
+# (annotated linkerd.io/inject=enabled). Contrast with k8s-pod.yaml (cheap mode: projected token).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spine-agent-mesh
+  labels: { app: spine-agent }
+spec:
+  serviceAccountName: spine-agent # Linkerd identity derives from this SA
+  restartPolicy: Never
+  containers:
+    - name: agent
+      image: agent-runtime:dev
+      imagePullPolicy: Never
+      command: ["bun", "run", "examples/spine-agent/index.ts", "In one word, what is the capital of France?"]
+      env:
+        # NB: no AGENT_TOKEN / AGENT_TOKEN_FILE — the agent presents no credential at all.
+        - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-gw:spine-agent" } # hint only
+        - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway:4000" }
+        - { name: INFERENCE_GATEWAY_WIRE, value: "openai" }
+        - { name: MODEL_ID, value: "claude-haiku" }
+        - { name: SANDBOX_PROVIDER, value: "local" }
+        - { name: GATE, value: "noop" }
+        - { name: TELEMETRY, value: "console" }
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: 500m, memory: 512Mi }

@@ -30,6 +30,7 @@ does:
 | `JWT_JWKS_URL` | prod: verify RS256/ES256 against this JWKS (the cluster's OIDC keys) |
 | `JWT_HS256_SECRET` | dev/test: verify HS256 with a shared secret (no network) |
 | `JWT_TENANT_CLAIM` | which claim is the tenant (default `sub`) |
+| `MESH_IDENTITY_HEADER` | **full-mode authn**: trust a service-mesh-forwarded identity header (e.g. `l5d-client-id` for Linkerd) → tenant, *instead* of verifying a token. The agent then carries no credential at all (mTLS authenticates it). See [`deploy/local/linkerd.md`](../../../deploy/local/linkerd.md). |
 | `JWT_AUDIENCE` | if set, the token's `aud` must match |
 | `CLAIMS_STATIC` | dev/test claim map, e.g. `{"bob":{"model":"claude-haiku","monthlyBudgetUsd":50}}` |
 | `CLAIMS_TABLE` / `CLAIMS_TABLE_ENDPOINT` | prod: DynamoDB claims table (default `agent-os-claims`) |
