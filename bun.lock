@@ -23,6 +23,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/coding-agent": {
+      "name": "@agent-os/coding-agent-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/credential-broker": {
       "name": "@agent-os/credential-broker-demo",
       "dependencies": {
@@ -135,6 +141,8 @@
     "@agent-os/agent-runtime": ["@agent-os/agent-runtime@workspace:services/agent-runtime"],
 
     "@agent-os/claims-controller": ["@agent-os/claims-controller@workspace:services/claims-controller"],
+
+    "@agent-os/coding-agent-demo": ["@agent-os/coding-agent-demo@workspace:examples/coding-agent"],
 
     "@agent-os/core": ["@agent-os/core@workspace:packages/core"],
 

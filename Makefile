@@ -95,4 +95,7 @@ gate-conformance: ## assert the gate contract (R1+R2) holds identically on both 
 spine-agent: ## run the spine test agent through the live gateway (small Bedrock spend)
 	bash examples/spine-agent/run.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-test gate-conformance spine-agent
+coding-agent: ## run the coding agent end-to-end — think governed, code in the sandbox
+	bash examples/coding-agent/run.sh
+
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-test gate-conformance spine-agent coding-agent

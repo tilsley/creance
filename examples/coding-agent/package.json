@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/coding-agent-demo",
+  "private": true,
+  "type": "module",
+  "description": "coding-agent: a real multi-turn coding agent — think via the governed gateway, run code in the sandbox (the platform's first use case, end to end)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}
