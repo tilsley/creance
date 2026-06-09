@@ -14,12 +14,12 @@ env:
   AWS_REGION: eu-west-2
   SPEND_STORE: dynamo
   SPEND_TABLE: agent-os-budgets
-  # authn: real k8s SA tokens. PyJWKClient fetches the cluster JWKS over TLS — SSL_CERT_FILE
-  # points it at the cluster CA (auto-mounted in every pod) so the fetch verifies.
+  # authn: verify real k8s SA tokens against the cluster JWKS. The hook authenticates the
+  # JWKS fetch with the gateway pod's own SA token + trusts the cluster CA via a scoped
+  # ssl_context (NOT a global SSL_CERT_FILE — that would break TLS to Bedrock).
   JWT_JWKS_URL: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
   JWT_AUDIENCE: agent-os-gateway
   JWT_TENANT_CLAIM: sub
-  SSL_CERT_FILE: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
   # grant source: empty CLAIMS_STATIC ⇒ DynamoClaimSource (agent-os-claims). Override
   # CLAIMS_STATIC (json) for a dev/no-AWS run.
   CLAIMS_TABLE: agent-os-claims

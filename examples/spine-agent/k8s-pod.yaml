@@ -1,0 +1,44 @@
+# The spine agent AS A POD — the full k3s spine. It holds no model creds; it presents a
+# PROJECTED ServiceAccount token (audience=agent-os-gateway) which the in-cluster gateway
+# verifies against the cluster JWKS, derives the tenant from, and governs. Apply in the same
+# namespace as the litellm-gateway (so the short Service DNS resolves), e.g. agentos-gw.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spine-agent
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spine-agent
+  labels: { app: spine-agent }
+spec:
+  serviceAccountName: spine-agent
+  restartPolicy: Never
+  containers:
+    - name: agent
+      image: agent-runtime:dev # the whole-repo Bun image; runs the spine script
+      imagePullPolicy: Never
+      command: ["bun", "run", "examples/spine-agent/index.ts", "In one word, what is the capital of France?"]
+      env:
+        - { name: AGENT_TOKEN_FILE, value: /var/run/agent/token } # the projected SA token, read by the agent
+        - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-gw:spine-agent" } # hint; the token is authoritative
+        - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway:4000" } # in-cluster gateway Service
+        - { name: INFERENCE_GATEWAY_WIRE, value: "openai" }
+        - { name: MODEL_ID, value: "claude-haiku" }
+        - { name: SANDBOX_PROVIDER, value: "local" } # the loop owns a local session; no AWS in the agent
+        - { name: GATE, value: "noop" }
+        - { name: TELEMETRY, value: "console" }
+      volumeMounts:
+        - { name: gw-token, mountPath: /var/run/agent, readOnly: true }
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+  volumes:
+    - name: gw-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: agent-os-gateway # must match the gateway's JWT_AUDIENCE
+              expirationSeconds: 600
+              path: token

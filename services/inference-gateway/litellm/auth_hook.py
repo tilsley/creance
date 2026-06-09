@@ -93,6 +93,7 @@ class TTLCache:
 
 # --- the verifier ------------------------------------------------------------
 _SA_TOKEN = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+_SA_CA = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 
 def _verify(token: str) -> dict:
@@ -102,15 +103,23 @@ def _verify(token: str) -> dict:
         from jwt import PyJWKClient
 
         # The k8s JWKS endpoint (/openid/v1/jwks) usually needs auth (anonymous access is
-        # off); authenticate the fetch with the gateway pod's OWN SA token. SSL_CERT_FILE
-        # (the cluster CA) lets PyJWKClient verify the TLS. Override the token path with
-        # JWKS_TOKEN_FILE; for a public JWKS, neither is needed.
+        # off); authenticate the fetch with the gateway pod's OWN SA token (JWKS_TOKEN_FILE
+        # to override). Trust the cluster CA for THIS fetch via a scoped ssl_context — NOT
+        # the global SSL_CERT_FILE, which would clobber the public CA bundle and break TLS
+        # to Bedrock et al. (JWKS_CA_FILE to override; omit for a public JWKS).
         headers = {}
         tok_file = os.getenv("JWKS_TOKEN_FILE", _SA_TOKEN)
         if os.path.exists(tok_file):
             with open(tok_file) as f:
                 headers["Authorization"] = "Bearer " + f.read().strip()
-        key = PyJWKClient(jwks_url, headers=headers).get_signing_key_from_jwt(token).key
+        ctx = None
+        ca_file = os.getenv("JWKS_CA_FILE", _SA_CA)
+        if os.path.exists(ca_file):
+            import ssl
+
+            ctx = ssl.create_default_context()  # default public CAs +
+            ctx.load_verify_locations(cafile=ca_file)  # the cluster CA, for the JWKS host only
+        key = PyJWKClient(jwks_url, headers=headers, ssl_context=ctx).get_signing_key_from_jwt(token).key
         return jwt.decode(token, key, algorithms=["RS256", "ES256"], audience=AUDIENCE, options=opts)
     secret = os.environ["JWT_HS256_SECRET"]  # dev/test
     return jwt.decode(token, secret, algorithms=["HS256"], audience=AUDIENCE, options=opts)

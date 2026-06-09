@@ -14,10 +14,12 @@
  * LiteLLM gateway), AGENT_TOKEN (the verified identity), MODEL_ID (the claim's model),
  * SANDBOX_PROVIDER=local (the loop owns a session). Task = the CLI args.
  */
+import { readFileSync } from "node:fs";
 import { providersFromEnv, runAgent } from "@agent-os/core";
 
 const tenant = process.env.AGENT_TENANT ?? "bob";
-const token = process.env.AGENT_TOKEN;
+// AGENT_TOKEN (env, local) or AGENT_TOKEN_FILE (a mounted projected SA token, in-pod).
+const token = process.env.AGENT_TOKEN ?? (process.env.AGENT_TOKEN_FILE ? readFileSync(process.env.AGENT_TOKEN_FILE, "utf8").trim() : undefined);
 const model = process.env.MODEL_ID ?? "claude-haiku";
 const task = process.argv.slice(2).join(" ") || "In one word, what is the capital of France?";
 
