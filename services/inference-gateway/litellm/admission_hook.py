@@ -31,6 +31,7 @@ the next milestone — until then the tenant is asserted, not proven.
 Register in config.yaml:  litellm_settings: { callbacks: admission_hook.proxy_handler_instance }
 """
 import os
+import time
 from datetime import datetime, timezone
 
 import boto3
@@ -228,6 +229,14 @@ def _usage_field(usage, *names) -> int:
 
 # --- the hook ----------------------------------------------------------------
 class WorstCaseBudget(CustomLogger):
+    # Reservations awaiting settle, keyed by litellm_call_id. The reservation is parked
+    # here at admission and POPPED (once) by whichever completion path fires — success or
+    # failure, streaming or not. Pop-once makes double-settle/double-refund structurally
+    # impossible, and an in-process dict is safe because one request is handled start to
+    # finish by one process. Metadata threading (the previous design) is NOT viable for
+    # this: the /v1/messages streaming logging path rebuilds metadata and drops our key.
+    _PENDING_MAX_AGE_S = 3600.0
+
     def __init__(self):
         self.store = _build_spend_store()
         # Tenant cap source. POC: a flat env default (+ optional per-tenant override via
@@ -237,6 +246,19 @@ class WorstCaseBudget(CustomLogger):
         self.session_cap = (
             float(os.environ["SESSION_BUDGET_USD"]) if os.getenv("SESSION_BUDGET_USD") else None
         )
+        self.pending: dict = {}  # call_id -> (admission dict, stashed-at monotonic seconds)
+
+    def _stash(self, call_id: str, res: dict) -> None:
+        # Sweep abandoned entries (a stream that died without ANY completion hook). The
+        # reservation stays spent — over-charge is the safe failure direction; never a hole.
+        now = time.monotonic()
+        for k in [k for k, (_, t) in self.pending.items() if now - t > self._PENDING_MAX_AGE_S]:
+            self.pending.pop(k, None)
+        self.pending[call_id] = (res, now)
+
+    def _pop(self, call_id) -> dict | None:
+        entry = self.pending.pop(call_id, None) if call_id else None
+        return entry[0] if entry else None
 
     def _tenant(self, user_api_key_dict, data: dict) -> str:
         # M2: the verified identity (auth_hook set team_id) wins over anything in the body —
@@ -288,21 +310,20 @@ class WorstCaseBudget(CustomLogger):
                 self.store.add(tenant, period, -worst)  # refund tenant — nothing admitted
                 raise HTTPException(status_code=402, detail=f"session budget exceeded for '{session_id}'")
 
-        # carry the reservation to settle/refund (threaded via metadata)
-        data.setdefault("metadata", {})["_admission"] = {
-            "tenant": tenant, "period": period, "worst": worst, "session_id": session_id, "model": model,
-        }
+        # park the reservation for the completion hooks to settle/refund (pop-once).
+        # data["litellm_call_id"] is set by the proxy before pre-call hooks on every route
+        # (validated on 1.87, OpenAI + Anthropic wires). If it were ever absent the request
+        # would settle at worst-case — over-charge, the safe direction.
+        call_id = data.get("litellm_call_id")
+        if call_id:
+            self._stash(call_id, {
+                "tenant": tenant, "period": period, "worst": worst, "session_id": session_id, "model": model,
+            })
         return data
 
-    async def async_post_call_success_hook(self, data: dict, user_api_key_dict, response):
-        res = (data.get("metadata") or {}).get("_admission")
-        if not res:
-            return response
-        # response is a ModelResponse object (OpenAI path) OR a dict (Anthropic /v1/messages) —
-        # read usage from either, else actual=0 silently refunds the whole reserve (under-billing).
-        usage = getattr(response, "usage", None)
-        if usage is None and isinstance(response, dict):
-            usage = response.get("usage")
+    def _settle(self, res: dict, usage) -> None:
+        """Reconcile the worst-case reservation down to the actual cost (shared by the
+        non-streaming and streaming settle paths)."""
         usage = usage or {}
         # OpenAI usage is prompt/completion_tokens; Anthropic is input/output_tokens.
         prompt = _usage_field(usage, "prompt_tokens", "input_tokens")
@@ -312,16 +333,57 @@ class WorstCaseBudget(CustomLogger):
         self.store.add(res["tenant"], res["period"], delta)
         if self.session_cap is not None and res["session_id"]:
             self.store.add(res["tenant"], _session_key(res["session_id"]), delta)
-        return response
 
-    async def async_post_call_failure_hook(self, request_data: dict, original_exception, user_api_key_dict, traceback_str=None):
-        res = (request_data.get("metadata") or {}).get("_admission")
-        if not res:
-            return
-        # the call cost nothing — fully refund the reservation
+    def _refund(self, res: dict) -> None:
+        """The call cost nothing — fully refund the reservation."""
         self.store.add(res["tenant"], res["period"], -res["worst"])
         if self.session_cap is not None and res["session_id"]:
             self.store.add(res["tenant"], _session_key(res["session_id"]), -res["worst"])
+
+    # Completion hooks. The proxy fires a different one per (wire × stream × outcome) —
+    # and for non-streaming both the proxy hook AND the logging callback fire. Every path
+    # below settles/refunds via the SAME pop-once stash, so whichever fires first wins and
+    # the rest no-op. Validated on 1.87:
+    #   non-stream            → async_post_call_success_hook (proxy) + async_log_success_event
+    #   stream, OpenAI wire   → async_log_success_event (assembled response, usage included)
+    #   stream, /v1/messages  → async_log_success_event (rebuilt metadata — hence the stash)
+    #   pre-call failure      → async_post_call_failure_hook
+    #   mid-stream failure    → async_log_failure_event
+
+    async def async_post_call_success_hook(self, data: dict, user_api_key_dict, response):
+        res = self._pop(data.get("litellm_call_id"))
+        if not res:
+            return response
+        # response is a ModelResponse object (OpenAI path) OR a dict (Anthropic /v1/messages).
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        self._settle(res, usage)
+        return response
+
+    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+        # The streaming settle path: fires once per request after the last chunk, with the
+        # assembled response (usage included — no stream_options needed). Without this,
+        # every streamed call (OpenCode et al. stream by default) is billed at the full
+        # worst-case reserve.
+        res = self._pop(kwargs.get("litellm_call_id"))
+        if not res:
+            return
+        complete = kwargs.get("complete_streaming_response") or kwargs.get("async_complete_streaming_response") or response_obj
+        usage = getattr(complete, "usage", None)
+        if usage is None and isinstance(complete, dict):
+            usage = complete.get("usage")
+        self._settle(res, usage)
+
+    async def async_post_call_failure_hook(self, request_data: dict, original_exception, user_api_key_dict, traceback_str=None):
+        res = self._pop(request_data.get("litellm_call_id"))
+        if res:
+            self._refund(res)
+
+    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+        res = self._pop(kwargs.get("litellm_call_id"))
+        if res:
+            self._refund(res)
 
 
 proxy_handler_instance = WorstCaseBudget()
