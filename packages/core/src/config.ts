@@ -67,6 +67,9 @@ export interface Providers {
   /** Self-service write deps for `POST /claims` (tenant = identity, 1:1), when the dynamo write
    *  path + an identity verifier are configured. */
   claimWrite?: ClaimWrite;
+  /** Per-tenant assume-role AWS creds (ADR-0014), when TENANT_ASSUME_ROLE is on — lets the
+   *  gateway's passthrough wire (ADR-0028) scope its Bedrock client to the tenant's role. */
+  tenantCredentials?: TenantCredentials;
 }
 
 type Env = Record<string, string | undefined>;
@@ -291,5 +294,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite };
+  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite, tenantCredentials };
 }

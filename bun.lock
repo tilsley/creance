@@ -135,6 +135,7 @@
       "name": "@agent-os/inference-gateway",
       "dependencies": {
         "@agent-os/core": "workspace:*",
+        "@aws-sdk/client-bedrock-runtime": "^3.716.0",
       },
     },
   },
