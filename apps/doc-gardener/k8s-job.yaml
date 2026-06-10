@@ -1,0 +1,51 @@
+# doc-gardener as a one-shot k8s Job. Identity follows whichever authn mode the gateway
+# runs (the spine-agent pattern, both proven):
+#   cheap mode (JWKS)  — the projected SA token below is forwarded as the bearer
+#   full mode (mesh)   — Linkerd stamps l5d-client-id; the token is simply ignored
+# Either way the tenant resolves to system:serviceaccount:agentos-gw:doc-gardener, which
+# needs a claim in the gateway's claim source (CLAIMS_STATIC or DynamoDB).
+#
+#   kubectl -n agentos-gw apply -f apps/doc-gardener/k8s-job.yaml
+#   kubectl -n agentos-gw logs -f job/doc-gardener -c agent
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: doc-gardener
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: doc-gardener
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: doc-gardener }
+    spec:
+      serviceAccountName: doc-gardener
+      restartPolicy: Never
+      containers:
+        - name: agent
+          image: doc-gardener:dev
+          imagePullPolicy: Never # local k3s docker image; EKS: a registry repo
+          env:
+            - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway:4000" }
+            - { name: MODEL_ID, value: "claude-haiku" }
+            - { name: AGENT_TOKEN_FILE, value: "/var/run/agent/token" }
+            # demo mode: garden the baked-in drifted fixture. For a real repo set
+            # TARGET_REPO_URL instead (and open the egress door for the git host).
+            - { name: FIXTURE_DIR, value: "/fixture" }
+            - { name: HOME, value: "/tmp" }
+          volumeMounts:
+            - { name: gw-token, mountPath: /var/run/agent, readOnly: true }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+      volumes:
+        - name: gw-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: agent-os-gateway # must match the gateway's JWT_AUDIENCE
+                  expirationSeconds: 600
+                  path: token
