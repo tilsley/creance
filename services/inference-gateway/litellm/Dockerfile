@@ -10,8 +10,8 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-# the gateway: config + the admission (M1) and auth (M2) hooks
-COPY config.yaml admission_hook.py auth_hook.py ./
+# the gateway: config + the admission (M1), auth (M2), and wire-compat hooks
+COPY config.yaml admission_hook.py auth_hook.py compat_hook.py ./
 
 EXPOSE 4000
 ENTRYPOINT ["uv", "run", "litellm", "--config", "config.yaml", "--port", "4000", "--num_workers", "1"]

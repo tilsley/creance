@@ -14,8 +14,10 @@ model_list:
       # inference profile id (the raw model id is rejected as "invalid model identifier").
 
 litellm_settings:
-  callbacks: admission_hook.proxy_handler_instance  # our worst-case admission hook
-  drop_params: true                                 # tolerate provider-specific params
+  callbacks:
+    - admission_hook.proxy_handler_instance # our worst-case admission hook
+    - compat_hook.proxy_handler_instance    # strip client-SDK fields the upstream rejects
+  drop_params: true                         # tolerate provider-specific params
 
 general_settings:
   # M2 (ADR-0019/0026): verify the caller's token ourselves via the OSS custom_auth seam,

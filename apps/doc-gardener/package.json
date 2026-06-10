@@ -1,0 +1,14 @@
+{
+  "name": "@agent-os/doc-gardener",
+  "private": true,
+  "type": "module",
+  "description": "doc-gardener: docs-drift agent on the OpenCode SDK — think via the governed gateway (mesh identity + budget), edits confined to docs by a write allowlist",
+  "scripts": {
+    "start": "bun run index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "1.16.2",
+    "opencode-ai": "1.16.2"
+  }
+}
