@@ -28,6 +28,7 @@ import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
 import { KubeClaimSource } from "./adapters/kube-claim-source";
 import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
+import { StaticClaimSource } from "./adapters/static-claim-source";
 import type { ClaimSource, ClaimWrite } from "./claims";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
@@ -144,12 +145,16 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // resolver — built only when something needs it (kube budget source or oidc-sa authn).
   // CLAIM_SOURCE picks where grants are read from (ADR-0021): kube (CRD, default) or dynamo (a
   // table, for non-k8s tenants — next to the spend counter). Built only when something needs it.
-  const needClaims = env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa";
+  // CLAIM_SOURCE=static (CLAIMS_STATIC env map, no k8s/AWS) is an explicit opt-in, so it
+  // always builds — it exists precisely for runs where nothing else would need claims.
+  const needClaims = env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa" || env.CLAIM_SOURCE === "static";
   const claimSource = !needClaims
     ? undefined
     : env.CLAIM_SOURCE === "dynamo"
       ? new DynamoClaimSource(env.CLAIMS_TABLE ?? "agent-os-claims", { region, endpoint: env.CLAIMS_TABLE_ENDPOINT })
-      : new KubeClaimSource(claimCrd);
+      : env.CLAIM_SOURCE === "static"
+        ? new StaticClaimSource(env.CLAIMS_STATIC)
+        : new KubeClaimSource(claimCrd);
   const budgetSource = env.GATE_BUDGET_SOURCE === "kube" ? claimSource : undefined;
   // identity verifier (shared by oidc-sa authn + the POST /claims write): TokenReview the SA token.
   const reviewer = env.AUTHN === "oidc-sa" ? new KubeTokenReviewer(env.OIDC_SA_AUDIENCE) : undefined;
