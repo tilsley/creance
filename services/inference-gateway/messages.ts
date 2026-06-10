@@ -147,16 +147,22 @@ export async function handleMessages(req: Request, deps: MessagesDeps): Promise<
 
 const BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31";
 
+/** Anthropic-API-only fields Bedrock's schema rejects ("Extra inputs are not
+ *  permitted") — client-SDK vintage skew the choke point absorbs (the compat_hook
+ *  lesson). Dropping them degrades to defaults, not a broken call. Observed live:
+ *  `output_config` (effort control) + `context_management` (context editing) from
+ *  Claude Code ≥2.1. Per-tool skew (`eager_input_streaming`, @ai-sdk ≥1.16) below. */
+const SKEW_FIELDS = ["output_config", "context_management"] as const;
+
 /**
  * Native Anthropic body → the Bedrock-Anthropic body: `model`/`stream` move to the
  * call, `anthropic_version` is required, `metadata` is not in Bedrock's schema (its
- * user_id already became our session scope), and known client-SDK skew is scrubbed —
- * Bedrock 400s "Extra inputs are not permitted" on fields it doesn't know (the
- * compat_hook lesson: `eager_input_streaming` from @ai-sdk/anthropic ≥1.16).
+ * user_id already became our session scope), and known client-SDK skew is scrubbed.
  */
 export function toBedrockBody(body: Record<string, unknown>): Record<string, unknown> {
   const { model: _model, stream: _stream, metadata: _metadata, ...rest } = body;
   const out: Record<string, unknown> = { ...rest, anthropic_version: BEDROCK_ANTHROPIC_VERSION };
+  for (const f of SKEW_FIELDS) delete out[f];
   if (Array.isArray(out.tools)) {
     out.tools = (out.tools as Record<string, unknown>[]).map(({ eager_input_streaming: _e, ...tool }) => tool);
   }

@@ -194,6 +194,13 @@ test("toBedrockBody preserves unknown-but-valid Anthropic fields (passthrough, n
   expect(out).toEqual({ system: "s", thinking: { type: "enabled", budget_tokens: 1 }, max_tokens: 5, anthropic_version: "bedrock-2023-05-31" });
 });
 
+test("toBedrockBody scrubs Anthropic-API-only skew fields Bedrock rejects (Claude Code ≥2.1)", () => {
+  const out = toBedrockBody({ messages: [], max_tokens: 5, output_config: { effort: "high" }, context_management: { edits: [] } });
+  expect(out.output_config).toBeUndefined();
+  expect(out.context_management).toBeUndefined();
+  expect(out.max_tokens).toBe(5);
+});
+
 test("estimateAnthropicInputTokens covers system + messages + tools at ~4 chars/token", () => {
   const n = estimateAnthropicInputTokens({ system: "abcd", messages: [{ role: "user", content: "abcd" }], tools: [] });
   expect(n).toBeGreaterThan(2);
