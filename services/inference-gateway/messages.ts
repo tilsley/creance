@@ -30,13 +30,17 @@ export interface MessagesDeps {
   resolveModel: (model?: string) => string | undefined;
 }
 
-const bearer = (req: Request): string | undefined => req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+/** The Anthropic wire carries credentials two ways: `Authorization: Bearer` (Claude
+ *  Code's ANTHROPIC_AUTH_TOKEN) or the API's native `x-api-key` (Anthropic SDKs /
+ *  @ai-sdk/anthropic `apiKey` — what OpenCode sends). Accept both. */
+const credential = (req: Request): string | undefined =>
+  req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? req.headers.get("x-api-key") ?? undefined;
 
 export async function handleMessages(req: Request, deps: MessagesDeps): Promise<Response> {
   // 1. authenticate → principal (tenant is non-forgeable, derived here)
   let principal;
   try {
-    principal = await deps.authenticator.authenticate({ credential: bearer(req), headers: Object.fromEntries(req.headers) });
+    principal = await deps.authenticator.authenticate({ credential: credential(req), headers: Object.fromEntries(req.headers) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return Response.json({ error: "unauthorized" }, { status: 401 });
     throw e;

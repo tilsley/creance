@@ -53,6 +53,15 @@ const drain = async (res: Response) => {
 
 // --- gate contract (the conformance cases, on the new wire) -------------------
 
+test("accepts the credential via x-api-key (the Anthropic SDKs' native header)", async () => {
+  let sawCredential: string | undefined;
+  const auth = { name: "fake", async authenticate(ctx: { credential?: string }) { sawCredential = ctx.credential; return principal; } };
+  const req = new Request("http://gw/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": "key-123" }, body: JSON.stringify(body) });
+  const res = await handleMessages(req, deps({ authenticator: auth }));
+  expect(res.status).toBe(200);
+  expect(sawCredential).toBe("key-123");
+});
+
 test("401 when the caller fails authn", async () => {
   const res = await handleMessages(post(body), deps({
     authenticator: { name: "fake", async authenticate() { throw new UnauthorizedError(); } },
