@@ -1,0 +1,34 @@
+# The gateway's own identity + the two cluster reads it performs:
+#   - TokenReview (authn): submit callers' SA tokens to the API server for verification —
+#     the AUTHN=oidc-sa trust root (ADR-0019). Cluster-scoped by API design.
+#   - claim CRDs (grants): only used when CLAIM_SOURCE=kube; granted unconditionally
+#     because read-only on two CRDs is harmless and keeps the chart switch-by-env.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inference-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-tokenreview
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["platform.agent-os.io"]
+    resources: ["tenantinferenceprofiles", "inferenceclaims"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: inference-gateway
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-tokenreview
+  apiGroup: rbac.authorization.k8s.io

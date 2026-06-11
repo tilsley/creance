@@ -56,6 +56,13 @@ const server = Bun.serve({
     }
     return new Response("not found", { status: 404 });
   },
+  // fail closed with JSON, never Bun's HTML dev error page — the gateway is a wire
+  // endpoint for SDK clients, and the page would leak source context (metadata-only
+  // logging: message, not bodies)
+  error(e) {
+    console.error(`unhandled gateway error: ${(e as Error)?.message}`);
+    return Response.json({ error: "internal error" }, { status: 500 });
+  },
 });
 
 console.log(`inference-gateway listening on :${server.port}  (authn=${authenticator.name})`);

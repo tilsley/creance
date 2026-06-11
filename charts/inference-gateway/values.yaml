@@ -1,0 +1,47 @@
+# Bun inference gateway in k8s (ADR-0028). Configured purely by env (ports/adapters seam).
+# Default: verify real k8s ServiceAccount tokens via TokenReview (AUTHN=oidc-sa — the
+# cluster API server is the verifier), claims + spend in DynamoDB (cheap mode).
+#   make gw-image && helm install inference-gateway charts/inference-gateway -n agentos-gw --create-namespace
+# Validated end to end by: make gw-pod-test
+
+image:
+  repository: inference-gateway
+  tag: dev
+  pullPolicy: Never # local docker image (k3s docker runtime); EKS: a registry repo
+replicas: 1
+servicePort: 3100
+
+# pod-template annotations — e.g. `linkerd.io/inject: disabled` to opt out of a
+# namespace-level mesh injection (the no-AWS pod test does; mesh-trust is full mode).
+podAnnotations: {}
+
+env:
+  REGION: eu-west-2
+  AWS_REGION: eu-west-2
+  # Bun's fetch doesn't pick up the cluster CA that @kubernetes/client-node expects, so
+  # the in-pod TokenReview call fails SELF_SIGNED_CERT_IN_CHAIN without this (the Bun
+  # mirror of the litellm chart's scoped-ssl_context gotcha). The path is auto-mounted
+  # in every pod.
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  # authn: TokenReview the caller's projected SA token (signature/audience/expiry checked
+  # by the API server). Callers mint: kubectl create token <sa> --audience=agent-os-gateway
+  AUTHN: oidc-sa
+  OIDC_SA_AUDIENCE: agent-os-gateway
+  # grants (ADR-0021): DynamoDB claims table; tenant resolved from the verified SA's claim,
+  # never from the token. Override CLAIM_SOURCE=static + CLAIMS_STATIC (json) for no-AWS dev.
+  CLAIM_SOURCE: dynamo
+  CLAIMS_TABLE: agent-os-claims
+  # budget (R2): atomic worst-case reserve/settle against the durable monthly counter.
+  GATE: local
+  GATE_BUDGET_USD: "1" # fallback cap when a claim names no budget
+  SPEND_STORE: dynamodb
+  SPEND_TABLE: agent-os-budgets
+  # model routing: claim/client aliases -> Bedrock ids (the /v1/messages passthrough wire).
+  MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+  MODEL_ALIASES: '{"claude-haiku":"eu.anthropic.claude-haiku-4-5-20251001-v1:0"}'
+  # the gateway is the choke point, not a client of one — never set INFERENCE_GATEWAY_URL here.
+  INFERENCE_PROVIDER: bedrock
+  SANDBOX_PROVIDER: local # unused by the gateway; satisfies the shared providersFromEnv wiring
+
+# local creds for Bedrock + DynamoDB on the happy path (EKS: IRSA/Pod Identity, set to "").
+awsCredsSecret: aws-creds

@@ -22,6 +22,11 @@ test("unknown identity → undefined (the gateway then default-denies, ADR-0028)
   expect(await src.forServiceAccount("carol")).toBeUndefined();
 });
 
+test("tenantFor resolves the SaTenantResolver seam (oidc-sa authn)", async () => {
+  expect(await src.tenantFor("bob")).toBe("bob");
+  expect(await src.tenantFor("carol")).toBeUndefined();
+});
+
 test("no spec → empty source", async () => {
   expect(await new StaticClaimSource().forServiceAccount("bob")).toBeUndefined();
 });

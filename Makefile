@@ -85,6 +85,16 @@ k8s-logs: ## tail the runtime logs
 k8s-forward: ## port-forward the runtime to localhost:3000
 	kubectl -n agent-os port-forward svc/agent-runtime 3000:80
 
+gw-image: ## build the Bun inference-gateway image for k3s (ADR-0028)
+	docker build -t inference-gateway:dev -f services/inference-gateway/Dockerfile .
+
+gw-deploy: ## deploy the Bun gateway via Helm (charts/inference-gateway) into agentos-gw
+	helm upgrade --install inference-gateway charts/inference-gateway -n agentos-gw --create-namespace
+	kubectl -n agentos-gw rollout status deploy/inference-gateway
+
+gw-pod-test: ## prove the gateway pod end to end: real SA token → TokenReview → claim → 402 (no AWS, $0)
+	bash deploy/local/gateway-pod-test.sh
+
 sandbox-test: ## deploy charts/sandbox + prove egress lockdown (wall + allowlist), then tear down
 	bash deploy/local/sandbox-test.sh
 
@@ -98,4 +108,7 @@ spine-agent: ## run the spine test agent through the live gateway (small Bedrock
 coding-agent: ## run the coding agent end-to-end — think governed, code in the sandbox
 	bash examples/coding-agent/run.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward sandbox-test gate-conformance spine-agent coding-agent
+coding-agent-pod: ## Model A in k3s: coding agent as a pod BEHIND the egress wall (think governed, do contained)
+	bash deploy/local/sandbox-coding-agent.sh
+
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward gw-image gw-deploy gw-pod-test sandbox-test gate-conformance spine-agent coding-agent coding-agent-pod

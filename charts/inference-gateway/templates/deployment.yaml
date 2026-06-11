@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-gateway
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: inference-gateway }
+  template:
+    metadata:
+      labels: { app: inference-gateway }
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: inference-gateway
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 3100
+          env:
+{{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
+          {{- if .Values.awsCredsSecret }}
+          envFrom:
+            - secretRef: { name: {{ .Values.awsCredsSecret | quote }}, optional: true }
+          {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3100 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-gateway
+spec:
+  selector: { app: inference-gateway }
+  ports:
+    - { port: {{ .Values.servicePort }}, targetPort: 3100 }

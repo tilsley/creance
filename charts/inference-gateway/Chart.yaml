@@ -1,0 +1,6 @@
+apiVersion: v2
+name: inference-gateway
+description: The Bun inference gateway (ADR-0028) as a pod — the single choke point, both wires (/v1/generate bespoke + /v1/messages Anthropic), our own engine. Verifies real Kubernetes ServiceAccount tokens via TokenReview (the cluster API is the verifier — no JWKS plumbing), default-denies un-claimed identities, and enforces the worst-case budget reserve. Replaces charts/litellm-gateway on the deploy path.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

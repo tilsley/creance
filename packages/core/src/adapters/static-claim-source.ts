@@ -36,4 +36,10 @@ export class StaticClaimSource implements ClaimSource {
   async forTenant(tenant: string): Promise<InferenceClaim | undefined> {
     return this.claims.get(tenant);
   }
+
+  /** SaTenantResolver seam (oidc-sa authn binds verified SA → tenant) — same extra
+   *  method the kube/dynamo claim sources carry. */
+  async tenantFor(serviceAccount: string): Promise<string | undefined> {
+    return (await this.forServiceAccount(serviceAccount))?.tenant;
+  }
 }
