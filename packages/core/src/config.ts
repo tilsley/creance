@@ -22,6 +22,7 @@ import { LocalGate } from "./adapters/local-gate";
 import { NoopGate } from "./adapters/noop-gate";
 import { StaticTokenAuthenticator } from "./adapters/static-token-authenticator";
 import { MeshTrustAuthenticator } from "./adapters/mesh-trust-authenticator";
+import { MeshIdentityAuthenticator } from "./adapters/mesh-identity-authenticator";
 import { OidcServiceAccountAuthenticator, KubeTokenReviewer } from "./adapters/oidc-sa-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
@@ -147,7 +148,9 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // table, for non-k8s tenants — next to the spend counter). Built only when something needs it.
   // CLAIM_SOURCE=static (CLAIMS_STATIC env map, no k8s/AWS) is an explicit opt-in, so it
   // always builds — it exists precisely for runs where nothing else would need claims.
-  const needClaims = env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa" || env.CLAIM_SOURCE === "static";
+  // mesh-id authn resolves tenant from the claim binding too (ADR-0028), so it needs claims.
+  const needClaims =
+    env.GATE_BUDGET_SOURCE === "kube" || env.AUTHN === "oidc-sa" || env.AUTHN === "mesh-id" || env.CLAIM_SOURCE === "static";
   const claimSource = !needClaims
     ? undefined
     : env.CLAIM_SOURCE === "dynamo"
@@ -200,6 +203,11 @@ export function providersFromEnv(env: Env = process.env): Providers {
           tenantClaim: env.MESH_TENANT_CLAIM,
           groupsClaim: env.MESH_GROUPS_CLAIM,
         });
+      case "mesh-id":
+        // full-mode workload authn (ADR-0028): the mesh's inbound proxy stamps the
+        // caller's mTLS-verified identity (Linkerd l5d-client-id / Istio XFCC —
+        // MESH_IDENTITY_HEADER picks, unset = auto); tenant from the claim binding.
+        return new MeshIdentityAuthenticator({ header: env.MESH_IDENTITY_HEADER, resolver: claimSource });
       case "oidc-sa":
         // verified workload identity (ADR-0019): TokenReview-validate the caller's
         // ServiceAccount token; tenant comes from the SA→claim binding, not the token.

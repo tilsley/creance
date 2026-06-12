@@ -34,6 +34,7 @@ export * from "./adapters/noop-gate";
 // authn (ADR-0015): who is the caller — swappable per stack
 export * from "./adapters/static-token-authenticator";
 export * from "./adapters/mesh-trust-authenticator";
+export * from "./adapters/mesh-identity-authenticator"; // full-mode workload authn — Linkerd/Istio stamped identity (ADR-0028)
 export * from "./adapters/noop-authenticator";
 // authz (ADR-0015): allow/deny policy seam
 export * from "./adapters/allow-all-authorizer";

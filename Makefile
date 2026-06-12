@@ -95,6 +95,9 @@ gw-deploy: ## deploy the Bun gateway via Helm (charts/inference-gateway) into ag
 gw-pod-test: ## prove the gateway pod end to end: real SA token → TokenReview → claim → 402 (no AWS, $0)
 	bash deploy/local/gateway-pod-test.sh
 
+gw-mesh-test: ## prove full-mode mesh-trust on the Bun gateway: token-less caller, Linkerd-stamped identity → claim → 402
+	bash deploy/local/gateway-mesh-test.sh
+
 sandbox-test: ## deploy charts/sandbox + prove egress lockdown (wall + allowlist), then tear down
 	bash deploy/local/sandbox-test.sh
 
@@ -111,4 +114,4 @@ coding-agent: ## run the coding agent end-to-end — think governed, code in the
 coding-agent-pod: ## Model A in k3s: coding agent as a pod BEHIND the egress wall (think governed, do contained)
 	bash deploy/local/sandbox-coding-agent.sh
 
-.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward gw-image gw-deploy gw-pod-test sandbox-test gate-conformance spine-agent coding-agent coding-agent-pod
+.PHONY: help whoami bootstrap synth diff deploy destroy outputs deploy-postgres destroy-postgres aurora-bootstrap postgres-url run run-dynamodb dep-migrator image k8s-creds k8s-deploy k8s-logs k8s-forward gw-image gw-deploy gw-pod-test gw-mesh-test sandbox-test gate-conformance spine-agent coding-agent coding-agent-pod

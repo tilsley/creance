@@ -42,7 +42,7 @@ mesh-trust), claim routing, atomic reserve/settle, and self-service claims throu
 clients (OpenCode/`@ai-sdk/anthropic`, Claude Code) speak the **Anthropic Messages wire and
 always stream**; the Bun gateway serves one bespoke non-streaming JSON endpoint.
 
-## Landscape — which Bedrock API per wire (verified June 2026)
+## Landscape 1 — which Bedrock API per wire (verified June 2026)
 
 Bedrock offers two invocation APIs; the right one depends on which side of the gateway the
 translation lives:
@@ -61,6 +61,30 @@ OpenAI/Anthropic mold consume **SSE** on streaming responses — but the contrac
 *dialect*, not just SSE: Anthropic's named-event grammar in sequence vs OpenAI's `data:`
 chunks + `[DONE]`. Bedrock hands us the Anthropic dialect pre-formed; the gateway's streaming
 job is exactly the event-stream→SSE re-framing.
+
+## Landscape 2 — workload authn at a multi-tenant gateway (added 2026-06-12)
+
+How other teams answer "which workload is calling me?", ordered by coupling. The question
+matters here because the gateway needs identity **in the app** (to pick the claim, debit the
+budget, route the model) — mesh-level `AuthorizationPolicy` alone can't debit a budget.
+
+| Pattern | Who does it | Verdict for us |
+|---|---|---|
+| 1. Gateway-minted API keys per team | Most LLM-gateway deployments today (LiteLLM virtual keys, Portkey, Kong consumers) | **Rejected in [0019](0019-inference-gateway.md)** — a long-lived bearer names a budget line, not a workload |
+| 2. Platform-verified tokens (projected SA JWT → TokenReview/JWKS; OAuth2 client-creds off-k8s) | The k8s-industry standard — IRSA, Vault k8s auth, GCP WI all reduce to it | **Our cheap mode** (`AUTHN=oidc-sa`) — the most conventional piece of the design |
+| 3. Mesh mTLS identity consumed by the app (Linkerd `l5d-client-id` / Istio-Envoy XFCC; gRPC peer info in ALTS/BeyondProd shops) | Minority pattern — teams with per-caller metering/tenancy/audit, i.e. our exact problem | **Our full mode** (`AUTHN=mesh-id`) — one adapter, two header dialects, both documented mechanisms of their mesh |
+| 4. Policy-sidecar binding (ext_authz/OPA validates the principal, injects a sanitized tenant header; Netflix "Passport") | Large platform orgs — incl. the org's Istio+OPA stack | **The upgrade path, not a competitor** — relocates the identity→tenant binding into the policy plane; slots in at the `Authorizer` port, the identity header still gets read |
+| 5. SPIFFE/SPIRE direct (app terminates mTLS, reads SVID) · cloud IAM (SigV4→STS) | Uber/Bloomberg-style SPIRE shops; AWS-native estates | Future adapters behind the same `Authenticator` port ([0019](0019-inference-gateway.md) already names SigV4) |
+
+Two notes that decided it: **(a)** header-parsing is normal *for this minority* — `l5d-client-id`
+and XFCC are each mesh's documented way to surface the verified peer to the app; the headers are
+only trustworthy because the inbound proxy sets them and strips client-supplied copies, so the
+gateway must be reachable only through the mesh (encoded in the adapter doc + a live forgery
+test). **(b)** the agent-platform twist favors mesh identity more than ordinary microservices:
+our callers run model-generated, prompt-injectable work, and a token a pod holds is a token a
+hijacked agent can exfiltrate — in mesh mode **there is no credential in the pod to steal**.
+Identity is the only thing taken from the header; tenant/authority always comes from the claim
+binding, default-deny, same as the TokenReview path.
 
 ## Decision
 
