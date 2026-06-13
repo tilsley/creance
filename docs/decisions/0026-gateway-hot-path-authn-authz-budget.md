@@ -1,6 +1,6 @@
 # ADR-0026: Gateway hot-path — edge-offloaded authn, cached grants, durable Postgres budget reserve
 
-- **Status:** Proposed (refines the gateway of [0019](0019-inference-gateway.md); realizes the Redis hot tier of [0023](0023-memory-backends-postgres-redis.md) for the budget counter; sharpens [0024](0024-build-vs-buy-managed-agent-platforms.md) with the LiteLLM OSS/enterprise boundary; builds on the authn/authz split of [0015](0015-split-authn-authz-ports.md) + mesh-trust of [0009](0009-gate-identity-and-governance.md))
+- **Status:** Proposed (refines the gateway of [0019](0019-inference-gateway.md); realizes the Redis hot tier of [0023](0023-memory-backends-postgres-redis.md) for the budget counter; sharpens [0024](0024-build-vs-buy-managed-agent-platforms.md) with the LiteLLM OSS/enterprise boundary; builds on the authn/authz split of [0015](0015-split-authn-authz-ports.md) + mesh-trust of [0009](0009-gate-identity-and-governance.md)) — the hot-path **rules** (edge authn, cached grants, durable worst-case reserve) carry over to [0028](0028-own-the-gateway-engine.md)'s owned TS engine; the LiteLLM-OSS-hook *implementation* this ADR assumed is retired
 - **Date:** 2026-06-05
 
 ## Context

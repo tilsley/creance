@@ -1,6 +1,6 @@
 # ADR-0024: Build vs buy — managed agent platforms vs the agent-os governance shell
 
-- **Status:** Proposed
+- **Status:** Proposed — the *buy the engine* conclusion is reversed **for the gateway** by [0028](0028-own-the-gateway-engine.md) (the policy was always ours, the bought engine became dead weight); the managed-platform-as-adapter stance for sandbox/tools, and the cost-curve framing, are untouched
 - **Date:** 2026-06-01
 
 ## Context

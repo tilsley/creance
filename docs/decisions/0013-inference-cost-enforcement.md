@@ -1,6 +1,6 @@
 # ADR-0013: Inference cost enforcement — buy the gateway, own the admission policy
 
-- **Status:** Proposed
+- **Status:** Proposed — the *buy the gateway (engine)* half is reversed by [0028](0028-own-the-gateway-engine.md); the *own the admission policy* half (worst-case pre-flight reserve) carries over verbatim into the owned engine
 - **Date:** 2026-05-28
 
 ## Context
