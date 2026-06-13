@@ -61,6 +61,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/sandboxed-agent": {
+      "name": "@agent-os/sandboxed-agent-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/spine-agent": {
       "name": "@agent-os/spine-agent-demo",
       "dependencies": {
@@ -169,6 +175,8 @@
     "@agent-os/mcp-gateway-demo": ["@agent-os/mcp-gateway-demo@workspace:examples/mcp-gateway"],
 
     "@agent-os/obo-token-vault-demo": ["@agent-os/obo-token-vault-demo@workspace:examples/obo-token-vault"],
+
+    "@agent-os/sandboxed-agent-demo": ["@agent-os/sandboxed-agent-demo@workspace:examples/sandboxed-agent"],
 
     "@agent-os/spine-agent-demo": ["@agent-os/spine-agent-demo@workspace:examples/spine-agent"],
 

@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/sandboxed-agent-demo",
+  "private": true,
+  "type": "module",
+  "description": "sandboxed-agent: Model B — a real foreign coding CLI (Claude Code) in the sandbox, governed at the gateway and contained by the egress wall (ADR-0020/0022)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

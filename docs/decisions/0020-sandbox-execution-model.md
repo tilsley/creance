@@ -76,3 +76,26 @@ proved **both** halves at once:
 This is Model A (trusted loop + untrusted code in one pod): the wall makes the code's *only* outbound
 the gateway. Reproduce: `make coding-agent-pod` (`deploy/local/sandbox-coding-agent.sh`). For Model B
 the same wall is what keeps an opaque inner loop from bypassing budget/identity.
+
+## Validation (2026-06-13) — Model B, a real foreign CLI, proven live
+
+The "foreign agent gets a governed home" claim is now demonstrated too. A **real foreign coding CLI —
+Claude Code 2.1.177 — runs as the opaque delegated agent** inside the sandbox (`examples/sandboxed-agent`),
+launched via the `sandboxed` kind (`runSandboxedAgent`, not the think/do loop), in the same locked-down
+namespace as Model A. One governed run proved both halves:
+
+- **`think`** — Claude Code spoke the Anthropic `/v1/messages` wire to the in-cluster gateway *through
+  the wall's door*, authenticated by its **projected SA token** (the pod holds no model creds), → Bedrock
+  → wrote `answer.txt=385`. The runtime saw **one opaque `do`** (`agent.sandboxed` span) — the coarse,
+  per-boundary governance this ADR predicts for B, vs A's per-step.
+- **`do`** — egress to anywhere but the gateway was **refused by the wall** (`NET_BLOCKED`), proven by a
+  deterministic probe from the pod (it shares the wall with the agent) and corroborated by Claude Code's
+  own blocked attempt.
+
+The shim is small: `runSandboxedAgent` injects `INFERENCE_GATEWAY_URL`/`AGENT_TOKEN`, and a one-line
+wrapper maps them onto Claude Code's `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` — `ANTHROPIC_BASE_URL`
+naming the *wire dialect*, pointed at our gateway, never at Anthropic (Bedrock-only holds; see
+[ADR-0028](0028-own-the-gateway-engine.md)). This also **partially closes the follow-up above**: an
+Anthropic-dialect CLI (Claude Code, OpenCode) routes through today's gateway as-is; only an *OpenAI*-wire
+CLI (Copilot) still needs the deferred `/v1/chat/completions` endpoint. Reproduce:
+`deploy/local/sandbox-foreign-agent.sh`.
