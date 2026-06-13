@@ -26,7 +26,7 @@ echo "▶ 2/5  gateway up in $GW_NS with a \$5 claim for the coding-agent SA (CL
 # deep-merges this env over the chart's default env, so AUTHN/REGION/etc. are preserved.
 # CLAIM_SOURCE=static is required: the chart defaults to dynamo, which would ignore CLAIMS_STATIC.
 CLAIMS_FILE="$(mktemp -t ca-gw-values.XXXX.yaml)"
-printf 'env:\n  CLAIM_SOURCE: static\n  CLAIMS_STATIC: '\''{"%s":{"model":"claude-haiku","monthlyBudgetUsd":5}}'\''\n' "$TENANT" > "$CLAIMS_FILE"
+printf 'env:\n  CLAIM_SOURCE: static\n  CLAIMS_STATIC: '\''{"%s":{"model":"eu.anthropic.claude-haiku-4-5-20251001-v1:0","monthlyBudgetUsd":5}}'\''\n' "$TENANT" > "$CLAIMS_FILE"
 helm upgrade --install inference-gateway charts/inference-gateway -n "$GW_NS" --create-namespace \
   -f "$CLAIMS_FILE" >/dev/null
 rm -f "$CLAIMS_FILE"
