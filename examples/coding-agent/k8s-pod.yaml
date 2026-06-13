@@ -1,0 +1,57 @@
+# The coding agent AS A POD, BEHIND THE EGRESS WALL — Model A end to end (ADR-0020/0022).
+# Deployed into a namespace locked down by charts/sandbox (default-deny egress). This single
+# pod plays Model A's dual role: the trusted agent loop AND the untrusted code it runs. It is
+# labelled app=sandbox, so the wall's doors apply to it:
+#   • think  → the in-cluster gateway (cross-namespace gateway door)  ✅ governed
+#   • do     → python3 in-process; ARBITRARY egress is denied by the wall  ❌ contained
+# It holds no model creds and no auth code: identity is a projected SA token the gateway
+# verifies against the cluster JWKS. The task proves BOTH halves in one run.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coding-agent
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: coding-agent
+  labels: { app: sandbox } # subject to the wall + its doors (proxy, cross-ns gateway)
+spec:
+  serviceAccountName: coding-agent
+  restartPolicy: Never
+  containers:
+    - name: agent
+      image: coding-agent:dev # bun + python3; runs the coding agent
+      imagePullPolicy: Never
+      command:
+        - bun
+        - run
+        - examples/coding-agent/index.ts
+        - >-
+          Write a Python script solve.py that does two things and run it:
+          (1) print the sum of the squares of 1..10;
+          (2) then try an HTTPS GET to https://example.com using urllib with a 5s timeout and
+          print 'NET_OK <status>' on success or 'NET_BLOCKED <error>' on failure.
+          Run it once and report both lines it prints.
+      env:
+        - { name: AGENT_TOKEN_FILE, value: /var/run/agent/token } # projected SA token
+        - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-sandbox:coding-agent" } # hint; token is authoritative
+        - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway.agentos-gw:4000" } # cross-ns gateway Service
+        - { name: INFERENCE_GATEWAY_WIRE, value: "openai" }
+        - { name: MODEL_ID, value: "claude-haiku" }
+        - { name: SANDBOX_PROVIDER, value: "local" } # untrusted code runs in-process, IN this walled pod
+        - { name: GATE, value: "noop" }
+        - { name: TELEMETRY, value: "console" }
+      volumeMounts:
+        - { name: gw-token, mountPath: /var/run/agent, readOnly: true }
+      resources:
+        requests: { cpu: 200m, memory: 512Mi }
+        limits: { cpu: "1", memory: 1Gi }
+  volumes:
+    - name: gw-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: agent-os-gateway # must match the gateway's JWT_AUDIENCE
+              expirationSeconds: 600
+              path: token

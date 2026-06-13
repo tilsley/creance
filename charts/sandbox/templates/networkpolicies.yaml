@@ -29,6 +29,29 @@ spec:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
 ---
+{{- if .Values.gateway.enabled }}
+---
+# DOOR — the governed one: the sandbox may reach the inference gateway (cross-namespace) for
+# `think`. The model call + creds live on the gateway's side of the wall; this pod never gets
+# anonymous egress to a model API. The demo's in-namespace gateway door lives in demo.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-sandbox-to-gateway-xns
+spec:
+  podSelector:
+    matchLabels: { app: sandbox }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.gateway.namespace | quote }} }
+          podSelector:
+            matchLabels: { app: {{ .Values.gateway.podLabel | quote }} }
+      ports:
+        - { port: {{ .Values.gateway.port }}, protocol: TCP }
+{{- end }}
+---
 # DOOR — the sandbox may reach the egress proxy (and only the proxy) for outbound.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

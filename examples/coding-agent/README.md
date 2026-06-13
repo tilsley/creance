@@ -20,7 +20,26 @@ Validated live (Claude Haiku): the agent wrote `solve.py`, ran it, hit
 **no auth and no model creds**: identity is forwarded by the platform adapter, verified at the
 gateway; the model call leaves via the gateway; untrusted code runs in the sandbox.
 
-**Notes.** Local sandbox runs `python3`/`bash` in a temp workdir (host needs `python3`). For the
-in-k8s version, run it like [`../spine-agent`](../spine-agent) as a pod (the sandbox would need a
-python-capable image, or a real `SandboxProvider` — AgentCore/E2B/self-hosted, ADR-0022). Egress
-lockdown ([`charts/sandbox`](../../charts/sandbox)) is the network wall around that sandboxed `do`.
+## In k3s — Model A behind the egress wall (`k8s-pod.yaml`)
+
+The same agent, **as a pod in a locked-down namespace** — the platform's security story proven end
+to end. `deploy/local/sandbox-coding-agent.sh` (= `make coding-agent-pod`) deploys the agent into a
+namespace walled by [`charts/sandbox`](../../charts/sandbox) (default-deny egress) with **one door
+open**: a cross-namespace route to the in-cluster gateway. The pod plays Model A's dual role — the
+trusted loop *and* the untrusted code — so a single task proves both halves:
+
+```
+think → gateway door → Bedrock            ✅ governed (verified SA-token identity + budget)
+do    → python GET https://example.com    ❌ NET_BLOCKED (the wall refuses it)
+```
+
+Validated live (Claude Haiku): the agent wrote `solve.py`, self-corrected a wrong-cwd error, printed
+`385`, and its own HTTPS GET came back `NET_BLOCKED <urlopen error [Errno 111] Connection refused>` —
+`status=completed`. Identity is a projected ServiceAccount token (audience `agent-os-gateway`) the
+gateway verifies against the cluster JWKS; the pod (`coding-agent:dev` = Bun + python3) carries no
+auth and no model creds. This is the convergence of the three pieces: the agent, the egress lockdown,
+and the gateway. See [ADR-0020](../../docs/decisions/0020-sandbox-execution-model.md#validation-2026-06-09--the-egress-non-negotiable-proven-live).
+
+**Notes.** The host run above uses `SANDBOX_PROVIDER=local` (host `python3`). The k3s pod packages
+`python3` in its own image; a real `SandboxProvider` (AgentCore/E2B/self-hosted gVisor — ADR-0022)
+is the adapter swap for stronger runtime isolation than a shared pod.

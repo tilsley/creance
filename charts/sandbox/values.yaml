@@ -13,6 +13,16 @@ proxy:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 300m, memory: 192Mi }
 
+# The governed door — the ONE outbound a real sandbox pod gets besides the proxy: the
+# inference gateway, in its own namespace. `think` traverses the wall through this; the model
+# call + creds live on the far side. Off by default (the demo uses its in-namespace stand-in);
+# turn on for a real sandbox that talks to the deployed gateway (charts/litellm-gateway).
+gateway:
+  enabled: false
+  namespace: agentos-gw # where charts/litellm-gateway runs (selected by kubernetes.io/metadata.name)
+  podLabel: litellm-gateway # the gateway pod's `app` label
+  port: 4000
+
 # Demo/test pods: a gateway stand-in + a sandbox pod (+ the gateway egress door).
 # Disable for a real sandbox namespace (you bring your own workloads).
 demo:

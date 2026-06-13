@@ -60,3 +60,19 @@ Realizes the **sandbox** half of the primitives/controls model under [ADR-0019](
 backend (E2B vs AgentCore vs self-hosted gVisor/Firecracker — [ADR-0002](0002-gvisor-as-default-untrusted-tier.md))
 is an adapter swap. A foreign CLI that speaks OpenAI/Copilot needs an **OpenAI-compatible gateway
 endpoint** for its `think` to route through the gateway — the documented follow-up.
+
+## Validation (2026-06-09) — the egress non-negotiable, proven live
+
+The "only sanctioned egress is the gateway" requirement is now demonstrated, not asserted. The
+coding agent (`examples/coding-agent`) runs as a **pod in a locked-down namespace** (`charts/sandbox`:
+default-deny egress + a cross-namespace door to the in-cluster gateway). In a single governed run it
+proved **both** halves at once:
+
+- **`think`** reached the gateway *through the wall's door* — verified SA-token identity + budget,
+  real Bedrock inference (`385`).
+- **`do`** — the agent's own python attempting `GET https://example.com` — was **refused by the wall**
+  (`NET_BLOCKED <urlopen error [Errno 111] Connection refused>`). No direct model/internet egress.
+
+This is Model A (trusted loop + untrusted code in one pod): the wall makes the code's *only* outbound
+the gateway. Reproduce: `make coding-agent-pod` (`deploy/local/sandbox-coding-agent.sh`). For Model B
+the same wall is what keeps an opaque inner loop from bypassing budget/identity.
