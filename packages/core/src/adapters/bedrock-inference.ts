@@ -37,15 +37,20 @@ export class BedrockInferenceProvider implements InferenceProvider {
         messages: messages.map(toBedrock),
         // cap the completion length -> bounds the per-call output cost (ADR-0013)
         inferenceConfig: { maxTokens: opts.maxTokens },
-        toolConfig: {
-          tools: tools.map((t) => ({
-            toolSpec: {
-              name: t.name,
-              description: t.description,
-              inputSchema: { json: t.inputSchema },
-            },
-          })),
-        },
+        // Converse rejects an empty toolConfig.tools — only send it when there are tools.
+        ...(tools.length > 0
+          ? {
+              toolConfig: {
+                tools: tools.map((t) => ({
+                  toolSpec: {
+                    name: t.name,
+                    description: t.description,
+                    inputSchema: { json: t.inputSchema },
+                  },
+                })),
+              },
+            }
+          : {}),
       }),
     );
 
