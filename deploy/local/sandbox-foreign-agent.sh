@@ -31,7 +31,8 @@ rm -f "$CLAIMS_FILE"
 kubectl -n "$GW_NS" rollout status deploy/inference-gateway --timeout=180s
 
 echo "▶ 3/5  build the Model B image (node + bun + Claude Code; colima docker ⇒ k3s sees it)"
-docker build -q -t sandboxed-agent:dev -f examples/sandboxed-agent/Dockerfile . >/dev/null
+docker build -q -t sandboxed-agent:dev -f examples/sandboxed-agent/Dockerfile . >/dev/null \
+  || { echo "❌ image build failed — aborting (a stale image would give a misleading verdict)"; exit 1; }
 
 echo "▶ 4/5  lock down $SB_NS (the wall) + open ONLY the governed gateway door"
 helm upgrade --install sandbox charts/sandbox -n "$SB_NS" --create-namespace \

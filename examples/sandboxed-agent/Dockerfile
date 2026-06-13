@@ -14,9 +14,10 @@ RUN apt-get update \
 RUN npm install -g bun @anthropic-ai/claude-code
 
 WORKDIR /app
-# .dockerignore strips node_modules/.git, so this is source + manifests only.
+# .dockerignore strips node_modules/.git/.venv, so this is source + manifests only.
 COPY . .
-RUN bun install --frozen-lockfile
+# --production: the launcher only needs runtime deps (drops test/types/CDK devDeps)
+RUN bun install --frozen-lockfile --production
 
 # Claude Code refuses --dangerously-skip-permissions under root ("for security reasons"), so the
 # contained agent runs unprivileged as the node base image's built-in `node` user (uid 1000).

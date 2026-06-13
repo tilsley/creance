@@ -7,3 +7,8 @@ node_modules
 *.log
 .env
 .env.*
+# Python venvs/caches — the retired LiteLLM reference's .venv is ~440MB and is needed by no
+# image (it's the conformance reference, run via uv on the host). Excluding it slims EVERY build.
+**/.venv
+**/__pycache__
+**/*.pyc
