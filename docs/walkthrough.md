@@ -46,7 +46,7 @@ flowchart TB
   Q["Run agents at scale & securely — buy or build?"]
   Q --> B1["<b>BUY</b> · all-in managed<br/>AgentCore · Claude MA · Vertex<br/>~$0 idle, fast — but lock-in &<br/>no real-time budget cap"]
   Q --> B2["<b>BUILD</b> · self-host everything<br/>control + cheapest at scale —<br/>but upfront build + idle cost"]
-  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: LiteLLM engine<br/>+ our OSS policy hooks"]
+  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: managed as adapters,<br/>but the gateway engine is ours"]
 ```
 
 > 🎤 "Before any architecture, here's the question that actually drives the decision — and the bill.
@@ -56,12 +56,16 @@ flowchart TB
 > hard-stop. Building gives you control and the cheapest unit cost at scale, but you pay upfront to
 > build it and you pay for idle capacity. The real answer is **both** — choose per capability, and let
 > cost decide where each lands: managed while you're small and idle, self-hosted once you're at scale
-> and never idle. **This is the axis that matters most** — and we've executed it where it counts: the
-> inference gateway is a **bought engine, LiteLLM, carrying our policy as ~250 lines of OSS hooks** —
-> verified identity plus the worst-case budget hard-stop, proven live against Bedrock
-> ([ADR-0024](decisions/0024-build-vs-buy-managed-agent-platforms.md)). Everything else in this talk
-> is how the platform keeps that choice open and adds the two things managed can't. We'll come back
-> with the actual numbers at the end."
+> and never idle. **This is the axis that matters most** — and we've executed it where it counts. The
+> *buy* option stays open as adapters behind the ports — managed sandbox and tools while you're small.
+> But the **inference gateway** is the one place we tried buy and reclaimed it: we bought LiteLLM, and
+> the operating record argued against the engine half — the policy that can't be bought (verified
+> identity + the worst-case budget hard-stop) was always ours, the bought hook seam kept failing
+> **open**, and Bedrock-only made the bought 90% dead weight. So the gateway is now **our own
+> ~hundreds-of-lines Bun/TS engine** — the gate structural, not a callback — proven live against Bedrock
+> ([ADR-0028](decisions/0028-own-the-gateway-engine.md)). Everything else in this talk is how the
+> platform keeps that choice open and adds the two things managed can't. We'll come back with the
+> actual numbers at the end."
 
 ---
 
@@ -393,7 +397,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   subgraph RUNS["proven · live"]
-    R1["verified identity<br/>+ forgery defense"] ~~~ R2["budget 402 +<br/>reserve→settle vs Bedrock"] ~~~ R3["LiteLLM gateway<br/>OpenAI + Anthropic wire"] ~~~ R4["A2A on-behalf-of<br/>(EKS)"] ~~~ R5["store: Dynamo +<br/>Aurora scale-to-zero"]
+    R1["verified identity<br/>+ forgery defense"] ~~~ R2["budget 402 +<br/>reserve→settle vs Bedrock"] ~~~ R3["our Bun/TS gateway<br/>bespoke + Anthropic wire"] ~~~ R4["A2A on-behalf-of<br/>(EKS)"] ~~~ R5["store: Dynamo +<br/>Aurora scale-to-zero"]
   end
   subgraph NEXT["next"]
     N1["egress lockdown<br/>(the sandbox pillar)"] ~~~ N2["cross-run memory"] ~~~ N3["conformance suite ·<br/>mesh-trust · scale-out"]
@@ -403,9 +407,10 @@ flowchart LR
 > 🎤 "And it's real, not a slide deck. Verified workload identity — including the forgery test: a
 > request *claiming* tenant A with a token *proving* tenant B spends as B. The budget hard-stop
 > returning 402 pre-flight, and the full reserve-call-settle loop against live Bedrock, with the
-> counter landing on the actual cost. The gateway is the bought engine, LiteLLM, governing **both**
-> wire formats — OpenAI for generic apps and Anthropic `/v1/messages` for coding agents — through
-> the same two hooks. Agent-to-agent with identity intact, proven on EKS. And the budget store runs
+> counter landing on the actual cost. The gateway is **our own Bun/TS engine** now, governing the
+> bespoke wire for our runtime and the Anthropic `/v1/messages` passthrough for coding agents — the
+> same gate, structural rather than a callback into someone else's proxy ([ADR-0028](decisions/0028-own-the-gateway-engine.md)).
+> Agent-to-agent with identity intact, proven on EKS. And the budget store runs
 > on both deployment profiles: DynamoDB at ~$0 idle, or Aurora Serverless that pauses itself to
 > zero. What's next is the egress lockdown that makes coding-agent sandboxing airtight — the third
 > pillar, and the least built — then cross-run memory, the gateway conformance suite, mesh-trust,

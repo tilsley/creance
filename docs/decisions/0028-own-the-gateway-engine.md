@@ -1,7 +1,8 @@
 # ADR-0028: Own the gateway engine — retire LiteLLM from the serving path
 
-- **Status:** Proposed (reverses the buy-the-engine half of [0013](0013-inference-cost-enforcement.md)/[0024](0024-build-vs-buy-managed-agent-platforms.md)/[0026](0026-gateway-hot-path-authn-authz-budget.md) for the gateway; the build-the-policy half carries over verbatim. Revises [0027](0027-two-deployment-profiles.md): two profiles, **one** gateway)
+- **Status:** Accepted (reverses the buy-the-engine half of [0013](0013-inference-cost-enforcement.md)/[0024](0024-build-vs-buy-managed-agent-platforms.md)/[0026](0026-gateway-hot-path-authn-authz-budget.md) for the gateway; the build-the-policy half carries over verbatim. Revises [0027](0027-two-deployment-profiles.md): two profiles, **one** gateway)
 - **Date:** 2026-06-10
+- **Executed:** 2026-06-13 — the Bun gateway (`charts/inference-gateway`) is the single engine on the deploy path and in every local run; `charts/litellm-gateway` is deleted. The Python proxy under `services/inference-gateway/litellm/` is kept only as the conformance reference (`gate-conformance.sh`) and the record of the hook-seam findings.
 
 ## Context
 

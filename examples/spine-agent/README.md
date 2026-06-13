@@ -25,16 +25,17 @@ so it isolates the spine; the research / budget-buster / code agents layer `do` 
 ## In k3s — the full spine, real Kubernetes identity (`k8s-pod.yaml`)
 
 `k8s-pod.yaml` runs the spine **as a pod** with a **projected ServiceAccount token** (audience
-`agent-os-gateway`) — no model creds, no auth code. It calls the in-cluster `litellm-gateway`
-(deployed by [`charts/litellm-gateway`](../../charts/litellm-gateway)), which verifies the token
-against the **cluster JWKS**, derives the tenant from `sub`, checks the claim/budget, and calls
-Bedrock. Validated end to end on colima/k3s: `status=completed`, output `Paris`.
+`agent-os-gateway`) — no model creds, no auth code. It calls the in-cluster `inference-gateway`
+(deployed by [`charts/inference-gateway`](../../charts/inference-gateway)), which verifies the token
+via the **cluster API (TokenReview)**, derives the tenant from the claim binding, checks the
+claim/budget, and calls Bedrock. Validated end to end on colima/k3s: `status=completed`, output `Paris`.
 
 ```bash
 # gateway up (real SA tokens + a claim for the agent's SA) + creds for Bedrock:
 make k8s-creds   # but into agentos-gw; see the spine k8s notes
-helm install litellm-gateway charts/litellm-gateway -n agentos-gw --create-namespace \
-  --set-string 'env.CLAIMS_STATIC={"system:serviceaccount:agentos-gw:spine-agent":{"model":"claude-haiku","monthlyBudgetUsd":5}}'
+helm install inference-gateway charts/inference-gateway -n agentos-gw --create-namespace \
+  --set env.CLAIM_SOURCE=static \
+  --set-string 'env.CLAIMS_STATIC={"system:serviceaccount:agentos-gw:spine-agent":{"model":"eu.anthropic.claude-haiku-4-5-20251001-v1:0","monthlyBudgetUsd":5}}'
 kubectl apply -n agentos-gw -f examples/spine-agent/k8s-pod.yaml
 kubectl -n agentos-gw logs spine-agent
 ```

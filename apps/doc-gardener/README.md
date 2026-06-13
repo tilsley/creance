@@ -8,7 +8,7 @@ its blast radius bounded by a write allowlist.
 inventory + deterministic detectors        discovery is mechanical — no LLM needed
         ↓
 ONE OpenCode session                       judgement: read the code, fix the docs
-  think → litellm-gateway → Bedrock        identity + budget enforced per request
+  think → inference-gateway → Bedrock      identity + budget enforced per request
   do    → read/glob/edit only              bash, webfetch, subagents denied
         ↓
 docs-only write allowlist                  whatever happened in the session,
@@ -28,7 +28,7 @@ bash apps/doc-gardener/run.sh        # local: dev gateway + the drifted fixture
 bun test                             # detectors + allowlist unit tests (pure)
 ```
 
-In-cluster (k3s, gateway deployed — see `charts/litellm-gateway`):
+In-cluster (k3s, gateway deployed — see `charts/inference-gateway`):
 
 ```bash
 docker build -t doc-gardener:dev apps/doc-gardener

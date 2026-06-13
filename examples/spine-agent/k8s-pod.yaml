@@ -1,7 +1,7 @@
 # The spine agent AS A POD — the full k3s spine. It holds no model creds; it presents a
 # PROJECTED ServiceAccount token (audience=agent-os-gateway) which the in-cluster gateway
 # verifies against the cluster JWKS, derives the tenant from, and governs. Apply in the same
-# namespace as the litellm-gateway (so the short Service DNS resolves), e.g. agentos-gw.
+# namespace as the inference-gateway (so the short Service DNS resolves), e.g. agentos-gw.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -23,8 +23,8 @@ spec:
       env:
         - { name: AGENT_TOKEN_FILE, value: /var/run/agent/token } # the projected SA token, read by the agent
         - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-gw:spine-agent" } # hint; the token is authoritative
-        - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway:4000" } # in-cluster gateway Service
-        - { name: INFERENCE_GATEWAY_WIRE, value: "openai" }
+        - { name: INFERENCE_GATEWAY_URL, value: "http://inference-gateway:3100" } # in-cluster Bun gateway Service (ADR-0028)
+        - { name: INFERENCE_GATEWAY_WIRE, value: "bespoke" } # the Bun runtime wire (/v1/generate)
         - { name: MODEL_ID, value: "claude-haiku" }
         - { name: SANDBOX_PROVIDER, value: "local" } # the loop owns a local session; no AWS in the agent
         - { name: GATE, value: "noop" }

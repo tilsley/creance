@@ -29,7 +29,7 @@ spec:
           image: doc-gardener:dev
           imagePullPolicy: Never # local k3s docker image; EKS: a registry repo
           env:
-            - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway:4000" }
+            - { name: INFERENCE_GATEWAY_URL, value: "http://inference-gateway:3100" } # Bun gateway, Anthropic wire /v1/messages (ADR-0028)
             - { name: MODEL_ID, value: "claude-haiku" }
             - { name: AGENT_TOKEN_FILE, value: "/var/run/agent/token" }
             # demo mode: garden the baked-in drifted fixture. For a real repo set

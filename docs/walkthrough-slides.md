@@ -33,7 +33,7 @@ flowchart TB
   Q["Run agents at scale & securely — buy or build?"]
   Q --> B1["<b>BUY</b> · all-in managed<br/>AgentCore · Claude MA · Vertex<br/>~$0 idle, fast — but lock-in &<br/>no real-time budget cap"]
   Q --> B2["<b>BUILD</b> · self-host everything<br/>control + cheapest at scale —<br/>but upfront build + idle cost"]
-  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: LiteLLM engine<br/>+ our OSS policy hooks"]
+  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: managed as adapters,<br/>but the gateway engine is ours"]
 ```
 
 ---
@@ -253,7 +253,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   subgraph RUNS["proven · live"]
-    R1["verified identity<br/>+ forgery defense"] ~~~ R2["budget 402 +<br/>reserve→settle vs Bedrock"] ~~~ R3["LiteLLM gateway<br/>OpenAI + Anthropic wire"] ~~~ R4["A2A on-behalf-of<br/>(EKS)"] ~~~ R5["store: Dynamo +<br/>Aurora scale-to-zero"]
+    R1["verified identity<br/>+ forgery defense"] ~~~ R2["budget 402 +<br/>reserve→settle vs Bedrock"] ~~~ R3["our Bun/TS gateway<br/>bespoke + Anthropic wire"] ~~~ R4["A2A on-behalf-of<br/>(EKS)"] ~~~ R5["store: Dynamo +<br/>Aurora scale-to-zero"]
   end
   subgraph NEXT["next"]
     N1["egress lockdown<br/>(the sandbox pillar)"] ~~~ N2["cross-run memory"] ~~~ N3["conformance suite ·<br/>mesh-trust · scale-out"]

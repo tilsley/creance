@@ -1,6 +1,6 @@
 # ADR-0027: Two deployment profiles — cheap AWS-native vs full-k8s, one contract
 
-- **Status:** Proposed (realizes the cost curve of [0024](0024-build-vs-buy-managed-agent-platforms.md) + ports of [0003](0003-ports-and-adapters.md); the gateway wire switch of M4 is the mechanism)
+- **Status:** Accepted, amended by [0028](0028-own-the-gateway-engine.md) (realizes the cost curve of [0024](0024-build-vs-buy-managed-agent-platforms.md) + ports of [0003](0003-ports-and-adapters.md); the gateway wire switch of M4 is the mechanism). **Amendment:** the two profiles survive, but they no longer differ by gateway — the Bun gateway is the single live engine in both (not the frozen reference this ADR named), so the TS/Python drift risk below is moot. The cheap-vs-full split is now purely backing (DynamoDB + offline JWT vs Postgres/Redis + mesh + OPA).
 - **Date:** 2026-06-06
 
 ## Context

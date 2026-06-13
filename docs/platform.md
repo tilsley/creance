@@ -330,8 +330,7 @@ Honest status — the logical architecture names components that aren't all sepa
 | Service | Role | ADR |
 |---|---|---|
 | `agent-runtime` | the L1 runtime — `POST /runs` (async), the worker loop, A2A | 0012, 0017/0018 |
-| `inference-gateway` (LiteLLM) | the model choke point, **full mode**: the bought engine carrying our OSS hooks — verified-identity authn + worst-case budget admission, OpenAI **and** Anthropic wire | 0019, 0024, 0026 |
-| `inference-gateway` (Bun) | the same gate, **cheap mode / reference impl**: bespoke `/v1/generate`, `POST /claims` self-service — kept for scale-to-zero, not retired | 0019, 0021, 0027 |
+| `inference-gateway` (Bun/TS) | the model choke point in **both profiles** — our own engine ([0028](decisions/0028-own-the-gateway-engine.md)): verified-identity authn + worst-case budget admission, bespoke `/v1/generate` + Anthropic `/v1/messages` (InvokeModel passthrough), `POST /claims` self-service. The gate is structural, not a callback seam | 0019, 0027, 0028 |
 | `agent-controller` | reconciles `Agent` CRs → status | 0012 |
 | `claims-controller` | aggregate quota over claims vs allowance → status | 0021 |
 
@@ -343,10 +342,11 @@ ADRs define the split; it isn't done.
 k3s) · the budget hard-stop returning 402 · the credential broker keeping a secret out of the
 transcript · the MCP gateway discovering + calling a tool under per-tenant policy · cross-pod
 A2A with on-behalf-of identity (CloudTrail-confirmed on EKS) · apply-time CEL rejection of a
-bad claim · **the LiteLLM gateway live against Bedrock**: verified identity → claim → worst-case
-reserve → Claude Haiku 4.5 → settle-to-actual, including the **forgery defense** (a request
-*claiming* tenant A with a token *proving* B spends as B) and **both wire formats** (OpenAI +
-Anthropic `/v1/messages`) through the same hooks · the **Postgres budget reserve** (one
+bad claim · **the gateway live against Bedrock** (our Bun/TS engine, [ADR-0028](decisions/0028-own-the-gateway-engine.md)):
+verified identity → claim → worst-case reserve → Claude Haiku 4.5 → settle-to-actual, including the
+**forgery defense** (a request *claiming* tenant A with a token *proving* B spends as B) and the
+**Anthropic `/v1/messages` passthrough** wire (Claude Code / OpenCode clients) alongside the bespoke
+`/v1/generate` — the gate **structural, not a hook seam** · the **Postgres budget reserve** (one
 conditional `UPDATE`) validated locally **and** on **Aurora Serverless v2 scale-to-zero**
 (`make deploy-postgres`, pauses to $0 compute after 5 idle min).
 
@@ -358,12 +358,14 @@ non-listed (`github.com`) get a recorded `TCP_DENIED/403`, a direct bypass dies 
 The `do` containment control ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md));
 `make sandbox-test` (deployed by the `charts/sandbox` Helm chart).
 
-**Gate conformance — both gateways agree (ADR-0027):** a suite (`make gate-conformance`) asserts
-the load-bearing contract — R1 (no/bad credential → 401) + R2 (no `max_tokens` → 400, worst-case
-> budget → 402) — holds *identically* on the Bun bespoke gateway (cheap mode) and the LiteLLM
-OpenAI-wire gateway (full mode), each in its own dialect. 4/4 identical; the one profile
-difference (un-claimed identity → cheap-mode flat-budget vs full-mode default-deny) is reported,
-not failed — "same contract, only richness differs."
+**Gate conformance — the live engine vs the retained reference (ADR-0027/0028):** a suite
+(`make gate-conformance`) asserts the load-bearing contract — R1 (no/bad credential → 401) + R2
+(no `max_tokens` → 400, worst-case > budget → 402), plus the Anthropic `/v1/messages` wire and a
+**hard default-deny** (un-claimed identity → 403) — holds *identically* on the live Bun gateway and
+the **retained LiteLLM reference**, each in its own dialect. 12/12 identical. LiteLLM is no longer
+deployed ([ADR-0028](decisions/0028-own-the-gateway-engine.md) retired it from the serving path); it
+is kept *only* as this conformance twin — the proof the Bun gate didn't drift when it became the
+single engine.
 
 **Research-as-a-tool — built (Model A, the first customer):** `webResearchTools` (`fetch_url`
 + pluggable `web_search`) — the trusted loop calls it *outside* the zero-egress sandbox and
@@ -396,4 +398,4 @@ Each layer above is the consequence of a recorded decision. The full set:
 | **Identity (R1, R4, R9)** — per-tenant identity, creds, A2A | [0014](decisions/0014-per-tenant-workload-identity.md) · [0010](decisions/0010-credential-broker.md) · [0016](decisions/0016-obo-token-vault.md) · [0017](decisions/0017-a2a-identity-propagation.md) · [0018](decisions/0018-a2a-protocol-transport.md) |
 | **Tools & sandbox (R3)** — tools/auth, MCP gateway, sandbox model, coding-agent backends | [0007](decisions/0007-tools-and-external-auth.md) · [0011](decisions/0011-tool-mcp-gateway.md) · [0020](decisions/0020-sandbox-execution-model.md) · [0022](decisions/0022-sandbox-backends-for-coding-agents.md) |
 | **Onboarding (R5)** — control plane, policy-not-provisioning | [0005](decisions/0005-crossplane-control-plane.md) · [0012](decisions/0012-agent-control-plane.md) · [0021](decisions/0021-inference-onboarding-policy.md) |
-| **Build-vs-buy, executed** — buy the engine (LiteLLM) / build the policy (OSS hooks); cost buckets in the ledger; the hot path; two deployment profiles | [0024](decisions/0024-build-vs-buy-managed-agent-platforms.md) · [0025](decisions/0025-cost-allocation-in-the-ledger.md) · [0026](decisions/0026-gateway-hot-path-authn-authz-budget.md) · [0027](decisions/0027-two-deployment-profiles.md) |
+| **Build-vs-buy, executed** — own the gateway engine (Bun/TS; the policy was always ours), managed platforms as adapters; cost buckets in the ledger; the hot path; two profiles, one gateway | [0024](decisions/0024-build-vs-buy-managed-agent-platforms.md) · [0025](decisions/0025-cost-allocation-in-the-ledger.md) · [0026](decisions/0026-gateway-hot-path-authn-authz-budget.md) · [0027](decisions/0027-two-deployment-profiles.md) · [0028](decisions/0028-own-the-gateway-engine.md) |

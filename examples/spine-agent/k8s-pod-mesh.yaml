@@ -19,8 +19,8 @@ spec:
       env:
         # NB: no AGENT_TOKEN / AGENT_TOKEN_FILE — the agent presents no credential at all.
         - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-gw:spine-agent" } # hint only
-        - { name: INFERENCE_GATEWAY_URL, value: "http://litellm-gateway:4000" }
-        - { name: INFERENCE_GATEWAY_WIRE, value: "openai" }
+        - { name: INFERENCE_GATEWAY_URL, value: "http://inference-gateway:3100" } # Bun gateway Service (ADR-0028)
+        - { name: INFERENCE_GATEWAY_WIRE, value: "bespoke" } # the Bun runtime wire (/v1/generate)
         - { name: MODEL_ID, value: "claude-haiku" }
         - { name: SANDBOX_PROVIDER, value: "local" }
         - { name: GATE, value: "noop" }
