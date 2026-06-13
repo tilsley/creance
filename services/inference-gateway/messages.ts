@@ -75,11 +75,13 @@ export async function handleMessages(req: Request, deps: MessagesDeps): Promise<
   if (!reservation.ok) return Response.json({ error: "budget exceeded", budget: reservation }, { status: 402 });
 
   // pop-once settle: whichever completion path runs first wins; the rest are no-ops.
+  // AWAITED by callers — a fire-and-forget settle is lost if the process exits right
+  // after responding (found live: the Postgres row froze at the worst-case reserve).
   let settled = false;
-  const settleOnce = (deltaUsd: number) => {
-    if (settled) return;
+  const settleOnce = (deltaUsd: number): Promise<void> => {
+    if (settled) return Promise.resolve();
     settled = true;
-    void deps.gate.settle(principal.tenant, deltaUsd, scopes).catch(() => {});
+    return deps.gate.settle(principal.tenant, deltaUsd, scopes).catch(() => {});
   };
 
   const upstreamBody = toBedrockBody(body);
@@ -90,11 +92,11 @@ export async function handleMessages(req: Request, deps: MessagesDeps): Promise<
     try {
       resp = await deps.upstream.invoke(modelId, principal.tenant, upstreamBody);
     } catch (e) {
-      settleOnce(-worstUsd); // nothing reached the model bill — full refund
+      await settleOnce(-worstUsd); // nothing reached the model bill — full refund
       return upstreamError(e);
     }
     const usage = resp.usage as { input_tokens?: number; output_tokens?: number } | undefined;
-    settleOnce(priceTokensUsd(modelId, usage?.input_tokens ?? 0, usage?.output_tokens ?? 0) - worstUsd);
+    await settleOnce(priceTokensUsd(modelId, usage?.input_tokens ?? 0, usage?.output_tokens ?? 0) - worstUsd);
     return Response.json(resp);
   }
 
@@ -105,16 +107,17 @@ export async function handleMessages(req: Request, deps: MessagesDeps): Promise<
   try {
     events = await deps.upstream.invokeStream(modelId, principal.tenant, upstreamBody, abort.signal);
   } catch (e) {
-    settleOnce(-worstUsd);
+    await settleOnce(-worstUsd);
     return upstreamError(e);
   }
 
   const enc = new TextEncoder();
   let inputTokens = 0;
   let outputTokens: number | undefined; // undefined until the stream reports usage
-  const settleToUsage = () => {
+  const settleToUsage = (): Promise<void> => {
     // no usage observed ⇒ leave the reservation spent (over-charge, never a hole)
-    if (outputTokens !== undefined) settleOnce(priceTokensUsd(modelId, inputTokens, outputTokens) - worstUsd);
+    if (outputTokens !== undefined) return settleOnce(priceTokensUsd(modelId, inputTokens, outputTokens) - worstUsd);
+    return Promise.resolve();
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -131,10 +134,10 @@ export async function handleMessages(req: Request, deps: MessagesDeps): Promise<
           }
           controller.enqueue(enc.encode(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`));
         }
-        settleToUsage();
+        await settleToUsage(); // before close: the stream isn't "done" until the money is
         controller.close();
       } catch (e) {
-        settleToUsage(); // mid-stream fault: settle to what the stream reported, if anything
+        await settleToUsage(); // mid-stream fault: settle to what the stream reported, if anything
         controller.error(e);
       }
     },

@@ -32,6 +32,7 @@ import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
 import { StaticClaimSource } from "./adapters/static-claim-source";
 import type { ClaimSource, ClaimWrite } from "./claims";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
+import { PostgresSpendStore } from "./adapters/postgres-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
 import { LocalCredentialBroker } from "./adapters/local-credential-broker";
@@ -177,10 +178,19 @@ export function providersFromEnv(env: Env = process.env): Providers {
           putClaim: (claim) => (claimSource as DynamoClaimSource).putClaim(claim),
         }
       : undefined;
-  const spendStore: SpendStore =
-    (env.SPEND_STORE ?? "memory") === "dynamodb"
-      ? new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT)
-      : new InMemorySpendStore();
+  // SPEND_STORE: memory (dev, lost on restart) · dynamodb (cheap mode, ~$0 idle) ·
+  // postgres (full mode — ACID conditional-UPDATE reserve, ADR-0023/0026/0028).
+  const spendStore: SpendStore = (() => {
+    switch (env.SPEND_STORE ?? "memory") {
+      case "dynamodb":
+        return new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT);
+      case "postgres":
+        if (!env.SPEND_DATABASE_URL) throw new Error("SPEND_STORE=postgres requires SPEND_DATABASE_URL");
+        return new PostgresSpendStore(env.SPEND_DATABASE_URL);
+      default:
+        return new InMemorySpendStore();
+    }
+  })();
   // GATE_SESSION_BUDGET_USD adds a per-session cap alongside the monthly one — the
   // runaway-session stop (ADR-0019). Unset ⇒ only the tenant/month cap is enforced.
   const sessionLimitUsd = env.GATE_SESSION_BUDGET_USD ? Number(env.GATE_SESSION_BUDGET_USD) : undefined;

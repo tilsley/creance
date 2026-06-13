@@ -44,6 +44,7 @@ export * from "./adapters/kube-claim-source"; // unified claim reader: budget ca
 export * from "./adapters/dynamo-claim-source"; // the non-k8s ClaimSource — grants in DynamoDB (ADR-0021)
 export * from "./adapters/static-claim-source"; // dev/test ClaimSource from CLAIMS_STATIC (mirror of the LiteLLM hook's)
 export * from "./adapters/dynamo-spend-store"; // durable monthly spend counter (ADR-0013)
+export * from "./adapters/postgres-spend-store"; // full-mode ACID budget reserve — one conditional UPDATE (ADR-0023/0026/0028)
 export * from "./adapters/sts-tenant-credentials"; // per-tenant assume-role identity (ADR-0014)
 export * from "./adapters/local-credential-broker";
 export * from "./adapters/noop-credential-broker";
