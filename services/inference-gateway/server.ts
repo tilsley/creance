@@ -20,20 +20,24 @@ import { BedrockAnthropicUpstream } from "./bedrock-anthropic";
 const providers = providersFromEnv();
 const { authenticator, inferenceForTenant, claimSource, claimWrite, gate, tenantCredentials } = providers;
 const port = Number(process.env.PORT ?? 3100);
-// route each caller to the model named on its claim (ADR-0021), when a claim source is configured
-const modelFor = claimSource ? (sa: string) => claimSource.forServiceAccount(sa).then((c) => c?.model) : undefined;
 
-// Anthropic passthrough wire (ADR-0028): Bedrock upstream + alias map. MODEL_ALIASES maps
-// claim/client model names to Bedrock ids, e.g.
-// {"claude-haiku":"eu.anthropic.claude-haiku-4-5-20251001-v1:0"}; unmapped names pass
-// through as-is, and no name at all falls back to MODEL_ID.
+// MODEL_ALIASES maps claim/client model names to Bedrock ids, e.g.
+// {"claude-haiku":"eu.anthropic.claude-haiku-4-5-20251001-v1:0"}; an unmapped name passes
+// through as-is, no name at all falls back to MODEL_ID. Applied on BOTH wires (ADR-0028) so a
+// claim can name a friendly alias regardless of which endpoint serves it — without it the
+// bespoke /v1/generate path handed the raw alias to Bedrock ("invalid model identifier").
 const aliases: Record<string, string> = process.env.MODEL_ALIASES ? JSON.parse(process.env.MODEL_ALIASES) : {};
+const resolveModel = (m?: string): string | undefined => (m ? (aliases[m] ?? m) : process.env.MODEL_ID);
+
+// route each caller to the model named on its claim (ADR-0021), resolved through the alias map
+const modelFor = claimSource ? (sa: string) => claimSource.forServiceAccount(sa).then((c) => resolveModel(c?.model)) : undefined;
+
 const messagesDeps = {
   authenticator,
   gate,
   upstream: new BedrockAnthropicUpstream(process.env.REGION ?? "eu-west-2", tenantCredentials),
   claimFor: claimSource ? (sa: string) => claimSource.forServiceAccount(sa) : undefined,
-  resolveModel: (m?: string) => (m ? (aliases[m] ?? m) : process.env.MODEL_ID),
+  resolveModel,
 };
 
 const server = Bun.serve({

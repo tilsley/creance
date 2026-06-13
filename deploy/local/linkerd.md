@@ -29,7 +29,7 @@ kubectl annotate ns agentos-gw linkerd.io/inject=enabled --overwrite        # me
 # gateway in mesh mode: AUTHN=mesh-id, MESH_IDENTITY_HEADER=l5d-client-id (no token verification)
 helm upgrade inference-gateway charts/inference-gateway -n agentos-gw \
   --set env.AUTHN=mesh-id --set env.MESH_IDENTITY_HEADER=l5d-client-id --set env.CLAIM_SOURCE=static \
-  --set-string 'env.CLAIMS_STATIC={"system:serviceaccount:agentos-gw:spine-agent":{"model":"eu.anthropic.claude-haiku-4-5-20251001-v1:0","monthlyBudgetUsd":5}}'
+  --set-string 'env.CLAIMS_STATIC={"system:serviceaccount:agentos-gw:spine-agent":{"model":"claude-haiku","monthlyBudgetUsd":5}}'
 kubectl -n agentos-gw rollout restart deploy/inference-gateway     # re-injected, now 2/2
 kubectl -n agentos-gw apply -f examples/spine-agent/k8s-pod-mesh.yaml   # NO token, NO projected volume
 kubectl -n agentos-gw logs spine-agent-mesh -c agent

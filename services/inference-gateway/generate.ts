@@ -51,6 +51,11 @@ export async function handleGenerate(req: Request, deps: GenerateDeps): Promise<
     return Response.json(turn);
   } catch (e) {
     if (e instanceof BudgetExceededError) return Response.json({ error: "budget exceeded", budget: e.status }, { status: 402 });
+    // Bedrock rejected the request shape or model id (e.g. a claim naming an unknown model) —
+    // a caller/config error, not a gateway fault. Surface 400 with the detail so it's
+    // diagnosable, rather than an opaque 500.
+    if ((e as Error)?.name === "ValidationException")
+      return Response.json({ error: "invalid inference request", detail: (e as Error).message }, { status: 400 });
     return Response.json({ error: "inference failed", detail: (e as Error)?.message }, { status: 500 });
   }
 }

@@ -2,8 +2,8 @@
 # Run the doc-gardener against a live Bun inference gateway (ADR-0028), on a throwaway fixture
 # repo with deliberate docs drift (undocumented script + env var, stale path reference). Proves
 # the whole chain locally: detectors → OpenCode session (think via the governed gateway on the
-# Anthropic /v1/messages wire, file-tool edits) → write allowlist → diff. The claim names the
-# real Bedrock id — on /v1/messages the claim's model wins and is handed to Bedrock verbatim.
+# Anthropic /v1/messages wire, file-tool edits) → write allowlist → diff. The claim names a
+# friendly alias; the gateway's MODEL_ALIASES maps it to the Bedrock id (both wires — ADR-0028).
 #   bash apps/doc-gardener/run.sh      (from the repo root)
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
@@ -14,9 +14,9 @@ trap cleanup EXIT
 
 echo "▶ boot the Bun inference gateway (bob's claim \$5; spend → DynamoDB agent-os-budgets)"
 GATE=local AUTHN=token GATE_TOKENS="tok-bob:bob:bob" \
-  CLAIM_SOURCE=static CLAIMS_STATIC="{\"bob\":{\"model\":\"$HAIKU\",\"monthlyBudgetUsd\":5}}" \
+  CLAIM_SOURCE=static CLAIMS_STATIC='{"bob":{"model":"claude-haiku","monthlyBudgetUsd":5}}' \
   INFERENCE_PROVIDER=bedrock SPEND_STORE=dynamodb SPEND_TABLE=agent-os-budgets \
-  MODEL_ID="$HAIKU" SANDBOX_PROVIDER=local PORT=4000 \
+  MODEL_ID="$HAIKU" MODEL_ALIASES="{\"claude-haiku\":\"$HAIKU\"}" SANDBOX_PROVIDER=local PORT=4000 \
   bun run services/inference-gateway/server.ts > /tmp/doc-gardener-gw.log 2>&1 &
 GW_PID=$!
 curl -s --retry 90 --retry-delay 1 --retry-connrefused -o /dev/null http://localhost:4000/healthz 2>/dev/null

@@ -35,7 +35,7 @@ claim/budget, and calls Bedrock. Validated end to end on colima/k3s: `status=com
 make k8s-creds   # but into agentos-gw; see the spine k8s notes
 helm install inference-gateway charts/inference-gateway -n agentos-gw --create-namespace \
   --set env.CLAIM_SOURCE=static \
-  --set-string 'env.CLAIMS_STATIC={"system:serviceaccount:agentos-gw:spine-agent":{"model":"eu.anthropic.claude-haiku-4-5-20251001-v1:0","monthlyBudgetUsd":5}}'
+  --set-string 'env.CLAIMS_STATIC={"system:serviceaccount:agentos-gw:spine-agent":{"model":"claude-haiku","monthlyBudgetUsd":5}}'
 kubectl apply -n agentos-gw -f examples/spine-agent/k8s-pod.yaml
 kubectl -n agentos-gw logs spine-agent
 ```
