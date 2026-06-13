@@ -41,8 +41,14 @@ try {
   const result = await runSandboxedAgent({
     session,
     task,
-    // the foreign CLI is launched, not loop-driven; the wrapper next to this file is the shim.
-    spec: { name: "claude-code-agent", kind: "sandboxed", command: `bash ${import.meta.dir}/run-claude.sh` },
+    // the foreign CLI is launched, not loop-driven; the wrapper is the shim. A compiled binary's
+    // import.meta.dir is a virtual path, so the image sets SANDBOXED_AGENT_CMD to the baked wrapper;
+    // `bun run` (local/dev) falls back to the wrapper sitting next to this file.
+    spec: {
+      name: "claude-code-agent",
+      kind: "sandboxed",
+      command: process.env.SANDBOXED_AGENT_CMD ?? `bash ${import.meta.dir}/run-claude.sh`,
+    },
     gatewayUrl,
     token,
     telemetry: providers.telemetry,

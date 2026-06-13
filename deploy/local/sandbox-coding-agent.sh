@@ -30,6 +30,9 @@ printf 'env:\n  CLAIM_SOURCE: static\n  CLAIMS_STATIC: '\''{"%s":{"model":"claud
 helm upgrade --install inference-gateway charts/inference-gateway -n "$GW_NS" --create-namespace \
   -f "$CLAIMS_FILE" >/dev/null
 rm -f "$CLAIMS_FILE"
+# the step-1 secret refresh doesn't restart the pod, and an unchanged helm spec won't roll it —
+# force a restart so the gateway always loads the FRESH short-lived creds (else: stale-token 500s on re-runs).
+kubectl -n "$GW_NS" rollout restart deploy/inference-gateway >/dev/null
 kubectl -n "$GW_NS" rollout status deploy/inference-gateway --timeout=180s
 
 echo "▶ 3/5  build the python-capable coding-agent image (colima docker runtime ⇒ k3s sees it)"

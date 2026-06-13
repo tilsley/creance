@@ -20,9 +20,9 @@ spec:
   restartPolicy: Never
   containers:
     - name: agent
-      image: sandboxed-agent:dev # node + bun + Claude Code; runs the Model B launcher
+      image: sandboxed-agent:dev # node + Claude Code + the compiled launcher binary
       imagePullPolicy: Never
-      command: ["bun", "run", "examples/sandboxed-agent/index.ts"] # default task is baked into the launcher
+      command: ["/usr/local/bin/launcher"] # the compiled Model B launcher; default task is baked in
       env:
         - { name: AGENT_TOKEN_FILE, value: /var/run/agent/token } # projected SA token
         - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-sandbox:sandboxed-agent" } # hint; token is authoritative

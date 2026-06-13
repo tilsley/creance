@@ -1,8 +1,19 @@
-# sandboxed-agent (Model B, ADR-0020/0022) — a REAL foreign coding CLI in a box.
-# Node (Claude Code is a Node CLI) + Bun (the @agent-os launcher) + git/python3 for the agent's
-# own `do`. The pod runs the launcher, which launches Claude Code INSIDE the sandbox; Claude
-# Code's inference is pointed at the in-cluster gateway, its execution contained by the egress
-# wall. The pod carries no model creds — identity is a projected SA token the gateway verifies.
+# sandboxed-agent (Model B, ADR-0020/0022) — a REAL foreign coding CLI in a box, COMPILED.
+#
+# Stage 1 bundles the launcher + only the code it reaches (@agent-os/core + the AWS/k8s SDKs) into
+# one self-contained binary via `bun build --compile`. Stage 2 is just Node (Claude Code is a Node
+# CLI) + the CLI + that binary — dropping the ~1GB monorepo workspace install entirely (~3GB → ~1.3GB).
+# The pod still carries no model creds; identity is a projected SA token the gateway verifies.
+
+# ---- build: compile the launcher to a standalone binary (this stage is discarded) ----
+FROM oven/bun:1 AS build
+WORKDIR /app
+# .dockerignore strips node_modules/.git/.venv
+COPY . .
+RUN bun install --frozen-lockfile
+RUN bun build examples/sandboxed-agent/index.ts --compile --outfile /launcher
+
+# ---- runtime: Node (for Claude Code) + the CLI + the compiled launcher; no Bun, no node_modules ----
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
@@ -10,19 +21,16 @@ RUN apt-get update \
   && ln -sf /usr/bin/python3 /usr/local/bin/python \
   && rm -rf /var/lib/apt/lists/*
 
-# the foreign CLI (Claude Code) + Bun (the launcher imports @agent-os/core, a Bun workspace)
-RUN npm install -g bun @anthropic-ai/claude-code
+# the foreign CLI (Claude Code) — a Node global; the launcher is self-contained, so Bun is not needed here
+RUN npm install -g @anthropic-ai/claude-code
 
-WORKDIR /app
-# .dockerignore strips node_modules/.git/.venv, so this is source + manifests only.
-COPY . .
-# --production: the launcher only needs runtime deps (drops test/types/CDK devDeps)
-RUN bun install --frozen-lockfile --production
+COPY --from=build /launcher /usr/local/bin/launcher
+COPY examples/sandboxed-agent/run-claude.sh /usr/local/bin/run-claude-agent
+RUN chmod +x /usr/local/bin/launcher /usr/local/bin/run-claude-agent
 
-# Claude Code refuses --dangerously-skip-permissions under root ("for security reasons"), so the
-# contained agent runs unprivileged as the node base image's built-in `node` user (uid 1000).
-# Containment is the egress wall + the pod boundary, not uid 0.
+# a compiled binary's import.meta.dir is a virtual FS path, so point the launcher at the baked wrapper
+ENV SANDBOXED_AGENT_CMD="bash /usr/local/bin/run-claude-agent"
+
+# Claude Code refuses --dangerously-skip-permissions under root, so run as the base image's node user.
 USER node
-
-# The pod (examples/sandboxed-agent/k8s-pod.yaml) runs the launcher; default task is baked in.
-CMD ["bun", "run", "examples/sandboxed-agent/index.ts"]
+CMD ["/usr/local/bin/launcher"]
