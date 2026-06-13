@@ -135,6 +135,19 @@ gates pass. Bedrock-only; the wire↔API matrix is deliberate:**
    The TS/Python drift risk [0027](0027-two-deployment-profiles.md) accepted disappears — one
    gate implementation, one language.
 
+6. **One model-resolution map, both wires** (added in execution, 2026-06-13). The *claim* names
+   the model — a friendly alias (`claude-haiku`), never the client-supplied name — and the gateway
+   resolves it to a Bedrock id through a single `MODEL_ALIASES` map shared by *both* wires
+   (`resolveModel` in [`server.ts`](../../services/inference-gateway/server.ts)): on `/v1/messages`
+   it replaces the body's `model` (the "strip to the profile ARN" of §1), on `/v1/generate` it
+   resolves the claim's model before the `Converse` call. The seam that forced this rule: the
+   bespoke wire originally skipped alias resolution, so a claim naming an alias reached Bedrock raw
+   and `ValidationException`'d **after** authn/claim/budget all passed — a late, opaque 500. Two
+   lessons banked: model vocabulary is *identical* across wires (a wire-specific resolver is a
+   drift bug waiting to happen), and a model the gateway can't resolve is a **400** (caller/config
+   error), not a 500. ADR-0003's port discipline applies to the alias map too — it lives in the
+   gateway composition root, not in the `BedrockInferenceProvider` adapter, which stays model-id-only.
+
 ```
 client (Anthropic SSE)                 runtime (neutral port)
   └─▶ /v1/messages                       └─▶ /v1/generate
