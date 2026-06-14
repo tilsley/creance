@@ -14,6 +14,10 @@ infra/.cdk.staging/
 .env.*
 *.pem
 
+# agent runtime memory (files-first `remember`, ADR-0030) — durable per-run state, not source
+**/.memory/
+**/.agent-memory/
+
 # OS / editor
 .DS_Store
 .idea/

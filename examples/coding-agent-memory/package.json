@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/coding-agent-memory-demo",
+  "private": true,
+  "type": "module",
+  "description": "coding agent + files-first memory — a governed coding agent that remembers across runs via durable Markdown (ADR-0030)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

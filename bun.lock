@@ -36,6 +36,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/coding-agent-memory": {
+      "name": "@agent-os/coding-agent-memory-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/credential-broker": {
       "name": "@agent-os/credential-broker-demo",
       "dependencies": {
@@ -169,6 +175,8 @@
     "@agent-os/claims-controller": ["@agent-os/claims-controller@workspace:services/claims-controller"],
 
     "@agent-os/coding-agent-demo": ["@agent-os/coding-agent-demo@workspace:examples/coding-agent"],
+
+    "@agent-os/coding-agent-memory-demo": ["@agent-os/coding-agent-memory-demo@workspace:examples/coding-agent-memory"],
 
     "@agent-os/core": ["@agent-os/core@workspace:packages/core"],
 
