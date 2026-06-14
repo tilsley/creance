@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tool-gateway
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: { app: tool-gateway }
+  template:
+    metadata:
+      labels: { app: tool-gateway }
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: tool-gateway
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 3200
+          env:
+{{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
+          {{- if .Values.awsCredsSecret }}
+          envFrom:
+            - secretRef: { name: {{ .Values.awsCredsSecret | quote }}, optional: true }
+          {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3200 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway
+spec:
+  selector: { app: tool-gateway }
+  ports:
+    - { port: {{ .Values.servicePort }}, targetPort: 3200 }

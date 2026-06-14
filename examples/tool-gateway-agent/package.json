@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/tool-gateway-agent-demo",
+  "private": true,
+  "type": "module",
+  "description": "tool-gateway e2e — an agent that thinks via the inference gateway and calls tools via the centralized tool gateway (both choke points composed, ADR-0029)",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

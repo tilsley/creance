@@ -1,0 +1,37 @@
+# The centralized tool/MCP gateway in k8s (ADR-0011 dir. b / ADR-0029). Configured purely by env
+# (ports/adapters seam). Default: verify caller SA tokens via TokenReview (AUTHN=oidc-sa, same
+# audience as the inference gateway), no downstream creds (noop broker), fronting the demo "orders"
+# MCP server (stdio, spawned in-pod).
+#   docker build -t tool-gateway:dev -f services/tool-gateway/Dockerfile . \
+#     && helm install tool-gateway charts/tool-gateway -n agentos-gw   (full e2e: deploy/local/tool-gateway-e2e.sh)
+image:
+  repository: tool-gateway
+  tag: dev
+  pullPolicy: Never # local docker image (k3s docker runtime); EKS: a registry repo
+replicas: 1
+servicePort: 3200
+
+podAnnotations: {}
+
+env:
+  # Bun's fetch doesn't pick up the cluster CA that @kubernetes/client-node expects, so the in-pod
+  # TokenReview call fails SELF_SIGNED_CERT_IN_CHAIN without this (same as the inference gateway).
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  # authn: TokenReview the caller's projected SA token. Callers mint:
+  #   kubectl create token <sa> --audience=agent-os-gateway
+  AUTHN: oidc-sa
+  OIDC_SA_AUDIENCE: agent-os-gateway
+  # oidc-sa resolves the verified SA → tenant via a claim source. Use static (CLAIMS_STATIC), not
+  # the kube CRD reader — the tool gateway needs no budget claims and shouldn't read the inference
+  # CRDs (it has no RBAC for them). CLAIMS_STATIC must list the caller SAs (the e2e script sets it).
+  CLAIM_SOURCE: static
+  # downstream creds for the fronted servers (ADR-0010): noop = none (the demo server needs none).
+  # CRED_BROKER=local/vault injects scoped creds into a server with a credentialTarget.
+  CRED_BROKER: noop
+  # the fronted MCP servers + per-tenant allowlist (ADR-0011). The demo "orders" server, stdio,
+  # spawned in-pod (the image has bun + examples/). Open to all tenants by default; the e2e script
+  # overrides this to scope it to the agent's tenant, which also demonstrates the policy.
+  MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"]}}'
+
+# the tool gateway is credential-light — no Bedrock, no AWS. Left unset (no envFrom secret).
+awsCredsSecret: ""

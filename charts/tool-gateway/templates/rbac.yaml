@@ -1,0 +1,30 @@
+# The tool gateway's own identity + the one cluster read it performs:
+#   - TokenReview (authn): submit callers' SA tokens to the API server for verification —
+#     the AUTHN=oidc-sa trust root (same as the inference gateway). Cluster-scoped by API design.
+# No claim CRDs here — the tool gateway reads no claims (per-tenant policy is in MCP_SERVERS).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tool-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-tokenreview
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: tool-gateway
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-tokenreview
+  apiGroup: rbac.authorization.k8s.io

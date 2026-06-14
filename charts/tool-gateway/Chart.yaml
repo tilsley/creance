@@ -1,0 +1,11 @@
+apiVersion: v2
+name: tool-gateway
+description: >-
+  The centralized tool/MCP gateway as a pod (ADR-0011 dir. b / ADR-0029) — one shared endpoint
+  holds the MCP connections, the per-tenant allowlist, and the broker creds; agents resolve
+  (POST /tools/list) + invoke (POST /tools/call) their external tools through it, forwarding only
+  identity. Verifies caller ServiceAccount tokens via TokenReview (AUTHN=oidc-sa); default-deny
+  per-tenant allowlist. Credential-light — no Bedrock, no AWS by default.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

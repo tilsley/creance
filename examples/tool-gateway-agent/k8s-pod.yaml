@@ -1,0 +1,48 @@
+# The tool-gateway e2e agent AS A POD (ADR-0029) — runs through BOTH choke points:
+#   think → the in-cluster inference gateway → Bedrock   (decides to call a tool)
+#   tools → the in-cluster tool gateway → MCP (orders)    (never connects to the MCP server)
+# It holds no model creds and no tool creds — only a projected SA token (audience agent-os-gateway)
+# that BOTH gateways verify via TokenReview and derive the tenant from. Deploy in agentos-gw (same
+# namespace as the gateways, so the short Service DNS resolves).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tool-gateway-agent
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tool-gateway-agent
+  labels: { app: tool-gateway-agent }
+spec:
+  serviceAccountName: tool-gateway-agent
+  restartPolicy: Never
+  containers:
+    - name: agent
+      image: tool-gateway-agent:dev
+      imagePullPolicy: Never
+      command: ["bun", "run", "examples/tool-gateway-agent/index.ts"]
+      env:
+        - { name: AGENT_TOKEN_FILE, value: /var/run/agent/token } # projected SA token, forwarded to both gateways
+        - { name: AGENT_TENANT, value: "system:serviceaccount:agentos-gw:tool-gateway-agent" } # hint; token is authoritative
+        - { name: INFERENCE_GATEWAY_URL, value: "http://inference-gateway:3100" } # think
+        - { name: INFERENCE_GATEWAY_WIRE, value: "bespoke" } # the Bun runtime wire (/v1/generate)
+        - { name: TOOL_GATEWAY_URL, value: "http://tool-gateway:3200" } # do — tools
+        - { name: MODEL_ID, value: "claude-haiku" }
+        - { name: SANDBOX_PROVIDER, value: "local" } # a workspace session for the built-in tools (unused by this task)
+        - { name: INFERENCE_PROVIDER, value: "scripted" } # base provider unused — inference goes via the gateway
+        - { name: GATE, value: "noop" } # the gateways gate; the agent does not
+        - { name: TELEMETRY, value: "console" }
+      volumeMounts:
+        - { name: gw-token, mountPath: /var/run/agent, readOnly: true }
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+  volumes:
+    - name: gw-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: agent-os-gateway # must match both gateways' OIDC_SA_AUDIENCE
+              expirationSeconds: 600
+              path: token

@@ -79,6 +79,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/tool-gateway-agent": {
+      "name": "@agent-os/tool-gateway-agent-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/tracer-bullet": {
       "name": "@agent-os/tracer-bullet",
       "dependencies": {
@@ -189,6 +195,8 @@
     "@agent-os/ticket-bot-demo": ["@agent-os/ticket-bot-demo@workspace:examples/ticket-bot"],
 
     "@agent-os/tool-gateway": ["@agent-os/tool-gateway@workspace:services/tool-gateway"],
+
+    "@agent-os/tool-gateway-agent-demo": ["@agent-os/tool-gateway-agent-demo@workspace:examples/tool-gateway-agent"],
 
     "@agent-os/tracer-bullet": ["@agent-os/tracer-bullet@workspace:examples/tracer-bullet"],
 
