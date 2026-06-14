@@ -36,6 +36,21 @@ runtime:
   # set false); gateTokens: GATE_TOKENS=token:tenant:subject,… (optional, created out of band).
   awsCredsSecret: aws-creds
   gateTokensSecret: gate-tokens
+  # remember (ADR-0030): durable, per-tenant long-term memory as files. AGENT_MEMORY_DIR is mounted
+  # here; the adapter creates one subdir per tenant under it (isolation). retrieval=keyword (cheap,
+  # files-first) or =vector (Bedrock Titan embeddings, semantic). Set enabled:false to turn memory off.
+  memory:
+    enabled: true
+    dir: /var/lib/agent-os/memory
+    retrieval: keyword
+    persistence:
+      enabled: true # PVC so memory survives pod restarts; false ⇒ emptyDir (ephemeral, for testing)
+      size: 1Gi
+      # k3s default (local-path) is ReadWriteOnce — fine for the single-node POC (replicas:1). For
+      # EKS scale-out (HPA >1 across nodes) use a ReadWriteMany class (EFS): set accessMode + storageClass.
+      accessMode: ReadWriteOnce
+      storageClass: "" # "" = the cluster default StorageClass
+      existingClaim: "" # bring-your-own PVC instead of the chart creating one
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }

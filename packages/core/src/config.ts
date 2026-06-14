@@ -45,6 +45,10 @@ import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
 import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
 import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
+import { FilesMemory } from "./adapters/files-memory";
+import { VectorMemory } from "./adapters/vector-memory";
+import { BedrockEmbeddings } from "./adapters/bedrock-embeddings";
+import type { MemoryAdapter } from "./memory";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate, Authenticator, Authorizer } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -74,6 +78,9 @@ export interface Providers {
   /** Per-tenant assume-role AWS creds (ADR-0014), when TENANT_ASSUME_ROLE is on — lets the
    *  gateway's passthrough wire (ADR-0028) scope its Bedrock client to the tenant's role. */
   tenantCredentials?: TenantCredentials;
+  /** Durable per-tenant long-term memory (ADR-0030), when AGENT_MEMORY_DIR is set; undefined
+   *  disables it (the runtime then injects no memory and offers no `remember` tools). */
+  memory?: MemoryAdapter;
 }
 
 type Env = Record<string, string | undefined>;
@@ -115,6 +122,16 @@ export function providersFromEnv(env: Env = process.env): Providers {
   const guard: ContentGuard = env.GUARDRAIL_ID
     ? new BedrockContentGuard(env.GUARDRAIL_ID, env.GUARDRAIL_VERSION ?? "DRAFT", region)
     : new NoopContentGuard();
+
+  // remember (ADR-0030): durable, per-tenant long-term memory, files-first. Enabled by AGENT_MEMORY_DIR
+  // (a durable mount in-cluster; a host dir locally) — unset disables it. MEMORY_RETRIEVAL=keyword
+  // (cheap default) or =vector (Bedrock Titan embeddings, semantic recall). Writes are screened by the
+  // SAME guard as the loop (ADR-0008), since a remembered note re-enters future sessions.
+  const memory: MemoryAdapter | undefined = !env.AGENT_MEMORY_DIR
+    ? undefined
+    : (env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
+      ? new VectorMemory(env.AGENT_MEMORY_DIR, new BedrockEmbeddings(undefined, region), guard)
+      : new FilesMemory(env.AGENT_MEMORY_DIR, guard);
 
   const telemetry: TelemetrySink = (() => {
     switch (env.TELEMETRY ?? "console") {
@@ -325,5 +342,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite, tenantCredentials };
+  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite, tenantCredentials, memory };
 }
