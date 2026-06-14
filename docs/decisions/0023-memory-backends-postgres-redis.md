@@ -42,6 +42,21 @@ hot-path or coordination needs.**
   Postgres is the durable production home — see [ADR-0026](0026-gateway-hot-path-authn-authz-budget.md).)
 - **Don't split prematurely.** A coding-agent POC can run Postgres-only; introduce Redis at
   the first real queue/cache need.
+- **Why not OpenSearch Serverless (yet).** A dedicated vector engine — OpenSearch Serverless
+  with its vector collection — is the obvious "buy" alternative to pgvector for semantic
+  retrieval, and the natural home for scale. We pass on it now for the same reason we lead
+  with Postgres: **"serverless" here means no node management, not no idle cost.** OpenSearch
+  Serverless bills a minimum OCU floor 24/7 (capacity stays warm to serve instantly), and that
+  floor alone exceeds the whole control-plane budget (~$73/mo, [costs.md](../costs.md)) — the
+  opposite of our scale-to-zero posture everywhere else (Aurora Serverless v2 at 0 ACUs,
+  AgentCore pay-per-use). For POC-scale corpora pgvector in the cluster we already run is both
+  cheaper at idle *and* one fewer store to operate, scope for tenant isolation, and guard.
+  Revisit OpenSearch (Serverless or provisioned) only when corpus size or recall quality
+  outgrows pgvector — at which point the OCU floor is amortized by real query volume and the
+  managed ANN indexing earns its cost. Same `StateStore` port, so it stays an
+  adapter+endpoint swap, not a redesign. (Distinct from the **observability** use of OpenSearch
+  for traces in [data-log-stack.ts](../../infra/lib/data-log-stack.ts) — that's the `record`
+  control, a different store for a different workload.)
 
 ## Consequences for guard
 
