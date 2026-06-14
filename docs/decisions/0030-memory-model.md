@@ -1,6 +1,6 @@
 # ADR-0030: Memory model — `remember` as a primitive behind a port; files-first and vector/graph as reference adapters
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-14
 
 ## Context
@@ -98,6 +98,31 @@ across the field (openclaw's gates, Generative-Agents reflection).
 **7. Profile default** (mirrors [0027](0027-two-deployment-profiles.md)): **cheap profile → files-first**
 (no vector infra, scale-to-zero, transparent); **full profile → vector/graph** (pgvector / Mem0 / Zep)
 for scale + temporal. Same `remember` contract across both, like every other capability.
+
+## Implementation (built 2026-06-14)
+
+Both **reference adapters** of the port exist and are validated end-to-end:
+
+- **`MemoryAdapter` port** (`packages/core/src/memory.ts`) — `recall(tenant)` (the MEMORY.md block
+  injected at session start) + `tools(tenant)` (`remember` / `memory_search`). The *strategy is the
+  adapter*, not the primitive.
+- **Files-first / cheap profile** (`FilesMemory`) — Markdown is the source of truth; keyword search with
+  honest stopword removal. Per-tenant subdirectory isolation.
+- **Full profile** (`VectorMemory`) — same files-first Markdown, but `memory_search` is **semantic**
+  (Amazon Titan Text Embeddings v2 via Bedrock, keyless). A `.index.json` sidecar is brute-forced
+  in-process (correct + instant at files-first scale; **pgvector is the at-scale swap behind the same
+  adapter**, [0023](0023-memory-backends-postgres-redis.md)) and **self-heals** from MEMORY.md, so human
+  edits to the file are picked up.
+- **Access policy is enforced, not just stated** — `remember` **writes are guard-screened**
+  ([0008](0008-guard-content-safety-primitive.md)): a blocked note is refused (never persisted, not to
+  Markdown nor the index); a masked note is stored masked. A remembered note re-enters future sessions,
+  so the gate is at the write door.
+- **Proven live** (`examples/coding-agent-memory`, Bedrock eu-west-2): memory **persists across a fresh
+  session** through the governed gateway, and the **semantic edge** is isolated at the tool level — a
+  no-shared-keyword query that keyword search misses, vector recalls by meaning.
+
+**Not yet built (deliberate, decided):** pgvector at scale; graph/temporal (Zep) and managed (Mem0/Letta)
+adapters; the consolidation/reflection pass. All swappable behind this same port.
 
 ## Consequences
 
