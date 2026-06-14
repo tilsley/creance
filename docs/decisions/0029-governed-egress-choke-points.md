@@ -101,7 +101,9 @@ primitive with an access policy at the typed port.** Reasoning, threat by threat
 - **Misuse within the verbs** (read-all, bulk-exfil): bounded by tenant scope + `record` audit +
   **egress containment** — even a broad read can't leave past the wall/proxy. Composition, not a
   new service.
-- **The one open design choice:** should `remember` expose *destructive* ops (delete/overwrite) to
+- **The one open design choice** (now settled by [0030](0030-memory-model.md): **append-mostly** — the
+  agent edits its own memory, destructive bulk-delete is the platform's, git gives audit/rollback for
+  the files adapter): should `remember` expose *destructive* ops (delete/overwrite) to
   the agent at all, or be **append-mostly** with deletes reserved to the platform (GC/retention)?
   Leaning append-mostly + platform-side GC. Flagged as the decision to settle when cross-run memory
   is built.

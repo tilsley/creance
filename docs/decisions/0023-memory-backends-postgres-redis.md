@@ -1,6 +1,8 @@
 # ADR-0023: Memory backends — Postgres (system of record) + Redis (hot tier), not DynamoDB
 
-- **Status:** Proposed
+- **Status:** Proposed — repositioned by [0030](0030-memory-model.md): these backends are the *durable
+  store + retrieval index* behind the `remember` port, not the agent's interface (which may be files-first
+  markdown). The backend choice stands; the memory *model* is 0030's.
 - **Date:** 2026-06-01
 
 ## Context
