@@ -51,6 +51,7 @@ export * from "./adapters/noop-credential-broker";
 export * from "./adapters/obo-token-vault-broker"; // on-behalf-of token exchange (ADR-0010)
 // tools (#4): MCP gateway
 export * from "./adapters/mcp-tool-provider";
+export * from "./adapters/gateway-tool-provider"; // centralized tool-gateway client (ADR-0011 dir. b, 0029)
 // remember: durable run store
 export * from "./adapters/dynamodb-run-store";
 // #5: agent control plane — CRD-backed registry

@@ -39,6 +39,7 @@ import { LocalCredentialBroker } from "./adapters/local-credential-broker";
 import { NoopCredentialBroker } from "./adapters/noop-credential-broker";
 import { OboTokenVaultBroker } from "./adapters/obo-token-vault-broker";
 import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
+import { GatewayToolProvider } from "./adapters/gateway-tool-provider";
 import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
 import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
@@ -288,12 +289,19 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  // tool gateway (ADR-0011): built-in tools always; MCP servers added when
-  // MCP_SERVERS is configured. The runtime resolves a per-run toolset through it.
+  // tool gateway (ADR-0011): built-in tools (workspace + http) always run in-process. External
+  // tools come EITHER from the centralized tool gateway (TOOL_GATEWAY_URL — ADR-0011 dir. b /
+  // 0029: one shared service holds the MCP connections + creds, the runtime forwards identity and
+  // holds neither) OR from MCP servers connected in-process (MCP_SERVERS — dir. a). Both behind
+  // the same ToolProvider port; the loop is unchanged.
   const toolProvider: ToolProvider = (() => {
     const providers: ToolProvider[] = [new BuiltinToolProvider(credentials)];
-    const mcpServers: McpServers = env.MCP_SERVERS ? JSON.parse(env.MCP_SERVERS) : {};
-    if (Object.keys(mcpServers).length) providers.push(new McpToolProvider(mcpServers, credentials));
+    if (env.TOOL_GATEWAY_URL) {
+      providers.push(new GatewayToolProvider(env.TOOL_GATEWAY_URL));
+    } else {
+      const mcpServers: McpServers = env.MCP_SERVERS ? JSON.parse(env.MCP_SERVERS) : {};
+      if (Object.keys(mcpServers).length) providers.push(new McpToolProvider(mcpServers, credentials));
+    }
     return new CompositeToolProvider(providers);
   })();
 

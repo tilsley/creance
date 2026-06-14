@@ -61,3 +61,16 @@ Implements the tool half of [ADR-0007](0007-tools-and-external-auth.md); consume
 the `CredentialBroker` ([ADR-0010](0010-credential-broker.md)) and `Principal`
 ([ADR-0009](0009-gate-identity-and-governance.md)); same ports-and-adapters
 discipline as [ADR-0003](0003-ports-and-adapters.md).
+
+## Built — direction (b), self-hosted (2026-06-14)
+
+Direction (b) — "the gateway **is** a single endpoint fronting everything for any client" — was
+documented above only as the **AgentCore Gateway** managed swap-in. It now also has a **self-hosted**
+realization: `services/tool-gateway` (a standalone Bun service mirroring the inference gateway). It
+reuses the same `McpToolProvider` + `CredentialBroker` + authn, but exposes them over HTTP —
+`POST /tools/list` (the caller's tenant's permitted tools) and `POST /tools/call` (execute one,
+server-side, creds injected). Agents resolve through `GatewayToolProvider` (the client side, behind
+the same `ToolProvider` port), forwarding only identity. So 50 agents share one MCP connection pool
+and one credential holder, not 50 — the centralization realized in [ADR-0029](0029-governed-egress-choke-points.md)'s
+choke-point map, without the AWS coupling. Connection pooling (a fresh connect per call today) and
+the managed AgentCore endpoint remain the scale/managed follow-ups.

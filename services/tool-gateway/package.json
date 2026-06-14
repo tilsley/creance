@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/tool-gateway",
+  "private": true,
+  "type": "module",
+  "description": "The centralized tool/MCP execution path — one shared service holds the MCP connections + per-tenant policy + broker creds; agents resolve/invoke tools through it (ADR-0011 dir. b, ADR-0029)",
+  "scripts": {
+    "start": "bun run server.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

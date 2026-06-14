@@ -113,10 +113,13 @@ if it upholds the seam: multi-tenant isolation + the constrained, non-SQL verb s
 
 ## Build backlog vs control-to-specify
 
-- **Build:** the **centralized tool/MCP gateway** ([0007](0007-tools-and-external-auth.md)/[0011](0011-tool-mcp-gateway.md))
-  — proven in-process today, not yet the shared, multiplexed, credential-holding pool that N agents
-  would share (one Slack MCP server for 50 agents, not 50). This is the one choke point still owed
-  as a service.
+- **Built (2026-06-14):** the **centralized tool/MCP gateway** ([0007](0007-tools-and-external-auth.md)/[0011](0011-tool-mcp-gateway.md)
+  direction (b)) is now a standalone service — `services/tool-gateway` (`POST /tools/list` +
+  `/tools/call`) holds the MCP connections, the per-tenant allowlist, and the broker creds; an agent
+  resolves + invokes through it via `GatewayToolProvider`, forwarding only identity (it opens no tool
+  connection and holds no tool credential). Validated: per-tenant list, server-side execution,
+  default-deny on un-permitted tools. *Follow-ups:* connection pooling (a fresh connect per call
+  today, per [0011](0011-tool-mcp-gateway.md)) and the AgentCore-managed hosted swap-in.
 - **Specify (control, not service):** the `remember` **access policy** — scoped reads, the
   append-mostly / destructive-op stance, volume limits, audit — alongside cross-run memory.
 

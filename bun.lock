@@ -144,6 +144,12 @@
         "@aws-sdk/client-bedrock-runtime": "^3.716.0",
       },
     },
+    "services/tool-gateway": {
+      "name": "@agent-os/tool-gateway",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@agent-os/a2a-delegation-demo": ["@agent-os/a2a-delegation-demo@workspace:examples/a2a-delegation"],
@@ -181,6 +187,8 @@
     "@agent-os/spine-agent-demo": ["@agent-os/spine-agent-demo@workspace:examples/spine-agent"],
 
     "@agent-os/ticket-bot-demo": ["@agent-os/ticket-bot-demo@workspace:examples/ticket-bot"],
+
+    "@agent-os/tool-gateway": ["@agent-os/tool-gateway@workspace:services/tool-gateway"],
 
     "@agent-os/tracer-bullet": ["@agent-os/tracer-bullet@workspace:examples/tracer-bullet"],
 
