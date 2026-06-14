@@ -18,13 +18,29 @@ import { mkdirSync, existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "../tools";
 import type { MemoryAdapter } from "../memory";
+import type { ContentGuard } from "../ports";
+import { NoopContentGuard } from "./noop-guard";
 
 // prettier-ignore
 const STOPWORDS = new Set("a an and are as at be but by do does for from how i in into is it of on or our that the this to was what when where which who will with you your".split(" "));
 
 export class FilesMemory implements MemoryAdapter {
   readonly name = "files";
-  constructor(protected readonly root: string) {}
+  constructor(
+    protected readonly root: string,
+    // A remembered note is re-injected into FUTURE sessions' system prompts, so unsafe content
+    // persisted here would re-enter the agent across runs. Screen writes at the door (ADR-0030
+    // access-policy / ADR-0008 guard). Defaults to no-op so the demo runs without a guardrail.
+    protected readonly guard: ContentGuard = new NoopContentGuard(),
+  ) {}
+
+  /** Screen a note before it is persisted. Returns the (possibly masked) text to store, or `null`
+   *  if the guard blocked it outright — the note must NOT be written. Direction is "output": the
+   *  agent is emitting content into the durable store (it becomes ingress when re-injected later). */
+  protected async screenWrite(note: string): Promise<string | null> {
+    const v = await this.guard.screen(note, "output");
+    return v.blocked ? null : v.text;
+  }
 
   /** per-tenant directory (isolation); `protected` so VectorMemory can index the same files. */
   protected dir(tenant: string): string {
@@ -61,8 +77,10 @@ export class FilesMemory implements MemoryAdapter {
         run: async (i) => {
           const note = String(i.note ?? "").trim().replace(/\s+/g, " ");
           if (!note) return "error: empty note";
-          appendFileSync(this.memoryFile(tenant), `- ${note}\n`);
-          return `remembered: ${note}`;
+          const safe = await this.screenWrite(note);
+          if (safe === null) return "refused: that note was blocked by content safety and was NOT saved";
+          appendFileSync(this.memoryFile(tenant), `- ${safe}\n`);
+          return `remembered: ${safe}`;
         },
       },
       {

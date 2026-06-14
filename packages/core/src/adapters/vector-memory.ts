@@ -13,6 +13,8 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "../tools";
+import type { ContentGuard } from "../ports";
+import { NoopContentGuard } from "./noop-guard";
 import { FilesMemory } from "./files-memory";
 import { BedrockEmbeddings } from "./bedrock-embeddings";
 
@@ -26,8 +28,9 @@ export class VectorMemory extends FilesMemory {
   constructor(
     root: string,
     private readonly embeddings = new BedrockEmbeddings(),
+    guard: ContentGuard = new NoopContentGuard(),
   ) {
-    super(root);
+    super(root, guard);
   }
 
   private indexFile(tenant: string): string {
@@ -86,11 +89,13 @@ export class VectorMemory extends FilesMemory {
         run: async (i) => {
           const note = String(i.note ?? "").trim().replace(/\s+/g, " ");
           if (!note) return "error: empty note";
-          appendFileSync(this.memoryFile(tenant), `- ${note}\n`); // Markdown = source of truth
+          const safe = await this.screenWrite(note); // same gate as files-first, before it's indexed
+          if (safe === null) return "refused: that note was blocked by content safety and was NOT saved";
+          appendFileSync(this.memoryFile(tenant), `- ${safe}\n`); // Markdown = source of truth
           const idx = this.readIndex(tenant);
-          idx.push({ note, embedding: await this.embeddings.embed(note) }); // vector index over it
+          idx.push({ note: safe, embedding: await this.embeddings.embed(safe) }); // vector index over it
           this.writeIndex(tenant, idx);
-          return `remembered: ${note}`;
+          return `remembered: ${safe}`;
         },
       },
       {

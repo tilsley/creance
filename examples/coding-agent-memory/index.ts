@@ -24,11 +24,15 @@ const model = process.env.MODEL_ID ?? "claude-haiku";
 // the remember adapter, by profile (ADR-0030): keyword (cheap, files-first) or vector (full, Bedrock
 // embeddings — semantic recall). Both files-first; Markdown stays the source of truth.
 const memDir = process.env.AGENT_MEMORY_DIR ?? "./.agent-memory";
-const memory: MemoryAdapter =
-  (process.env.MEMORY_RETRIEVAL ?? "keyword") === "vector" ? new VectorMemory(memDir) : new FilesMemory(memDir);
 const task = process.argv.slice(2).join(" ") || "Tell me what you remember about this project.";
 
 const providers = providersFromEnv();
+// the SAME guard the loop uses screens memory WRITES too: a remembered note re-enters future
+// sessions, so unsafe content is blocked/masked at the door (ADR-0030 access-policy / ADR-0008).
+const memory: MemoryAdapter =
+  (process.env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
+    ? new VectorMemory(memDir, undefined, providers.guard)
+    : new FilesMemory(memDir, providers.guard);
 const runId = `cam-${Date.now()}`;
 const inference = await providers.inferenceForTenant(tenant, token, runId, model);
 
