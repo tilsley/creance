@@ -23,9 +23,12 @@ GW_PID=$!
 curl -s --retry 90 --retry-delay 1 --retry-connrefused -o /dev/null http://localhost:4070/healthz 2>/dev/null
 
 run_agent() { # $1 = task
+  # MEMORY_RETRIEVAL=keyword (default, cheap) or =vector (full profile, Bedrock Titan embeddings).
+  # The vector path also proves semantic recall: see examples/coding-agent-memory/compare-retrieval.ts.
   INFERENCE_GATEWAY_URL=http://localhost:4070 INFERENCE_GATEWAY_WIRE=bespoke \
     AGENT_TOKEN=tok-bob AGENT_TENANT=bob MODEL_ID=claude-haiku \
     SANDBOX_PROVIDER=local GATE=noop TELEMETRY=console AGENT_MEMORY_DIR="$MEMDIR" \
+    MEMORY_RETRIEVAL="${MEMORY_RETRIEVAL:-keyword}" \
     bun run examples/coding-agent-memory/index.ts "$1"
 }
 

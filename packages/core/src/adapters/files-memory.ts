@@ -17,17 +17,22 @@
 import { mkdirSync, existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "../tools";
+import type { MemoryAdapter } from "../memory";
 
-export class FilesMemory {
+// prettier-ignore
+const STOPWORDS = new Set("a an and are as at be but by do does for from how i in into is it of on or our that the this to was what when where which who will with you your".split(" "));
+
+export class FilesMemory implements MemoryAdapter {
   readonly name = "files";
-  constructor(private readonly root: string) {}
+  constructor(protected readonly root: string) {}
 
-  private dir(tenant: string): string {
-    const d = join(this.root, tenant.replace(/[^a-zA-Z0-9_.@:-]/g, "_")); // per-tenant isolation
+  /** per-tenant directory (isolation); `protected` so VectorMemory can index the same files. */
+  protected dir(tenant: string): string {
+    const d = join(this.root, tenant.replace(/[^a-zA-Z0-9_.@:-]/g, "_"));
     mkdirSync(d, { recursive: true });
     return d;
   }
-  private memoryFile(tenant: string): string {
+  protected memoryFile(tenant: string): string {
     return join(this.dir(tenant), "MEMORY.md");
   }
 
@@ -71,7 +76,14 @@ export class FilesMemory {
           },
         },
         run: async (i) => {
-          const words = String(i.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+          // keyword search, with stopword removal so the baseline is honest (not a strawman that
+          // false-matches on "the"/"is"). Its limit — and why the vector adapter exists — is that it
+          // can't match meaning: a query sharing no keywords with the note returns nothing.
+          const words = String(i.query ?? "")
+            .toLowerCase()
+            .split(/\s+/)
+            .map((w) => w.replace(/[^a-z0-9]/g, ""))
+            .filter((w) => w.length > 1 && !STOPWORDS.has(w));
           const text = this.recall(tenant);
           if (!text) return "(memory is empty)";
           const hits = text.split("\n").filter((line) => words.some((w) => line.toLowerCase().includes(w)));

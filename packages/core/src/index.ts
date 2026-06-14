@@ -52,8 +52,11 @@ export * from "./adapters/obo-token-vault-broker"; // on-behalf-of token exchang
 // tools (#4): MCP gateway
 export * from "./adapters/mcp-tool-provider";
 export * from "./adapters/gateway-tool-provider"; // centralized tool-gateway client (ADR-0011 dir. b, 0029)
-// remember: files-first semantic memory (ADR-0030)
+// remember: semantic memory (ADR-0030) — the port + files-first (keyword) and vector (Bedrock) adapters
+export * from "./memory";
 export * from "./adapters/files-memory";
+export * from "./adapters/bedrock-embeddings";
+export * from "./adapters/vector-memory";
 // remember: durable run store
 export * from "./adapters/dynamodb-run-store";
 // #5: agent control plane — CRD-backed registry

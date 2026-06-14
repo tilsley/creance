@@ -14,14 +14,18 @@
  *      AGENT_MEMORY_DIR (durable per-tenant memory root), SANDBOX_PROVIDER=local. Task = CLI args.
  */
 import { readFileSync } from "node:fs";
-import { providersFromEnv, runAgent, workspaceTools, FilesMemory } from "@agent-os/core";
+import { providersFromEnv, runAgent, workspaceTools, FilesMemory, VectorMemory, type MemoryAdapter } from "@agent-os/core";
 
 const tenant = process.env.AGENT_TENANT ?? "bob";
 const token =
   process.env.AGENT_TOKEN ??
   (process.env.AGENT_TOKEN_FILE ? readFileSync(process.env.AGENT_TOKEN_FILE, "utf8").trim() : undefined);
 const model = process.env.MODEL_ID ?? "claude-haiku";
-const memory = new FilesMemory(process.env.AGENT_MEMORY_DIR ?? "./.agent-memory");
+// the remember adapter, by profile (ADR-0030): keyword (cheap, files-first) or vector (full, Bedrock
+// embeddings — semantic recall). Both files-first; Markdown stays the source of truth.
+const memDir = process.env.AGENT_MEMORY_DIR ?? "./.agent-memory";
+const memory: MemoryAdapter =
+  (process.env.MEMORY_RETRIEVAL ?? "keyword") === "vector" ? new VectorMemory(memDir) : new FilesMemory(memDir);
 const task = process.argv.slice(2).join(" ") || "Tell me what you remember about this project.";
 
 const providers = providersFromEnv();
@@ -29,7 +33,7 @@ const runId = `cam-${Date.now()}`;
 const inference = await providers.inferenceForTenant(tenant, token, runId, model);
 
 const recalled = memory.recall(tenant);
-console.log(`▶ coding agent + memory — tenant=${tenant} via ${process.env.INFERENCE_GATEWAY_URL}`);
+console.log(`▶ coding agent + memory (${memory.name}) — tenant=${tenant} via ${process.env.INFERENCE_GATEWAY_URL}`);
 console.log(`  memory loaded: ${recalled ? recalled.split("\n").filter(Boolean).length + " note(s)" : "(empty — first run)"}`);
 console.log(`  task: "${task}"\n`);
 
