@@ -151,6 +151,18 @@ controller:
     requests: { cpu: 50m, memory: 96Mi }
     limits: { cpu: 200m, memory: 256Mi }
 
+# the inference-claims reconciler (ADR-0021) — the cross-object + status half the VAP can't do:
+# sum each namespace's InferenceClaims against its InferenceAllowance and write status.conditions
+# [Ready]; the gateway's KubeClaimSource then honours only non-Rejected claims. Same image, different
+# entrypoint; reads claims cluster-wide (ClusterRole). Opt-in (pairs with claimPolicy); provisions
+# nothing in AWS.
+claimsController:
+  enabled: false
+  reconcileIntervalMs: "10000"
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
 # the per-tenant compute bounds (pairs with the per-tenant $ budget).
 quota:
   enabled: true

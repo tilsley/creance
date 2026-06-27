@@ -1,0 +1,72 @@
+{{- if .Values.claimsController.enabled }}
+# the inference-claims reconciler (ADR-0021) — same image, different entrypoint. Sums each namespace's
+# InferenceClaims against its InferenceAllowance and writes status.conditions[Ready]; the gateway then
+# honours only non-Rejected claims. The cross-object + status half a ValidatingAdmissionPolicy can't do.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: claims-controller
+---
+# Reads claims/allowances cluster-wide (listCustomObjectForAllNamespaces) and writes claim status.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-claims-controller
+rules:
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-claims-controller
+subjects:
+  - kind: ServiceAccount
+    name: claims-controller
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-claims-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claims-controller-config
+data:
+  RECONCILE_INTERVAL_MS: {{ .Values.claimsController.reconcileIntervalMs | quote }}
+  NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claims-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: claims-controller }
+  template:
+    metadata:
+      labels: { app: claims-controller }
+    spec:
+      serviceAccountName: claims-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: claims-controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "run", "services/claims-controller/controller.ts"]
+          envFrom:
+            - configMapRef: { name: claims-controller-config }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources: {{ .Values.claimsController.resources | toYaml | nindent 12 }}
+{{- end }}
