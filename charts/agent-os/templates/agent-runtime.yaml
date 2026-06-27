@@ -35,6 +35,12 @@ data:
   AGENT_MEMORY_DIR: {{ .Values.runtime.memory.dir | quote }}
   MEMORY_RETRIEVAL: {{ .Values.runtime.memory.retrieval | quote }}
 {{- end }}
+{{- if .Values.toolGateway.enabled }}
+  # `do`'s tool face routes through the centralized gateway (ADR-0011 dir. b / ADR-0029): the
+  # runtime resolves external tools from here and forwards the caller's identity — it holds no tool
+  # creds. Requires a token-preserving runtime authn (AUTHN=oidc-sa/mesh) so the token reaches it.
+  TOOL_GATEWAY_URL: {{ printf "http://tool-gateway:%v" .Values.toolGateway.servicePort | quote }}
+{{- end }}
 {{- if .Values.opa.enabled }}
 ---
 # OPA policy for the sidecar (ADR-0015). Source of truth: deploy/local/opa/authz.rego.
