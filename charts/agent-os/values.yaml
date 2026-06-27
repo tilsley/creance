@@ -99,6 +99,45 @@ toolGateway:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
 
+# Inference gateway (ADR-0019/0028) — `think`'s governed chokepoint, the symmetric twin of
+# toolGateway. When enabled, the template injects INFERENCE_GATEWAY_URL into the runtime, which then
+# becomes a gateway CLIENT and holds NO model creds: the gateway is the sole holder of
+# bedrock:InvokeModel, verifies the forwarded caller identity, and enforces the worst-case budget
+# reserve (R2). Enable BOTH gateways and the agent pod holds neither model nor tool creds.
+#
+# Opt-in, and (like toolGateway) it needs the runtime on a token-preserving authn
+# (runtime.env.AUTHN=oidc-sa/mesh) so the caller token reaches it. When enabled, DROP the runtime's
+# aws creds (set runtime.awsCredsSecret="") and give them to the gateway here instead.
+inferenceGateway:
+  enabled: false
+  image:
+    repository: inference-gateway
+    tag: dev
+    pullPolicy: Never # local k3s docker image; EKS: IfNotPresent/Always + a registry repo
+  replicas: 1
+  servicePort: 3100
+  # config (env) — the ports/adapters seam, mirrors charts/inference-gateway. Holds the model creds.
+  env:
+    REGION: eu-west-2
+    AWS_REGION: eu-west-2
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt # in-pod TokenReview TLS
+    AUTHN: oidc-sa # TokenReview the caller's SA token (same audience the runtime forwards)
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: dynamo # per-tenant model + budget; static (CLAIMS_STATIC) for no-AWS dev
+    CLAIMS_TABLE: agent-os-claims
+    GATE: local # worst-case budget reserve/settle (R2)
+    GATE_BUDGET_USD: "1" # fallback cap when a claim names no budget
+    SPEND_STORE: dynamodb # durable monthly counter; memory for no-AWS dev
+    SPEND_TABLE: agent-os-budgets
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    MODEL_ALIASES: '{"claude-haiku":"eu.anthropic.claude-haiku-4-5-20251001-v1:0"}'
+    INFERENCE_PROVIDER: bedrock # the gateway IS the chokepoint — never set INFERENCE_GATEWAY_URL here
+    SANDBOX_PROVIDER: local # unused by the gateway; satisfies the shared providersFromEnv wiring
+  awsCredsSecret: aws-creds # the gateway holds Bedrock creds (EKS: IRSA, set "")
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
 # OPA policy sidecar (ADR-0015) — allow/deny over loopback.
 opa:
   enabled: true

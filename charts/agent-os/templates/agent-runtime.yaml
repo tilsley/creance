@@ -41,6 +41,12 @@ data:
   # creds. Requires a token-preserving runtime authn (AUTHN=oidc-sa/mesh) so the token reaches it.
   TOOL_GATEWAY_URL: {{ printf "http://tool-gateway:%v" .Values.toolGateway.servicePort | quote }}
 {{- end }}
+{{- if .Values.inferenceGateway.enabled }}
+  # `think` routes through the inference gateway (ADR-0019): the runtime becomes a gateway CLIENT and
+  # holds no model creds — the gateway holds bedrock:InvokeModel and enforces the budget. Same
+  # token-preserving authn requirement; drop the runtime's awsCredsSecret when this is on.
+  INFERENCE_GATEWAY_URL: {{ printf "http://inference-gateway:%v" .Values.inferenceGateway.servicePort | quote }}
+{{- end }}
 {{- if .Values.opa.enabled }}
 ---
 # OPA policy for the sidecar (ADR-0015). Source of truth: deploy/local/opa/authz.rego.
