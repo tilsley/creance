@@ -42,6 +42,18 @@ export class FilesMemory implements MemoryAdapter {
     return v.blocked ? null : v.text;
   }
 
+  /** Tokenise a query into match terms: lowercase, strip only LEADING/TRAILING punctuation (keep
+   *  internal code-symbol chars like - _ . / : so IDs and symbols — `ORD-42`, `foo_bar`,
+   *  `agent-os.io` — match exactly), drop stopwords + single chars. `protected` so VectorMemory's
+   *  hybrid search uses the identical keyword signal. */
+  protected queryTerms(query: string): string[] {
+    return query
+      .toLowerCase()
+      .split(/\s+/)
+      .map((w) => w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
+      .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+  }
+
   /** per-tenant directory (isolation); `protected` so VectorMemory can index the same files. */
   protected dir(tenant: string): string {
     const d = join(this.root, tenant.replace(/[^a-zA-Z0-9_.@:-]/g, "_"));
@@ -97,11 +109,7 @@ export class FilesMemory implements MemoryAdapter {
           // keyword search, with stopword removal so the baseline is honest (not a strawman that
           // false-matches on "the"/"is"). Its limit — and why the vector adapter exists — is that it
           // can't match meaning: a query sharing no keywords with the note returns nothing.
-          const words = String(i.query ?? "")
-            .toLowerCase()
-            .split(/\s+/)
-            .map((w) => w.replace(/[^a-z0-9]/g, ""))
-            .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+          const words = this.queryTerms(String(i.query ?? ""));
           const text = this.recall(tenant);
           if (!text) return "(memory is empty)";
           const hits = text.split("\n").filter((line) => words.some((w) => line.toLowerCase().includes(w)));

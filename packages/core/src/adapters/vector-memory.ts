@@ -1,9 +1,13 @@
 /**
  * VectorMemory — the full-profile `remember` adapter (ADR-0030/0027). Files-first like FilesMemory
  * (Markdown MEMORY.md is the source of truth, injected into the system prompt), but `memory_search`
- * is **semantic**: each note is embedded (Bedrock Titan), the query is embedded, and retrieval is by
- * cosine similarity — so "how do I run the unit suite?" finds "the test command is bun test" even with
- * no shared keywords (which the FilesMemory keyword search would miss).
+ * is **hybrid** — keyword-central + semantic-additive (the 2026-06-24 research refinement). Each note
+ * is embedded (Bedrock Titan) and scored by cosine similarity, AND an exact query-term match (a code
+ * symbol / ID / error code) BOOSTS the note. So "how do I run the unit suite?" still finds "the test
+ * command is bun test" by meaning (no shared keyword — what FilesMemory misses), while an exact query
+ * like "ORD-42" or "TenantInferenceProfile" hits its note precisely rather than being lost to fuzzy
+ * similarity. Pure-semantic loses exact-match for symbols; hybrid keeps both (cf. OpenClaw, Anthropic
+ * Contextual Retrieval — BM25/keyword central, embeddings additive).
  *
  * The vector store here is a JSON sidecar (`.index.json`) brute-forced in process — correct + instant
  * at files-first scale (hundreds of notes). At larger scale the same cosine moves to pgvector
@@ -102,8 +106,9 @@ export class VectorMemory extends FilesMemory {
         spec: {
           name: "memory_search",
           description:
-            "Search your long-term memory by MEANING (semantic), not keywords. Returns the most relevant " +
-            "notes even when the wording differs from how you saved them.",
+            "Search your long-term memory by MEANING (semantic) AND exact keywords (hybrid). Finds " +
+            "relevant notes even when the wording differs, and matches exact terms like IDs, code " +
+            "symbols, or error codes precisely.",
           inputSchema: {
             type: "object",
             properties: { query: { type: "string", description: "What you want to recall." } },
@@ -116,8 +121,18 @@ export class VectorMemory extends FilesMemory {
           const idx = await this.ensureIndex(tenant);
           if (!idx.length) return "(memory is empty)";
           const qe = await this.embeddings.embed(q);
+          const terms = this.queryTerms(q);
+          // HYBRID (ADR-0030 research refinement): keyword-central + semantic-additive. Each exact
+          // query-term match (a code symbol / ID / error code) adds KW_BOOST on top of the semantic
+          // cosine — so precise recall isn't lost to fuzzy meaning, while semantic still surfaces
+          // notes that share NO keyword with the query (the edge pure-keyword can't reach).
+          const KW_BOOST = 0.5;
           const ranked = idx
-            .map((e) => ({ note: e.note, score: cosine(qe, e.embedding) }))
+            .map((e) => {
+              const lower = e.note.toLowerCase();
+              const kw = terms.filter((t) => lower.includes(t)).length;
+              return { note: e.note, score: cosine(qe, e.embedding) + KW_BOOST * kw };
+            })
             .sort((a, b) => b.score - a.score)
             .slice(0, 5);
           return ranked.map((r) => `(${r.score.toFixed(2)}) ${r.note}`).join("\n");

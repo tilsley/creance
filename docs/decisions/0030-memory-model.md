@@ -110,11 +110,14 @@ Both **reference adapters** of the port exist and are validated end-to-end:
   adapter*, not the primitive.
 - **Files-first / cheap profile** (`FilesMemory`) — Markdown is the source of truth; keyword search with
   honest stopword removal. Per-tenant subdirectory isolation.
-- **Full profile** (`VectorMemory`) — same files-first Markdown, but `memory_search` is **semantic**
-  (Amazon Titan Text Embeddings v2 via Bedrock, keyless). A `.index.json` sidecar is brute-forced
-  in-process (correct + instant at files-first scale; **pgvector is the at-scale swap behind the same
-  adapter**, [0023](0023-memory-backends-postgres-redis.md)) and **self-heals** from MEMORY.md, so human
-  edits to the file are picked up.
+- **Full profile** (`VectorMemory`) — same files-first Markdown, but `memory_search` is **hybrid**
+  (keyword-central + semantic-additive — the 2026-06-24 research refinement): each note is scored by
+  cosine similarity over Amazon Titan Text Embeddings v2 (via Bedrock, keyless) **plus an exact
+  query-term boost**, so symbols/IDs match precisely *and* no-keyword queries still recall by meaning
+  (the tokenizer keeps internal symbol chars like `-`/`_`/`.` so `ORD-42` matches). A `.index.json`
+  sidecar is brute-forced in-process (correct + instant at files-first scale; **pgvector is the
+  at-scale swap behind the same adapter**, [0023](0023-memory-backends-postgres-redis.md)) and
+  **self-heals** from MEMORY.md, so human edits to the file are picked up.
 - **Access policy is enforced, not just stated** — `remember` **writes are guard-screened**
   ([0008](0008-guard-content-safety-primitive.md)): a blocked note is refused (never persisted, not to
   Markdown nor the index); a masked note is stored masked. A remembered note re-enters future sessions,
