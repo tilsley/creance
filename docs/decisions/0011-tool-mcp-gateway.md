@@ -110,15 +110,17 @@ and correct one imprecision above.
   bash/read/write/exec — *sandbox*-governed, [ADR-0020](0020-sandbox-execution-model.md)) vs
   **`do`-tools** (external/MCP — *gateway*-governed). The gateway governs only the latter, and is
   **MCP-only today** behind the `ToolProvider` port.
-- **The unbuilt part is authorization, not the gateway.** Today `credentialTarget` injects a **static
-  bearer** (Authorization header / stdio env). Real *remote* MCP servers (Atlassian, GitHub's remote,
-  Linear) use **OAuth 2.1** per the MCP authorization spec — dynamic client registration, an
-  authorization-code flow **with user consent**, and **token refresh**. We implement none of it, and
-  the HTTP + broker path is **unexercised** — only a local **stdio mock with no auth** has run
-  end-to-end (incl. the in-cluster e2e). So the gateway's transport + governance are proven against a
-  toy; onboarding a real OAuth-based server is **owed work**: wire **MCP OAuth via the OBO token
-  vault** ([ADR-0016](0016-obo-token-vault.md)), or punt auth to the **AgentCore Gateway** swap-in
-  (which provides OAuth). This — *not* a bilateral MCP gateway — is the real next step for "use a real
-  MCP server through the chokepoint." (Owning the loop that drives all this is a separate, deliberate
-  choice — the governance shell of [ADR-0024](0024-build-vs-buy-managed-agent-platforms.md), not a
-  consequence of the gateway.)
+- **The unbuilt part is authorization, not the gateway — and the static-bearer half is now proven
+  against a real server.** `credentialTarget` injects a **static bearer** (Authorization header / stdio
+  env) that the **CredentialBroker** mints per tenant (default-deny). As of 2026-06-24 this runs
+  against a **real remote MCP server**: GitHub's `https://api.githubcopilot.com/mcp/readonly` over HTTP,
+  with a read-only PAT the broker injects — a Bedrock agent reaches **live GitHub issues**, the PAT
+  stays server-side, and an ungranted tenant is denied, proven **local** (`examples/github-mcp/`) *and*
+  **in-cluster** (`deploy/local/tool-gateway-github-e2e.sh`, the PAT in a k8s Secret mounted only on the
+  gateway pod). What remains owed is narrower: servers that require **OAuth 2.1** (Atlassian, Linear —
+  dynamic client registration, an authorization-code flow **with consent**, **token refresh**) need the
+  **OBO token vault** ([ADR-0016](0016-obo-token-vault.md)) wired to the MCP path, or auth punted to the
+  **AgentCore Gateway** swap-in (which provides OAuth). The static-bearer `LocalCredentialBroker` is the
+  dev shape; prod mints short-lived tokens (a GitHub-App installation token / the vault) — no static PAT.
+  (Owning the loop that drives all this is a separate, deliberate choice — the governance shell of
+  [ADR-0024](0024-build-vs-buy-managed-agent-platforms.md), not a consequence of the gateway.)
