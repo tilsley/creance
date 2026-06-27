@@ -19,8 +19,13 @@ rules:
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
+  # the claims the gateway reads for budget + model routing. InferenceClaim/InferenceAllowance live in
+  # agent-os.io (claimPolicy); the legacy tenantinferenceprofiles (platform.agent-os.io) kept for compat.
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["platform.agent-os.io"]
-    resources: ["tenantinferenceprofiles", "inferenceclaims"]
+    resources: ["tenantinferenceprofiles"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

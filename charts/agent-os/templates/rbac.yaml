@@ -6,6 +6,12 @@ kind: ClusterRole
 metadata:
   name: {{ .Release.Name }}-budget-reader
 rules:
+  # the claims the runtime resolves under AUTHN=oidc-sa (SA→tenant binding) + GATE_BUDGET_SOURCE=kube.
+  # InferenceClaim/InferenceAllowance (agent-os.io) are the current CRDs (claimPolicy); the legacy
+  # tenantinferenceprofiles (platform.agent-os.io) is kept for back-compat.
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["platform.agent-os.io"]
     resources: ["tenantinferenceprofiles"]
     verbs: ["get", "list", "watch"]

@@ -20,6 +20,11 @@ rules:
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
+  # under AUTHN=oidc-sa the gateway resolves the caller SA → tenant from the claim binding (for its
+  # per-tenant tool allowlist). Read-only; harmless when CLAIM_SOURCE=static (no claims read).
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
