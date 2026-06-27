@@ -95,6 +95,8 @@ opa:
   enabled: true
 controller:
   enabled: true
+claimsController:
+  enabled: true # the claims aggregate-controller (ADR-0021) — writes claim status.Ready
 claimPolicy:
   enabled: true
 sampleAgents:

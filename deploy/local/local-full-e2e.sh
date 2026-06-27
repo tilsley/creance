@@ -56,8 +56,8 @@ YAML
 
 echo "▶ wait for rollouts (runtime, both gateways, controller)"
 # pick up same-tag (:dev) image rebuilds — IfNotPresent won't restart pods on an unchanged tag.
-k -n "$NS" rollout restart deploy/agent-runtime deploy/inference-gateway deploy/tool-gateway deploy/agent-controller >/dev/null 2>&1 || true
-for d in inference-gateway tool-gateway agent-runtime agent-controller; do
+k -n "$NS" rollout restart deploy/agent-runtime deploy/inference-gateway deploy/tool-gateway deploy/agent-controller deploy/claims-controller >/dev/null 2>&1 || true
+for d in inference-gateway tool-gateway agent-runtime agent-controller claims-controller; do
   k -n "$NS" rollout status deploy/$d --timeout=150s 2>/dev/null || echo "  ⚠ $d not ready (may be off)"
 done
 
@@ -86,7 +86,9 @@ echo "  runtime AWS creds: ${RT_AWS:-no}"
 k -n "$NS" exec deploy/agent-runtime -- sh -c "cat $MEMFILE 2>/dev/null | tail -3" 2>/dev/null | sed 's/^/  mem: /' || echo "  (no MEMORY.md)"
 
 echo; echo "──────── verdict ────────"; pass=0
+CLAIM_READY="$(k -n "$NS" get inferenceclaim caller-claim -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)"
 echo "$R"    | grep -qa '"completed"'                  && echo "✅ governed run completed (authn oidc-sa + authz OPA + claim budget all admitted it)" || { echo "❌ run did not complete"; pass=1; }
+[ "$CLAIM_READY" = "True" ]                            && echo "✅ claims-controller reconciled the claim to Ready=True (aggregate ≤ allowance)" || { echo "❌ claim not marked Ready (got '${CLAIM_READY:-none}')"; pass=1; }
 echo "$R"    | grep -qai 'shipped\|DHL'                && echo "✅ do-tools: orders tool answered THROUGH the tool gateway" || { echo "❌ no tool result"; pass=1; }
 echo "$RT_LOG" | grep -qaiE 'remember|wrote'           && echo "✅ remember: the agent wrote to durable memory" || echo "⚠ remember not observed in log (check mem file)"
 [ "$RT_AWS" != "yes" ]                                 && echo "✅ runtime holds NO model creds (think went via the inference gateway)" || { echo "❌ runtime has AWS creds"; pass=1; }
