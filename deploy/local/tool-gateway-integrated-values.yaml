@@ -1,0 +1,74 @@
+# AWS-light overrides to verify the tool-gateway FOLDED INTO charts/agent-os (ADR-0011 dir. b /
+# ADR-0029): one `helm install` brings up the runtime AND the tool gateway, and the runtime resolves
+# + invokes an external MCP tool THROUGH the gateway — forwarding only the caller's identity, holding
+# no tool creds. Real Bedrock (Haiku, DIRECT via aws-creds); oidc-sa authn end-to-end; everything
+# else off. Used by deploy/local/tool-gateway-integrated-e2e.sh.
+image:
+  repository: agent-runtime
+  tag: dev
+  pullPolicy: IfNotPresent # k3s containerd already has the ctr-imported agent-runtime:dev
+
+runtime:
+  replicas: 1
+  env:
+    REGION: eu-west-2
+    INFERENCE_PROVIDER: bedrock
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    SANDBOX_PROVIDER: local # built-in tools run in-pod (unused by this task)
+    AGENT_REGISTRY: memory
+    RUN_STORE: memory
+    SPEND_STORE: memory
+    TELEMETRY: console
+    GATE: noop # no budget admission
+    # oidc-sa: TokenReview the caller's SA token AND preserve it (principal.token) so the runtime can
+    # forward a verified identity to the tool gateway. The default `token` authn would drop it.
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-tgw:tgw-caller":{}}' # caller SA → tenant (= the key)
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt # in-pod TokenReview TLS
+    # null ⇒ removed from the chart default env (Helm deep-merge): noop guard, no role assumption,
+    # AllowAll authz, no budget source — none of the AWS control plane needed.
+    GUARDRAIL_ID: null
+    TENANT_ASSUME_ROLE: null
+    AUTHZ: null
+    OPA_URL: null
+    GATE_BUDGET_SOURCE: null
+    GATE_BUDGET_USD: null
+  awsCredsSecret: aws-creds # script creates it from the local profile
+  gateTokensSecret: "" # no static token auth under oidc-sa
+  hpa:
+    enabled: false
+  memory:
+    enabled: false # not testing memory here — keep the run focused on the tool path
+
+# the folded-in tool gateway (this is what we're proving). oidc-sa with the SAME audience the runtime
+# forwards; static SA→tenant binding; the orders MCP server scoped to the caller's tenant (allowlist).
+toolGateway:
+  enabled: true
+  image:
+    repository: tool-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  env:
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-tgw:tgw-caller":{}}'
+    CRED_BROKER: noop
+    MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"],"tenants":["system:serviceaccount:agentos-tgw:tgw-caller"]}}'
+
+# everything below: off — not needed to prove the integrated tool path
+opa:
+  enabled: false
+controller:
+  enabled: false
+claimPolicy:
+  enabled: false
+sampleAgents:
+  enabled: false
+networkPolicy:
+  enabled: false
+quota:
+  enabled: false
