@@ -1,0 +1,139 @@
+# Two agent-runtimes for the multi-agent A2A live proof (ADR-0017/0018). Same agent-runtime:dev
+# image, different config — a real network hop between two pods, each with its own gate.
+#   agent-a (caller): has call_agent + a CredentialBroker grant to "agent-b"; has NO orders tool, so
+#                     it MUST delegate to answer an order question.
+#   agent-b (callee): advertises an A2A Agent Card, AUTHENTICATES inbound A2A calls (AUTHN=token),
+#                     holds the orders MCP tool, and answers. Applied by deploy/local/a2a-multiagent-e2e.sh.
+# The delegation token is a STATIC demo cred (LocalCredentialBroker) — prod swaps to the OBO vault,
+# which carries the real user→agent `act` chain (ADR-0016/0017). Both pods get aws-creds (Bedrock).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-a-config
+data:
+  REGION: eu-west-2
+  AWS_REGION: eu-west-2
+  INFERENCE_PROVIDER: bedrock
+  MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+  SANDBOX_PROVIDER: local
+  AGENT_REGISTRY: memory
+  RUN_STORE: memory
+  SPEND_STORE: memory
+  TELEMETRY: console
+  GATE: noop # the harness drives A unauthenticated; A's principal == {tenant: default}
+  # the broker = the agent allowlist + endpoint directory + (static) delegation token. "agent-b" is
+  # just a credential target, exactly like "github" was for tools.
+  CRED_BROKER: local
+  CRED_BROKER_CONFIG: '{"default":{"agent-b":{"token":"a2a-delegation-token","baseUrl":"http://agent-b:3000"}}}'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-a
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-a }
+  template:
+    metadata:
+      labels: { app: agent-a }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: runtime
+          image: agent-runtime:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: agent-a-config }
+            - secretRef: { name: aws-creds }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-a
+spec:
+  selector: { app: agent-a }
+  ports:
+    - { port: 3000, targetPort: 3000 }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-b-config
+data:
+  REGION: eu-west-2
+  AWS_REGION: eu-west-2
+  INFERENCE_PROVIDER: bedrock
+  MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+  SANDBOX_PROVIDER: local
+  AGENT_REGISTRY: memory
+  RUN_STORE: memory
+  SPEND_STORE: memory
+  TELEMETRY: console
+  A2A_AGENT: agent-b # what B advertises on its Agent Card (also the default agent for inbound calls)
+  # B's agent catalog (the memory registry, seeded — a kube registry would carry an Agent CR). The
+  # caller's `call_agent("agent-b", …)` sends metadata.agent="agent-b", which B resolves to THIS spec.
+  AGENTS_JSON: '[{"name":"agent-b","systemPrompt":"You are an orders specialist. Use your tools to look up the order, then answer concisely with the status and carrier.","maxSteps":6}]'
+  # B authenticates every inbound A2A call (the gate runs at this hop too). AUTHN=token verifies the
+  # bearer A presents; GATE=noop skips budget for the proof (authn is the governance point here).
+  AUTHN: token
+  GATE: noop
+  GATE_TOKENS: 'a2a-delegation-token:teamB:agent-a' # the token A presents → {tenant: teamB, subject: agent-a}
+  # B's own capability: the orders MCP tool (in-process stdio) — what A can't do itself.
+  MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"]}}'
+  CRED_BROKER: noop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-b }
+  template:
+    metadata:
+      labels: { app: agent-b }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: runtime
+          image: agent-runtime:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: agent-b-config }
+            - secretRef: { name: aws-creds }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-b
+spec:
+  selector: { app: agent-b }
+  ports:
+    - { port: 3000, targetPort: 3000 }
