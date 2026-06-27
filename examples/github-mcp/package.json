@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/github-mcp-demo",
+  "private": true,
+  "type": "module",
+  "description": "A REAL MCP server (GitHub remote) through the credential broker — capability + default-deny + cred containment (ADR-0010/0011)",
+  "scripts": {
+    "start": "bun run real.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}

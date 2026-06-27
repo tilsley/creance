@@ -54,6 +54,12 @@
         "@agent-os/core": "workspace:*",
       },
     },
+    "examples/github-mcp": {
+      "name": "@agent-os/github-mcp-demo",
+      "dependencies": {
+        "@agent-os/core": "workspace:*",
+      },
+    },
     "examples/mcp-gateway": {
       "name": "@agent-os/mcp-gateway-demo",
       "dependencies": {
@@ -187,6 +193,8 @@
     "@agent-os/doc-gardener": ["@agent-os/doc-gardener@workspace:apps/doc-gardener"],
 
     "@agent-os/gateway-runtimes-demo": ["@agent-os/gateway-runtimes-demo@workspace:examples/gateway-runtimes"],
+
+    "@agent-os/github-mcp-demo": ["@agent-os/github-mcp-demo@workspace:examples/github-mcp"],
 
     "@agent-os/inference-gateway": ["@agent-os/inference-gateway@workspace:services/inference-gateway"],
 

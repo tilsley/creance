@@ -1,0 +1,63 @@
+# AWS-light overrides to prove a REAL MCP server (GitHub remote, read-only) through the folded-in
+# tool gateway IN-CLUSTER (ADR-0010/0011/0029): the agent-runtime answers a question about a repo by
+# resolving + invoking github tools through the gateway, where the BROKER injects a PAT it reads from
+# a k8s Secret (CRED_BROKER_CONFIG) — so the PAT lives ONLY in the tool-gateway pod, never the agent.
+# Real Bedrock (Haiku, DIRECT); oidc-sa end-to-end. Used by deploy/local/tool-gateway-github-e2e.sh.
+image:
+  repository: agent-runtime
+  tag: dev
+  pullPolicy: IfNotPresent
+
+runtime:
+  replicas: 1
+  env:
+    REGION: eu-west-2
+    INFERENCE_PROVIDER: bedrock
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    SANDBOX_PROVIDER: local
+    AGENT_REGISTRY: memory
+    RUN_STORE: memory
+    SPEND_STORE: memory
+    TELEMETRY: console
+    GATE: noop
+    AUTHN: oidc-sa # verify + preserve the caller token so it forwards to the tool gateway
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-ghub:tgw-caller":{}}'
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    GUARDRAIL_ID: null
+    TENANT_ASSUME_ROLE: null
+    AUTHZ: null
+    OPA_URL: null
+    GATE_BUDGET_SOURCE: null
+    GATE_BUDGET_USD: null
+  awsCredsSecret: aws-creds
+  gateTokensSecret: ""
+  hpa:
+    enabled: false
+  memory:
+    enabled: false
+
+toolGateway:
+  enabled: true
+  image:
+    repository: tool-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  env:
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-ghub:tgw-caller":{}}'
+    CRED_BROKER: local # the broker injects the github PAT (from the Secret) server-side
+    # GitHub's REMOTE read-only MCP server; open to all tenants so the broker grant is the sole gate.
+    MCP_SERVERS: '{"github":{"transport":"http","url":"https://api.githubcopilot.com/mcp/readonly","credentialTarget":"github"}}'
+  credBrokerSecret: github-cred # CRED_BROKER_CONFIG (the PAT) as env — the script creates this Secret
+
+opa: { enabled: false }
+controller: { enabled: false }
+claimPolicy: { enabled: false }
+sampleAgents: { enabled: false }
+networkPolicy: { enabled: false }
+quota: { enabled: false }
