@@ -105,10 +105,14 @@ async function processRun(id: string): Promise<void> {
   const spec = existing.agent ? await agentRegistry.get(existing.agent) : undefined;
   await store.update(id, { status: "running" });
   const session = await providers.sandbox.startSession();
-  // resolve this run's toolset through the gateway (built-in + MCP servers,
-  // per-tenant policy, broker creds injected; ADR-0011)
-  const toolset = await toolProvider.resolve({ principal, session });
+  // resolved INSIDE the try: a tool-gateway/MCP failure (e.g. a 401) must FAIL THE RUN, never crash
+  // the worker — processRun is fire-and-forget (`void processRun`), so an escaping rejection takes the
+  // whole runtime down (one bad run would deny service to every tenant).
+  let toolset: Awaited<ReturnType<typeof toolProvider.resolve>> | undefined;
   try {
+    // resolve this run's toolset through the gateway (built-in + MCP servers,
+    // per-tenant policy, broker creds injected; ADR-0011)
+    toolset = await toolProvider.resolve({ principal, session });
     let result;
     if (spec?.kind === "sandboxed") {
       // Model B (ADR-0019): a self-contained delegated agent runs IN the sandbox; its
@@ -137,7 +141,7 @@ async function processRun(id: string): Promise<void> {
         systemPrompt,
         maxSteps: spec?.maxSteps,
         maxOutputTokens,
-        tools: () => [...toolset.tools, ...memoryTools],
+        tools: () => [...toolset!.tools, ...memoryTools],
         onProgress: (messages) => {
           store.update(id, { messages }).catch(() => {}); // durable per-turn state
         },
@@ -150,7 +154,7 @@ async function processRun(id: string): Promise<void> {
   } catch (e: any) {
     await store.update(id, { status: "failed", error: e?.message ?? String(e) });
   } finally {
-    await toolset.close().catch(() => {});
+    await toolset?.close().catch(() => {});
     await session.close().catch(() => {});
   }
 }
