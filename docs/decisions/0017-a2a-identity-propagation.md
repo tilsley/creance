@@ -58,3 +58,9 @@ identity claims (tenant/subject) so each hop's gate re-authenticates cleanly.
 - **Deferred:** loop/depth guards in policy; a real IdP performing the nesting (vs
   the mock endpoint); adopting a *standard* A2A wire protocol (e.g. Agent2Agent)
   in place of our bespoke `POST /runs` between runtimes.
+- **Live, static fidelity (2026-06-24):** the in-cluster multi-agent proof
+  (`deploy/local/a2a-multiagent-e2e.sh`, [0018](0018-a2a-protocol-transport.md)) demonstrates
+  delegation + gate-at-every-hop + the broker allowlist — but with a **static** delegation token
+  (`LocalCredentialBroker`), so the `act` chain is **not yet carried**. Making the nested `act` real
+  is exactly a swap to `OboTokenVaultBroker` + a real IdP (the OBO work, [0016](0016-obo-token-vault.md)) —
+  no `call_agent` or gate change. So the *propagation path* is proven; the *identity-carrying* half is owed.
