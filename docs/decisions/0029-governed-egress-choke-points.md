@@ -129,6 +129,15 @@ if it upholds the seam: multi-tenant isolation + the constrained, non-SQL verb s
   whole governed-egress topology is one chart), alongside the still-standalone `charts/tool-gateway`.
   *Follow-ups:* connection pooling (a fresh connect per call today, per [0011](0011-tool-mcp-gateway.md))
   and the AgentCore-managed hosted swap-in.
+- **Both chokepoints, one chart, credential-less agent** (2026-06-24): the **inference gateway**
+  ([0019](0019-inference-gateway.md)) is now *also* folded into `charts/agent-os` as the toggleable
+  `inferenceGateway` component (auto-injects `INFERENCE_GATEWAY_URL`; the runtime becomes a gateway
+  client holding no model creds). With both on, the agent pod holds **neither model nor tool creds** —
+  `think` and `do`-tools each terminate at a gateway that holds the credential and bounds the
+  capability. Proven in-cluster end to end: `deploy/local/dual-gateway-e2e.sh` (the runtime has no
+  `aws-creds`, yet completes a reasoning + tool task — so `think` *must* have gone through the
+  gateway), and `deploy/local/tool-gateway-github-e2e.sh` (a real GitHub MCP server reached through
+  the tool gateway with a broker-injected PAT that lives only in the gateway pod).
 - **Specify (control, not service):** the `remember` **access policy** — scoped reads, the
   append-mostly / destructive-op stance, volume limits, audit — alongside cross-run memory.
 
