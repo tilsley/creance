@@ -92,6 +92,9 @@ toolGateway:
     # the fronted MCP servers + per-tenant `tenants` allowlist (default-deny). Demo "orders" server,
     # stdio, spawned in-pod (the image carries bun + examples/). Scope `tenants` per real install.
     MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"]}}'
+  # a Secret supplying CRED_BROKER_CONFIG (the broker grant table with the tool token, e.g. a GitHub
+  # PAT) as env — mounted only on the tool gateway, so the token lives in one pod. "" = none.
+  credBrokerSecret: ""
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }

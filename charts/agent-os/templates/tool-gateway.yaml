@@ -69,6 +69,11 @@ spec:
             - containerPort: 3200
           envFrom:
             - configMapRef: { name: tool-gateway-config }
+          {{- if .Values.toolGateway.credBrokerSecret }}
+            # the broker's grant table (CRED_BROKER_CONFIG) carries downstream tool creds (e.g. a
+            # GitHub PAT) — a Secret, never the ConfigMap. The PAT lives ONLY in this pod (ADR-0010).
+            - secretRef: { name: {{ .Values.toolGateway.credBrokerSecret | quote }} }
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
