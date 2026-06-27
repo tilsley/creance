@@ -34,9 +34,11 @@ Three findings shaped the decision:
 - **"Retrieval > storage."** Every framework can *store*; the differentiator is *how memory is found
   and re-injected*. Recall quality (hybrid vector+keyword, recency/importance/relevance weighting — the
   Generative-Agents triad) is the hard part, not the backend.
-- **Vector RAG fails for code.** Similarity search returns isolated snippets and "misses the forest for
-  the trees" — fetches functions, loses architecture. Hierarchical markdown (Domains → Topics → Context
-  files) beats it. So files-first is not a quirk for coding agents — it is better-evidenced *there*.
+- **Structural search beats vector-RAG *as the default* for code** (refined 2026-06-24 — see the update
+  section; the original "vector RAG *fails* for code" overreaches). Similarity search returns isolated
+  snippets and "misses the forest for the trees" — fetches functions, loses architecture — so
+  agentic/structural search (grep/AST/repo-map) is the default and files-first is better-evidenced
+  *there*; vectors remain an additive, keyword-central hybrid layer, not the primary signal.
 - **The curation problem.** "Building a vector retrieval layer before you understand access patterns is
   building the wrong thing fast." Markdown-first lets you learn the access patterns before optimizing —
   which is *why* the sequencing is build-the-agent-then-design-memory, not the reverse.
@@ -68,7 +70,7 @@ The **common contract** both must honour: durability across runs, **per-tenant s
 retrieval as a first-class operation, and the tier model above.
 
 **3. Use case → default adapter** (the generality — both excel):
-- **Coding agents** → files-first (vector-fails-for-code; transparency; git; sandbox-governed).
+- **Coding agents** → files-first + structural/agentic search (the code default; vectors additive — see the 2026-06-24 update); transparency; git; sandbox-governed.
 - **Support bots / enterprise recall** → vector (Mem0) or temporal graph (Zep) over the knowledge base.
 - **Long-horizon assistants** → tiered self-editing (Letta-style core/recall/archival).
 
@@ -124,6 +126,57 @@ Both **reference adapters** of the port exist and are validated end-to-end:
 **Not yet built (deliberate, decided):** pgvector at scale; graph/temporal (Zep) and managed (Mem0/Letta)
 adapters; the consolidation/reflection pass. All swappable behind this same port.
 
+## Update — production-agent evidence + the hybrid refinement (researched 2026-06-24)
+
+A deeper research pass (20 sources, claims adversarially verified by 3-vote panels) **validated the
+core of this ADR and corrected one overreach.** Net: there is an *emerging, not unanimous* consensus
+that coding agents want **structural/agentic search as the default**, with vectors as an **additive
+hybrid** complement — the honest position is *hybrid*, **not "vectors are dead."**
+
+**Validated (high confidence, primary sources):**
+- **Production agents abandoned vector-RAG for code as the default.** Claude Code's creator (Boris
+  Cherny, Anthropic, on the record) confirms early versions used "RAG + a local vector db" but "agentic
+  search generally works better" — an engineer added it **"outperformed [it] by a lot, and this was
+  surprising."** Its surface is glob + grep (ripgrep) + Read + an Explore sub-agent. **Aider** ranks
+  context via tree-sitter **ASTs + a dependency graph** (PageRank-style), not embeddings.
+- **"Retrieval > storage" is benchmark-confirmed.** SWE-Explore (arXiv:2606.07297, Jun 2026): agentic
+  explorers reach ~0.65 file-recall vs BM25 0.079 / dense 0.088 / random 0.004 (classical retrieval
+  near random) — **and** the limiting term is **line-level localization recall** (~0.14–0.19). Precise
+  *selection*, not storage, is the hard part — exactly this ADR's claim.
+
+**Refined (the overreach):** "Vector RAG *fails* for code" is too absolute. The defensible claim is
+**structural/agentic search is the *default* for code; vectors are an *additive* hybrid complement,
+keyword/BM25-central (exact-match for symbols + IDs).** Anthropic's **Contextual Retrieval** (Sept
+2024): contextual embeddings cut retrieval failure 5.7%→3.7%, **+contextual BM25 → 2.9%**, rerank →
+1.9% (BM25 central, embeddings additive); **Cursor** still runs embeddings (Turbopuffer) and reports a
+**~12.5% accuracy gain** from semantic search "where grep alone falls short." Over-broad claims were
+*refuted* (3-vote): "1M context makes vectors unnecessary" (0-3), "all production agents reject vectors"
+(0-3), "Cody pre-indexes with vectors" (0-3) — so avoid absolutism in *either* direction.
+
+**OpenClaw, corrected:** it is **files-first in *storage*** (3-tier Markdown, "no hidden state") **but
+*hybrid* in retrieval** — `memory_search` combines vector similarity with **keyword matching for exact
+terms like IDs and code symbols.** So it's the existence proof of this ADR's *files-as-truth +
+index-over-files* synthesis — **not** a pure-grep system. It closely mirrors our own `FilesMemory` +
+optional `VectorMemory`.
+
+**What this changes for us (actionable):**
+- **The next memory lever for *coding* is a repo-map / AST / grep tool surface (Aider-style), NOT a
+  better embedding store.** `FilesMemory`'s keyword default is the right base; the high-value add is
+  **structural navigation over the files**, with semantic as the additive layer.
+- **When the vector adapter is built, make it keyword/BM25-*central* + embeddings *additive*** (the
+  Contextual-Retrieval / OpenClaw pattern), with exact-match for code symbols/IDs — not embeddings-first.
+- **Do *not* invest in a managed memory layer (Mem0/Zep) for the *coding* default.** Those target
+  conversational/personalization recall; **no code-specific evidence** surfaced, and their headline
+  benchmarks are inflated (Mem0 self-reported 91.6% LoCoMo vs ~58–66% independent reproduction).
+- **pgvector suffices** as the at-scale backing ([0023](0023-memory-backends-postgres-redis.md)) — the
+  default for the great majority of agent workloads; a specialized vector DB is only warranted at
+  extreme scale (>10M+ vectors / sub-10ms p99).
+
+**Caveats:** fast-moving field; the primary anchors (Aider docs, Anthropic Contextual Retrieval,
+Cursor's blogs, the SWE-Explore paper, Cherny on record) are solid, but several supporting points lean
+on secondary blogs; Claude Code's "autoDream" memory-consolidation subagent appears in *extracted
+system prompts* but is likely **staged/unreleased** (not GA — don't cite as shipped).
+
 ## Consequences
 
 - **+** Stays **general**: support bots get vector/graph recall, coding agents get files-first, both
@@ -159,3 +212,4 @@ recall/scale default) as co-equal adapters; retrieval, not storage, is the hard 
 - Frameworks: [Mem0 vs Zep vs Letta vs Cognee — practical guide](https://dev.to/agdex_ai/ai-agent-memory-in-2026-mem0-vs-zep-vs-letta-vs-cognee-a-practical-guide-cfa) · [5 memory systems compared](https://medium.com/@wasowski.jarek/i-compared-5-ai-agent-memory-systems-across-6-dimensions-none-wins-6a658335ed0a) · [Best memory frameworks 2026](https://atlan.com/know/best-ai-agent-memory-frameworks-2026/)
 - Files-first: [openclaw memory concepts](https://docs.openclaw.ai/concepts/memory) · [`zilliztech/memsearch` (Markdown + Milvus)](https://github.com/zilliztech/memsearch) · [Markdown-first multi-agent memory](https://dev.to/whoffagents/multi-agent-memory-without-a-vector-database-the-markdown-first-approach-2lo0)
 - Retrieval / code: [Why Vector RAG Fails for Code](https://www.byterover.dev/blog/why-vector-rag-fails-for-code-we-tested-it-on-1-300-files) · [Vector vs Graph vs Episodic memory](https://www.digitalapplied.com/blog/agent-memory-architectures-vector-graph-episodic)
+- 2026-06-24 pass (production agents + benchmarks): [Claude Code abandoned indexing for grep](https://vadim.blog/claude-code-no-indexing/) (Cherny on record) · [Aider repo-map (tree-sitter AST + dependency graph)](https://aider.chat/2023/10/22/repomap.html) · [SWE-Explore benchmark, arXiv:2606.07297](https://arxiv.org/html/2606.07297v1) (agentic ≫ classical retrieval; line-recall is the bottleneck) · [Anthropic Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval) (BM25 central, embeddings additive) · [Cursor semantic search](https://cursor.com/blog/semsearch) (hybrid; ~12.5% gain) · [Cursor fast regex search](https://cursor.com/blog/fast-regex-search) (freshness; sparse n-gram index) · [OpenClaw memory](https://docs.openclaw.ai/concepts/memory/) (files-first storage + hybrid retrieval)

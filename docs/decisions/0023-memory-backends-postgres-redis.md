@@ -60,6 +60,16 @@ hot-path or coordination needs.**
   for traces in [data-log-stack.ts](../../infra/lib/data-log-stack.ts) — that's the `record`
   control, a different store for a different workload.)
 
+**Validated by the 2026-06-24 memory research** ([ADR-0030](0030-memory-model.md) update): pgvector is
+the right default for the great majority of agent workloads — a specialized vector DB
+(Pinecone/Qdrant/Weaviate/Milvus/Turbopuffer) is only warranted at **extreme scale** (>~10M+ vectors /
+sub-10ms p99 / deep multi-tenant). Two refinements to *how* it's used: (1) retrieval should be
+**hybrid — keyword/BM25-central with embeddings additive** (exact-match for code symbols/IDs), not
+embeddings-first; Postgres serves both (`tsvector`/`pg_trgm` + pgvector) in one store, reinforcing the
+"one durable store" thesis. (2) For *coding* memory specifically, the higher-value lever is
+**structural/agentic search over the files** (grep/AST/repo-map), with pgvector the additive semantic
+layer — so the durable-backing role here is index-behind-the-files, not the agent's primary interface.
+
 ## Consequences for guard
 
 Adding long-term / semantic memory creates a **new untrusted-ingress crossing** that
