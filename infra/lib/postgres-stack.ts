@@ -17,7 +17,7 @@ import { Construct } from "constructs";
  *  - Self-contained minimal VPC: 2 AZs, PUBLIC subnets only, NO NAT gateways
  *    (= $0 idle networking). Dev access is opt-in: pass
  *    `-c dbAllowedCidr=<your-ip>/32` to open 5432; default is NO ingress.
- *    (The skeleton CoreVpcStack absorbs this when the real infra milestone lands.)
+ *    (Self-contained on purpose — the EKS-side VPC is eksctl's, not CDK's.)
  *  - DESTROY removal policy: this is a POC store — `cdk destroy AgentOsPostgres`
  *    cleans up completely.
  *
