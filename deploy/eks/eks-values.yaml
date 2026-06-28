@@ -1,0 +1,72 @@
+# eks (CHEAP profile) — the field-trip topology, now deployed by the chart instead of the
+# hand-written deploy/eks/agent-runtime.yaml. ONE pod: the runtime calls Bedrock itself via
+# the keyless base -> per-tenant chain (assume agentos-teama), with DynamoDB stores and the
+# full gate (authn oidc-sa + authz OPA + kube budget). No gateways, no claims control plane —
+# the cheapest thing that proves the current chart runs keyless on EKS.
+#
+#   helm install agent-os charts/agent-os -n agent-os --create-namespace -f deploy/eks/eks-values.yaml
+#   + kubectl apply -f deploy/eks/tenant-cr.yaml   (the TenantInferenceProfile claim + its RBAC)
+#
+# Namespace MUST be agent-os — that's what the cluster.yaml podIdentityAssociation binds, and
+# the tenant is resolved from the TenantInferenceProfile (serviceAccount -> tenant), not the ns.
+image:
+  repository: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/agent-runtime
+  tag: dev
+  pullPolicy: IfNotPresent # ECR image (EKS containerd can't see a local docker image)
+
+runtime:
+  enabled: true
+  replicas: 1
+  env:
+    REGION: eu-west-2
+    INFERENCE_PROVIDER: bedrock
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0 # Haiku: tool-use capable (ADR-0007)
+    SANDBOX_PROVIDER: local # no AgentCore on the POC cluster
+    RUN_STORE: dynamodb
+    RUNS_TABLE: agent-os-runs
+    SPEND_STORE: dynamodb # durable monthly counter (ADR-0013)
+    SPEND_TABLE: agent-os-budgets
+    TELEMETRY: console
+    GATE: local
+    GATE_BUDGET_SOURCE: kube # cap from TenantInferenceProfile.spec.monthlyBudgetUsd
+    GATE_BUDGET_USD: "10" # fallback
+    TENANT_ASSUME_ROLE: kube # KEYLESS per-tenant Bedrock: STS-assume status.roleArn (ADR-0014)
+    AUTHN: oidc-sa # TokenReview the caller's SA token, resolve tenant from the claim binding
+    OIDC_SA_AUDIENCE: agent-os # callers project their SA token for this audience
+    AUTHZ: opa
+    OPA_URL: http://localhost:8181/v1/data/agentos/authz
+    AGENT_REGISTRY: memory # a single inline agent (no Agent CRs in the cheap profile)
+    AGENTS_JSON: |
+      [{ "name": "haiku-helper", "tenant": "teama", "maxSteps": 4,
+         "systemPrompt": "You are a concise assistant. Answer the user in one short line, then stop." }]
+    # legacy TenantInferenceProfile claim source (TENANT_CLAIM_* deliberately UNSET) — that CRD
+    # carries status.roleArn (the InferenceClaim CRD does not). drop the AWS-targeting defaults
+    # the cheap profile doesn't use:
+    GUARDRAIL_ID: null # no Bedrock guardrail (noop guard) — keeps the teama grant minimal
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  awsCredsSecret: "" # KEYLESS — Pod Identity injects rotating creds (no Secret to expire)
+  gateTokensSecret: "" # oidc-sa, not static tokens
+  memory:
+    enabled: true
+    dir: /var/lib/agent-os/memory
+    retrieval: keyword # files-first; no Bedrock embeddings (cheap)
+    persistence:
+      enabled: true
+      size: 1Gi
+      accessMode: ReadWriteOnce # RWO EBS volume ⇒ single replica
+      storageClass: gp3 # the SC run.sh creates after the EBS CSI addon lands
+  hpa:
+    enabled: false # RWO memory PVC ⇒ pinned to one replica
+
+# the InferenceClaim world is the FULL profile's; the cheap profile uses TenantInferenceProfile.
+inferenceGateway: { enabled: false }
+toolGateway: { enabled: false }
+claimsController: { enabled: false }
+claimPolicy: { enabled: false }
+sampleAgents: { enabled: false }
+controller: { enabled: false } # no Agent CRs to reconcile (AGENT_REGISTRY=memory)
+
+# kept on: the loopback authz sidecar + the per-tenant compute bounds + ingress containment.
+opa: { enabled: true }
+quota: { enabled: true }
+networkPolicy: { enabled: true }

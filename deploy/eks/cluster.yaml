@@ -13,12 +13,21 @@ metadata:
   name: agent-os
   region: eu-west-2
 
-# Pod Identity: the agent-runtime SA -> a scoped role. Replaces the aws-creds Secret.
-# This base identity does NOT touch Bedrock directly — it only assumes the per-tenant
-# role (agentos-<tenant>, which holds the scoped Bedrock invoke) and reaches the run +
-# budget tables. That's the keyless base -> per-tenant chain (ADR-0014).
+# Pod Identity: SA -> scoped role, no aws-creds Secret. TWO associations, one per deploy
+# profile (deploy/eks/run.sh cheap|full) — both keyless, both harmless when the other
+# profile is the one running (an unbound role is just unused):
+#
+#   CHEAP profile (eks-values.yaml): the agent-runtime SA calls Bedrock itself, via the
+#   keyless base -> per-tenant chain — it assumes agentos-<tenant> (which holds the scoped
+#   invoke) and reaches the run + budget tables. The field-trip path (ADR-0014).
+#
+#   FULL profile (eks-full-values.yaml): the runtime holds NOTHING (think/do go through the
+#   gateways, stores are in-memory). The inference-gateway SA is the sole Bedrock holder and
+#   invokes Haiku directly with its own identity — no per-tenant assume, the gateway is the
+#   chokepoint (ADR-0019/0028).
 iam:
   podIdentityAssociations:
+    # — CHEAP profile — keyless base that assumes the per-tenant role + reaches the tables.
     - namespace: agent-os
       serviceAccountName: agent-runtime
       roleName: agent-os-eks-runtime
@@ -51,12 +60,37 @@ iam:
               - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-runs
               - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-runs/index/*
               - arn:aws:dynamodb:eu-west-2:233965347831:table/agent-os-budgets
+    # — FULL profile — the inference gateway is the sole model-cred holder (keyless, direct
+    # Haiku invoke). Unused by the cheap profile (no inference-gateway pod), which is fine.
+    - namespace: agent-os
+      serviceAccountName: inference-gateway
+      roleName: agent-os-eks-inference-gateway
+      permissionPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InvokeHaiku
+            Effect: Allow
+            Action: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+            # The eu inference profile fans out across the region group, so the grant needs
+            # BOTH the profile ARN and the underlying foundation-model ARNs in those regions
+            # (account-Marketplace subscription is separate + already in place — ADR-0007).
+            Resource:
+              - arn:aws:bedrock:eu-west-2:233965347831:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
 
 addons:
   - name: vpc-cni
   - name: coredns
   - name: kube-proxy
   - name: eks-pod-identity-agent # required for Pod Identity
+  # durable `remember` (ADR-0030): the memory PVC needs a real CSI driver to bind a volume.
+  # Keyless too — useDefaultPodIdentityAssociations makes eksctl create the controller SA's Pod
+  # Identity with the managed AmazonEBSCSIDriverPolicy (the addon's own recommended association).
+  - name: aws-ebs-csi-driver
+    useDefaultPodIdentityAssociations: true
 
 managedNodeGroups:
   - name: ng-1
