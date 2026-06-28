@@ -71,15 +71,16 @@ iam:
           - Sid: InvokeHaiku
             Effect: Allow
             Action: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-            # The eu inference profile fans out across the region group, so the grant needs
-            # BOTH the profile ARN and the underlying foundation-model ARNs in those regions
-            # (account-Marketplace subscription is separate + already in place — ADR-0007).
+            # The eu inference profile fans the call out across the WHOLE eu region group
+            # (eu-west-1/2/3, eu-central-1, eu-north-1, eu-south-…) — the routed region isn't
+            # knowable ahead of time, so the grant needs the profile ARN (region-pinned, where
+            # the request enters) PLUS the foundation-model ARN with a region wildcard (the
+            # model is account-less; only the region varies). Proven on the field trip: a fixed
+            # region list 500s when the profile routes to an unlisted region (it picked eu-north-1).
+            # (account-Marketplace subscription is separate + already in place — ADR-0007.)
             Resource:
               - arn:aws:bedrock:eu-west-2:233965347831:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0
-              - arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
-              - arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
-              - arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
-              - arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+              - arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
 
 addons:
   - name: vpc-cni
