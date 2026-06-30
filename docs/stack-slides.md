@@ -87,7 +87,7 @@ flowchart TB
 flowchart LR
   subgraph PRIM["PRIMITIVES — the agent's work"]
     direction LR
-    T["think"] ~~~ D["do"] ~~~ Rm["remember"]
+    T["model calls"] ~~~ D["tool calls"] ~~~ Rm["memory"]
   end
   subgraph CTRL["CONTROLS — the platform's checks"]
     direction LR
