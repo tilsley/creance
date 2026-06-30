@@ -28,11 +28,11 @@ flowchart TB
 ```mermaid
 flowchart TB
   subgraph HARNESS["HARNESS — the software you run · OpenCode (TUI) · Gemini (web UI)<br/>UI · tool dispatch · context · persistence"]
-    Start(["task"]) --> Think["<b>think</b> — call a model"]
+    Start(["task"]) --> Think["<b>call a model</b>"]
     Think --> Q{"act?"}
     Q -- "no" --> Done(["answer"])
-    Q -- "yes" --> Do["<b>do</b> — call a tool (e.g. run code)"]
-    Do --> Rem["<b>remember</b> — save state"]
+    Q -- "yes" --> Do["<b>call a tool</b> (e.g. run code)"]
+    Do --> Rem["<b>save to memory</b>"]
     Rem --> Think
   end
 ```
@@ -67,7 +67,7 @@ flowchart TB
     Pr["prompts"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
   end
   subgraph HARNESS["THE HARNESS — the software that runs the agent loop"]
-    L["think → do → remember, every step"]
+    L["model call → tool call → memory, every step"]
   end
   subgraph PLATFORM["THE PLATFORM — the part your tools handle for you"]
     direction LR
@@ -77,7 +77,7 @@ flowchart TB
   HARNESS -->|"rests on"| PLATFORM
 ```
 
-*The craft sits on a harness; the harness sits on a platform. Strip the vocabulary and most of the craft is just a way to arrange `think`, `do`, `remember`. Take a layer away and everything above it falls.*
+*The craft sits on a harness; the harness sits on a platform. Strip the vocabulary and most of the craft is just a way to arrange `model calls`, `tool calls`, `memory`. Take a layer away and everything above it falls.*
 
 ---
 
@@ -115,10 +115,10 @@ flowchart LR
 ```mermaid
 flowchart LR
   Caller(["caller<br/>+ identity"]) -->|"① POST /runs"| RT["<b>agent-runtime</b> — the harness (the loop)<br/>the only fully-trusted code"]
-  RT -->|"② think · model call"| GW["<b>inference-gateway</b><br/>gate (authn · authz · budget 402) + guard<br/>holds the model credential"]
+  RT -->|"② model call"| GW["<b>inference-gateway</b><br/>gate (authn · authz · budget 402) + guard<br/>holds the model credential"]
   GW <-->|"call"| Model["model<br/>(Bedrock / …)"]
-  RT -->|"③ do · tool call"| SB["<b>sandbox-manager</b><br/>contain · isolation + egress lockdown"]
-  RT -->|"④ remember · memory"| ST[("<b>store</b><br/>Postgres · Redis")]
+  RT -->|"③ tool call"| SB["<b>sandbox-manager</b><br/>contain · isolation + egress lockdown"]
+  RT -->|"④ memory"| ST[("<b>store</b><br/>Postgres · Redis")]
   RT -.->|"record · every step"| OB["telemetry"]
 ```
 
@@ -131,10 +131,10 @@ flowchart LR
 ```mermaid
 flowchart LR
   Caller(["you<br/>in the terminal"]) -->|"① prompt"| RT["<b>opencode</b> — TUI client + server<br/>the harness (the loop)"]
-  RT -->|"② think"| GW["🚫 no gateway<br/>direct provider call ·<br/>key in auth.json on your disk"]
+  RT -->|"② model call"| GW["🚫 no gateway<br/>direct provider call ·<br/>key in auth.json on your disk"]
   GW <-->|"call"| Model["model"]
-  RT -->|"③ do · tool call"| SB["🚫 no containment<br/>tools hit your real shell + cwd ·<br/>permission prompt = manual gate"]
-  RT -->|"④ remember"| ST[("local SQLite<br/>opencode.db")]
+  RT -->|"③ tool call"| SB["🚫 no containment<br/>tools hit your real shell + cwd ·<br/>permission prompt = manual gate"]
+  RT -->|"④ memory"| ST[("local SQLite<br/>opencode.db")]
   RT -.->|"record"| OB["local log files"]
 ```
 
@@ -148,9 +148,9 @@ flowchart LR
 flowchart LR
   subgraph S["stub — start today"]
     direction TB
-    s1["think (model call) · direct SDK call"]
-    s2["do (tool call) · run tools locally"]
-    s3["remember (memory) · in-memory"]
+    s1["model call · direct SDK call"]
+    s2["tool call · run tools locally"]
+    s3["memory · in-memory"]
     s4["gate · allow-all + static token"]
     s5["record · console.log"]
     s6["guard · passthrough"]
@@ -224,8 +224,8 @@ flowchart TB
 ```mermaid
 flowchart TB
   Q["&quot;Aren't skills / evals / workflows<br/>just more primitives or controls?&quot;"]
-  Q --> A["<b>No — the craft is never irreducible.</b><br/>Dependencies point down: a skill imports think + do;<br/>think never imports a skill."]
-  A --> C1["most craft = <b>composition</b><br/>reasoning · skills · workflows · harness<br/>are arrangements of think / do / remember<br/>→ reducible, so not a primitive"]
+  Q --> A["<b>No — the craft is never irreducible.</b><br/>Dependencies point down: a skill imports model + tool calls;<br/>a model call never imports a skill."]
+  A --> C1["most craft = <b>composition</b><br/>reasoning · skills · workflows · harness<br/>are arrangements of model calls / tool calls / memory<br/>→ reducible, so not a primitive"]
   A --> C2["evals = <b>meta-activity</b><br/>runs out-of-band on the <i>record</i> —<br/>not in-path, can't say no<br/>→ not a control"]
 ```
 
@@ -237,8 +237,8 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  RT["<b>reasoning techniques</b> — how you shape <i>think</i> (inside one step)"]
-  SK["<b>skills</b> — packaged <i>do</i>: instructions + tools, reusable"]
+  RT["<b>reasoning techniques</b> — how you shape a <i>model call</i> (inside one step)"]
+  SK["<b>skills</b> — packaged tool calls: instructions + tools, reusable"]
   WF["<b>workflows</b> — a graph you draw up front"]
   EV["<b>evals</b> — out-of-band quality; beside the path, not in it"]
   HN["<b>harness</b> — the software that runs the loop"]
@@ -246,7 +246,7 @@ flowchart TB
   RT ~~~ SK ~~~ WF ~~~ EV ~~~ HN ~~~ PL
 ```
 
-*Strip the vocabulary and most of it is a way to arrange `think`, `do`, `remember`.*
+*Strip the vocabulary and most of it is a way to arrange `model calls`, `tool calls`, `memory`.*
 
 ---
 
@@ -257,7 +257,7 @@ flowchart LR
   COMP["<b>composition</b><br/>harness · workflows"] -->|"runs / arranges"| PRIM
   PROT["<b>protocol / interface</b><br/>MCP · A2A"] -->|"plugs into"| PRIM
   CONF["<b>config / content</b><br/>skills · prompts · agent specs"] -->|"fed into"| PRIM
-  META["<b>meta-activity</b><br/>evals"] -->|"measures the output of"| PRIM["<b>PRIMITIVES</b><br/>think · do · remember<br/><i>irreducible mechanism, behind a port</i>"]
+  META["<b>meta-activity</b><br/>evals"] -->|"measures the output of"| PRIM["<b>PRIMITIVES</b><br/>model calls · tool calls · memory<br/><i>irreducible mechanism, behind a port</i>"]
 ```
 
 *A primitive is the mechanism; everything else is defined **relative** to it. The harness **runs** it · MCP **plugs into** it · a skill is **fed into** it (content it consumes, not a capability of its own) · evals **measure** its output. Pull the primitives out and the rest is inert — MCP has nothing to connect to, a skill nothing to feed, the harness nothing to loop over. They can't return the favor.*
