@@ -52,7 +52,7 @@ flowchart LR
 flowchart TB
   subgraph CRAFT["THE CRAFT — making the agent good"]
     direction LR
-    R["reasoning"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
+    P["prompts"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
   end
   subgraph HARNESS["THE HARNESS — the software that runs the agent loop"]
     L["think → do → remember, every step"]
@@ -83,7 +83,7 @@ flowchart LR
   end
 ```
 
-*A **primitive** is an irreducible capability the agent acts with to make progress — one you can't build from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission.*
+*A **primitive** is a basic thing an agent does to make progress — a building block you can't make from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission.*
 
 ---
 
@@ -253,8 +253,8 @@ flowchart TB
 flowchart LR
   COMP["<b>composition</b><br/>harness · workflows"] -->|"runs / arranges"| PRIM
   PROT["<b>protocol / interface</b><br/>MCP · A2A"] -->|"plugs into"| PRIM
-  CONF["<b>config / content</b><br/>skills · prompts · agent specs"] -->|"loaded to drive"| PRIM
+  CONF["<b>config / content</b><br/>skills · prompts · agent specs"] -->|"fed into"| PRIM
   META["<b>meta-activity</b><br/>evals"] -->|"measures the output of"| PRIM["<b>PRIMITIVES</b><br/>think · do · remember<br/><i>irreducible mechanism, behind a port</i>"]
 ```
 
-*A primitive is irreducible mechanism; everything else is defined **relative** to it — it **runs** it (harness), **plugs into** it (MCP), **packages** it (skills), or **measures** it (evals). Pull `do` out and MCP has nothing to connect to, skills nothing to invoke, the harness nothing to loop over — they can't return the favor.*
+*A primitive is the mechanism; everything else is defined **relative** to it. The harness **runs** it · MCP **plugs into** it · a skill is **fed into** it (content it consumes, not a capability of its own) · evals **measure** its output. Pull the primitives out and the rest is inert — MCP has nothing to connect to, a skill nothing to feed, the harness nothing to loop over. They can't return the favor.*
