@@ -28,11 +28,11 @@ flowchart TB
 ```mermaid
 flowchart TB
   subgraph HARNESS["HARNESS — the software you run · OpenCode (TUI) · Gemini (web UI)<br/>UI · tool dispatch · context · persistence"]
-    Start(["task"]) --> Think["<b>think</b>"]
+    Start(["task"]) --> Think["<b>think</b> — call a model"]
     Think --> Q{"act?"}
     Q -- "no" --> Done(["answer"])
     Q -- "yes" --> Do["<b>do</b> — run code / call a tool"]
-    Do --> Rem["<b>remember</b>"]
+    Do --> Rem["<b>remember</b> — save state"]
     Rem --> Think
   end
 ```
