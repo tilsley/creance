@@ -31,7 +31,7 @@ flowchart TB
     Start(["task"]) --> Think["<b>think</b> — call a model"]
     Think --> Q{"act?"}
     Q -- "no" --> Done(["answer"])
-    Q -- "yes" --> Do["<b>do</b> — run code / call a tool"]
+    Q -- "yes" --> Do["<b>do</b> — call a tool (e.g. run code)"]
     Do --> Rem["<b>remember</b> — save state"]
     Rem --> Think
   end
@@ -59,7 +59,7 @@ flowchart TB
   end
   subgraph PLATFORM["THE PLATFORM — the part your tools handle for you"]
     direction LR
-    P["inference · sandbox · state"] ~~~ Ct["gate · record · guard"]
+    P["model calls · tool calls · memory"] ~~~ Ct["gate · record · guard · contain"]
   end
   CRAFT -->|"rests on"| HARNESS
   HARNESS -->|"rests on"| PLATFORM
@@ -79,11 +79,11 @@ flowchart LR
   end
   subgraph CTRL["CONTROLS — the platform's checks"]
     direction LR
-    G["gate"] ~~~ Rc["record"] ~~~ Gu["guard"]
+    G["gate"] ~~~ Rc["record"] ~~~ Gu["guard"] ~~~ Co["contain"]
   end
 ```
 
-*A **primitive** is a basic thing an agent does to make progress — a building block you can't make from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission.*
+*A **primitive** is a basic thing an agent does to make progress — a building block you can't make from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission. **contain** is the fourth control: an action can be allowed (gate) and still need its blast radius capped — isolation, egress lockdown, limits.*
 
 ---
 
@@ -92,7 +92,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   Lap["on your laptop (n=1)<br/>your money · your machine ·<br/>you trust yourself<br/>→ the platform is invisible"]
-  Lap ==>|"the moment it's not just you"| Real["<b>four things break:</b><br/>many users → <b>identity</b> · gate<br/>real money → <b>budget hard-stop</b> · gate<br/>real blast radius → <b>isolation + egress</b> · sandbox<br/>shared memory → <b>poisoning</b> · guard"]
+  Lap ==>|"the moment it's not just you"| Real["<b>four things break:</b><br/>many users → <b>identity</b> · gate<br/>real money → <b>budget hard-stop</b> · gate<br/>real blast radius → <b>isolation + egress</b> · contain<br/>shared memory → <b>poisoning</b> · guard"]
 ```
 
 *The platform is everything your laptop hands you for free at n=1 and that becomes fatal at scale — so the tools never make you think about it. Each of the four is a load-bearing part I only believed once I'd built it and watched it matter.*
@@ -106,7 +106,7 @@ flowchart LR
   Idea["<b>the idea</b> · vendor-neutral<br/>craft needs a harness ·<br/>harness needs a platform<br/>→ the platform is the precondition<br/>for production, not a demo"] ==>|"so: build the platform,<br/>start the craft now on stubs"| Build["<b>our build</b> · next slides<br/>agent-runtime · inference-gateway ·<br/>sandbox-manager · store<br/>— each primitive + control behind a port"]
 ```
 
-*Everything up to here is true of **any** agentic platform. From here it's **our** implementation of it — the same six parts, named as components. The craft is necessary but not sufficient; the platform is what makes it survive production; the seam (ports) is what lets us build it without blocking the craft.*
+*Everything up to here is true of **any** agentic platform. From here it's **our** implementation of it — the same parts, named as components. The craft is necessary but not sufficient; the platform is what makes it survive production; the seam (ports) is what lets us build it without blocking the craft.*
 
 ---
 
@@ -117,12 +117,12 @@ flowchart LR
   Caller(["caller<br/>+ identity"]) -->|"① POST /runs"| RT["<b>agent-runtime</b> — the harness (the loop)<br/>the only fully-trusted code"]
   RT -->|"② think"| GW["<b>inference-gateway</b><br/>authn · authz · budget 402 · guard<br/>holds the model credential"]
   GW <-->|"call"| Model["model<br/>(Bedrock / …)"]
-  RT -->|"③ do"| SB["<b>sandbox-manager</b><br/>untrusted exec · egress lockdown"]
+  RT -->|"③ do · tool call"| SB["<b>sandbox-manager</b><br/>runs the tool, contained · egress lockdown"]
   RT -->|"④ remember"| ST[("<b>store</b><br/>Postgres · Redis")]
   RT -.->|"record every step"| OB["telemetry"]
 ```
 
-*The runtime is the loop; ②–④ repeat until done. The gateway is the choke point — the only thing holding model credentials and the only place spend can be stopped (402). The sandbox is where untrusted code runs, never the runtime.*
+*The runtime is the loop; ②–④ repeat until done. The gateway is the choke point — the only thing holding model credentials and the only place spend can be stopped (402). Tool calls run contained in the sandbox-manager — untrusted code never touches the runtime.*
 
 ---
 
@@ -133,12 +133,12 @@ flowchart LR
   Caller(["you<br/>in the terminal"]) -->|"① prompt"| RT["<b>opencode</b> — TUI client + server<br/>the harness (the loop)"]
   RT -->|"② think"| GW["🚫 no gateway<br/>direct provider call ·<br/>key in auth.json on your disk"]
   GW <-->|"call"| Model["model"]
-  RT -->|"③ do"| SB["🚫 no sandbox<br/>your real shell + cwd ·<br/>permission prompt = manual gate"]
+  RT -->|"③ do · tool call"| SB["🚫 no containment<br/>tools hit your real shell + cwd ·<br/>permission prompt = manual gate"]
   RT -->|"④ remember"| ST[("local SQLite<br/>opencode.db")]
   RT -.->|"record"| OB["local log files"]
 ```
 
-*Same harness, same loop — but the **entire platform layer collapsed to local** because n=1: gateway → a key on disk, sandbox → your real machine, store → one SQLite file, telemetry → a log file. The boxes that vanished are exactly the four that break at scale (slide 5). The platform **is** the gap between "opencode on my Mac" and "opencode for 200 engineers running untrusted code on a budget."*
+*Same harness, same loop — but the **entire platform layer collapsed to local** because n=1: gateway → a key on disk, containment → none (tools hit your real machine), store → one SQLite file, telemetry → a log file. The boxes that vanished are exactly the four that break at scale (slide 5). The platform **is** the gap between "opencode on my Mac" and "opencode for 200 engineers running untrusted code on a budget."*
 
 ---
 
@@ -148,21 +148,23 @@ flowchart LR
 flowchart LR
   subgraph S["stub — start today"]
     direction TB
-    s1["think · direct SDK call"]
-    s2["do · local bash + temp dir"]
-    s3["remember · in-memory"]
+    s1["think (model call) · direct SDK call"]
+    s2["do (tool call) · run tools locally"]
+    s3["remember (memory) · in-memory"]
     s4["gate · allow-all + static token"]
     s5["record · console.log"]
     s6["guard · passthrough"]
+    s7["contain · none — your machine"]
   end
   subgraph R["real — swap in later"]
     direction TB
     r1["inference-gateway · budget 402 · authz"]
-    r2["sandbox microVM · egress lockdown"]
+    r2["tool-gateway · MCP servers"]
     r3["Postgres + pgvector · Redis"]
     r4["TokenReview · OPA · reserve/settle"]
     r5["OTel → OpenSearch"]
     r6["Guardrails / Llama Guard"]
+    r7["sandbox microVM · egress lockdown"]
   end
   s1 -.->|"one env var"| r1
   s2 -.-> r2
@@ -170,6 +172,7 @@ flowchart LR
   s4 -.-> r4
   s5 -.-> r5
   s6 -.-> r6
+  s7 -.-> r7
 ```
 
 *Same port, different adapter — chosen by config ([ADR-0003](decisions/0003-ports-and-adapters.md)). The craft never knows which one it's talking to.*
@@ -184,12 +187,12 @@ flowchart TB
     Cc["prompts · skills · workflows · evals<br/>against stubs"]
   end
   subgraph P["PLATFORM TRACK — in parallel, underneath"]
-    Pp["gateway · sandbox · store · gate · record · guard<br/>harden each adapter"]
+    Pp["inference · tools · memory · gate · record · guard · contain<br/>harden each adapter"]
   end
   C <==>|"meet at the ports —<br/>swap stub → real, no rewrite"| P
 ```
 
-*Works only if the stubs honor the real **contract** — its failures and limits, not just the happy path: the stub `gate` must sometimes **402**, the stub `do` must **lock egress**, state must be **async** (submit→poll) from day one. Stub the happy path only and 'parallel' just defers integration to the worst possible moment.*
+*Works only if the stubs honor the real **contract** — its failures and limits, not just the happy path: the stub `gate` must sometimes **402**, the stub `contain` must **lock egress**, state must be **async** (submit→poll) from day one. Stub the happy path only and 'parallel' just defers integration to the worst possible moment.*
 
 ---
 
