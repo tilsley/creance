@@ -46,7 +46,19 @@ flowchart LR
 
 ---
 
-## 3 · The picture — it's a stack
+## 3 · Why care — what changes when you host
+
+```mermaid
+flowchart LR
+  Lap["<b>on your laptop (n=1)</b><br/>you ARE the user · you pay the bill ·<br/>it's your machine · you trust yourself<br/>→ you absorb all of it, silently"]
+  Lap ==>|"host it for other people"| Host["<b>now someone has to answer:</b><br/>who's calling? · who pays? ·<br/>what can it break / reach? ·<br/>is the memory poisoned?"]
+```
+
+*These problems don't appear at scale — they were always there. At n=1 you absorb them: you're the only user, it's your money, your machine, your trust. Hosting just makes them un-absorbable — someone has to answer each one. **That someone is the platform.** (Each piece I only believed once I'd built it and watched it matter.)*
+
+---
+
+## 4 · The picture — it's a stack
 
 ```mermaid
 flowchart TB
@@ -69,7 +81,7 @@ flowchart TB
 
 ---
 
-## 4 · The platform — two kinds of foundation
+## 5 · The platform — two kinds of foundation
 
 ```mermaid
 flowchart LR
@@ -83,19 +95,7 @@ flowchart LR
   end
 ```
 
-*A **primitive** is a basic thing an agent does to make progress — a building block you can't make from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission. **contain** is the fourth control: an action can be allowed (gate) and still need its blast radius capped — isolation, egress lockdown, limits.*
-
----
-
-## 5 · Free at n=1, fatal at n>1
-
-```mermaid
-flowchart LR
-  Lap["on your laptop (n=1)<br/>your money · your machine ·<br/>you trust yourself<br/>→ the platform is invisible"]
-  Lap ==>|"the moment it's not just you"| Real["<b>four things break:</b><br/>many users → <b>identity</b> · gate<br/>real money → <b>budget hard-stop</b> · gate<br/>real blast radius → <b>isolation + egress</b> · contain<br/>shared memory → <b>poisoning</b> · guard"]
-```
-
-*The platform is everything your laptop hands you for free at n=1 and that becomes fatal at scale — so the tools never make you think about it. Each of the four is a load-bearing part I only believed once I'd built it and watched it matter.*
+*A **primitive** is a basic thing an agent does to make progress — a building block you can't make from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission. The four controls are the four answers from slide 3: who's calling → **gate** · who pays → **gate** · what can it reach → **contain** · is it poisoned → **guard** (and **record** keeps every step accountable).*
 
 ---
 
@@ -138,7 +138,7 @@ flowchart LR
   RT -.->|"record"| OB["local log files"]
 ```
 
-*Same harness, same loop — but the **entire platform layer collapsed to local** because n=1: gateway → a key on disk, containment → none (tools hit your real machine), store → one SQLite file, telemetry → a log file. The boxes that vanished are exactly the four that break at scale (slide 5). The platform **is** the gap between "opencode on my Mac" and "opencode for 200 engineers running untrusted code on a budget."*
+*Same harness, same loop — but the **entire platform layer collapsed to local** because n=1: gateway → a key on disk, containment → none (tools hit your real machine), store → one SQLite file, telemetry → a log file. The boxes that vanished are exactly the four you'd have to answer the moment you host it (slide 3). The platform **is** the gap between "opencode on my Mac" and "opencode for 200 engineers running untrusted code on a budget."*
 
 ---
 
