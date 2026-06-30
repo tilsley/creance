@@ -83,7 +83,7 @@ flowchart LR
   end
 ```
 
-*Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission.*
+*A **primitive** is an irreducible capability the agent acts with to make progress — one you can't build from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission.*
 
 ---
 
@@ -244,3 +244,17 @@ flowchart TB
 ```
 
 *Strip the vocabulary and most of it is a way to arrange `think`, `do`, `remember`.*
+
+---
+
+## B3 · If not primitives, then what?
+
+```mermaid
+flowchart LR
+  COMP["<b>composition</b><br/>harness · workflows"] -->|"runs / arranges"| PRIM
+  PROT["<b>protocol / interface</b><br/>MCP · A2A"] -->|"plugs into"| PRIM
+  CONF["<b>config / content</b><br/>skills · prompts · agent specs"] -->|"loaded to drive"| PRIM
+  META["<b>meta-activity</b><br/>evals"] -->|"measures the output of"| PRIM["<b>PRIMITIVES</b><br/>think · do · remember<br/><i>irreducible mechanism, behind a port</i>"]
+```
+
+*A primitive is irreducible mechanism; everything else is defined **relative** to it — it **runs** it (harness), **plugs into** it (MCP), **packages** it (skills), or **measures** it (evals). Pull `do` out and MCP has nothing to connect to, skills nothing to invoke, the harness nothing to loop over — they can't return the favor.*
