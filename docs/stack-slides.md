@@ -7,11 +7,11 @@
 
 ---
 
-## 1 · Start from the harnesses you already use
+## 1 · The harnesses we use every day
 
 ```mermaid
 flowchart TB
-  subgraph TOOLS["the tools you already use — all harnesses"]
+  subgraph TOOLS["the tools we use — all harnesses"]
     direction LR
     TUI["TUI<br/>OpenCode · Claude Code"] ~~~ WEB["web UI<br/>Gemini · ChatGPT"]
   end
@@ -19,7 +19,7 @@ flowchart TB
   V ==> H["…and each one quietly handles the rest for you:<br/>the model call · the tools · your history · the bill"]
 ```
 
-*You already know the top of the stack — from the tools on your machine. This deck just names what those tools quietly handle underneath, so the words mean the same thing for all of us.*
+*These are the tools we use every day — and each one quietly handles a lot underneath. This deck names what they handle, so the words mean the same thing for all of us.*
 
 ---
 
@@ -50,7 +50,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  subgraph CRAFT["THE CRAFT — the words you already know"]
+  subgraph CRAFT["THE CRAFT — making the agent good"]
     direction LR
     R["reasoning"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
   end
@@ -126,7 +126,7 @@ flowchart LR
 
 ---
 
-## 8 · The same architecture, in a harness you already use
+## 8 · The same architecture, in a harness we use
 
 ```mermaid
 flowchart LR
