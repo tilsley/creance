@@ -115,14 +115,14 @@ flowchart LR
 ```mermaid
 flowchart LR
   Caller(["caller<br/>+ identity"]) -->|"① POST /runs"| RT["<b>agent-runtime</b> — the harness (the loop)<br/>the only fully-trusted code"]
-  RT -->|"② think"| GW["<b>inference-gateway</b><br/>authn · authz · budget 402 · guard<br/>holds the model credential"]
+  RT -->|"② think · model call"| GW["<b>inference-gateway</b><br/>gate (authn · authz · budget 402) + guard<br/>holds the model credential"]
   GW <-->|"call"| Model["model<br/>(Bedrock / …)"]
-  RT -->|"③ do · tool call"| SB["<b>sandbox-manager</b><br/>runs the tool, contained · egress lockdown"]
-  RT -->|"④ remember"| ST[("<b>store</b><br/>Postgres · Redis")]
-  RT -.->|"record every step"| OB["telemetry"]
+  RT -->|"③ do · tool call"| SB["<b>sandbox-manager</b><br/>contain · isolation + egress lockdown"]
+  RT -->|"④ remember · memory"| ST[("<b>store</b><br/>Postgres · Redis")]
+  RT -.->|"record · every step"| OB["telemetry"]
 ```
 
-*The runtime is the loop; ②–④ repeat until done. The gateway is the choke point — the only thing holding model credentials and the only place spend can be stopped (402). Tool calls run contained in the sandbox-manager — untrusted code never touches the runtime.*
+*The runtime is the loop; its primitives — **model call · tool call · memory** — fan out to the components, and the controls ride along: **gate + guard** at the gateway (the choke point holding the credential and the 402), **contain** at the sandbox-manager (untrusted code never touches the runtime), **record** across every step.*
 
 ---
 
