@@ -52,7 +52,7 @@ flowchart LR
 flowchart TB
   subgraph CRAFT["THE CRAFT — making the agent good"]
     direction LR
-    P["prompts"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
+    Pr["prompts"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
   end
   subgraph HARNESS["THE HARNESS — the software that runs the agent loop"]
     L["think → do → remember, every step"]
