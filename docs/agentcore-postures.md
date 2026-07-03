@@ -368,23 +368,130 @@ The rows compose into three internally-consistent architectures:
 | Catalog | Registry + Runtime versions | Agent CRDs + controllers | Agent CRDs + controllers |
 | Cost shape | ~$0 idle, ~2× per-unit | ~$0 idle for do/remember; cluster for control plane | cluster always-on; spot economics at scale |
 
-Reading the columns:
+### 4.1 Max lean-in — everything AgentCore sells, and the floor it leaves
 
-- **Max lean-in still isn't "all-in."** Even leaning everything available, three things
-  remain self-supplied: the **inference gateway + budget gate** (unbuyable, §3.8), the
-  **claims/allowance onboarding model** (R5), and the **webhook front door logic**
-  (3.4). That's the theoretical floor of agent-os — ~three services and a policy model —
-  and it matches [ADR-0024](decisions/0024-build-vs-buy-managed-agent-platforms.md)'s
-  "thin governance shell" conclusion from the other direction.
-- **The mixed column** is the sketched posture — *in* on sandbox + memory (the two
-  primitives where managed isolation/zero-idle pay most), *out* on orchestration +
-  integration (the loop is app code under org governance; the tool gateway keeps Design
-  A, credential custody, and the org's OPA/mesh stack). Its one seam to watch:
-  leaning *out* on tools while *in* on memory means two credential regimes (broker vs
-  AWS-scoped Memory access) — fine, but document which secrets live where.
-- **Max lean-out** is the ADR-0024 cost-curve endpoint: justified only by sustained
-  utilization data, never by principle
-  ([costs.md](costs.md) — premature self-hosting loses on both cost and ops).
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> FD
+
+  subgraph AWS["AWS managed"]
+    FD["front door: API GW / EventBridge → Lambda"]
+    subgraph AC["Bedrock AgentCore"]
+      RT["Runtime — hosts OUR loop container (rung 1, not Harness)"]
+      CI["Code Interpreter · Browser (do)"]
+      GWY["Gateway — tools/MCP + Jira/Slack connectors + Cedar Policy + Guardrails"]
+      MEM["Memory — IAM-scoped namespaces per tenant (remember)"]
+      ID["Identity — JWT authn in · OAuth 2LO/3LO/OBO vault out"]
+      OBS["Observability + Evaluations"]
+      REG["Registry — agent catalog (preview)"]
+    end
+  end
+
+  subgraph SHELL["agent-os shell — self-supplied even here (scale-to-zero compute)"]
+    IG["inference-gateway + Gate (worst-case reserve → settle)"]
+    CLAIMS["InferenceClaims / allowances"]
+  end
+
+  BR["Bedrock models"]
+
+  FD -->|"InvokeAgentRuntime"| RT
+  RT --> CI
+  RT --> GWY
+  RT --> MEM
+  ID -. "authn + creds" .-> RT
+  ID -. "3LO tokens" .-> GWY
+  RT -->|"think — always through the shell"| IG
+  IG -->|"InvokeModel"| BR
+  IG -. "admit vs claim" .-> CLAIMS
+  RT -. "OTLP" .-> OBS
+```
+
+**Max lean-in still isn't "all-in."** Even leaning everything available, three things
+remain self-supplied: the **inference gateway + budget gate** (unbuyable, §3.8), the
+**claims/allowance onboarding model** (R5), and the **webhook front door logic**
+(3.4 — the Lambda glue is ours even when the pipes are managed). That's the theoretical
+floor of agent-os — ~three services and a policy model — and it matches
+[ADR-0024](decisions/0024-build-vs-buy-managed-agent-platforms.md)'s "thin governance
+shell" conclusion from the other direction. Note the loop rung: this posture uses
+Runtime to host *our* loop; swapping to Harness would delete the `think → shell` edge
+and with it R2 (§3.1).
+
+### 4.2 Mixed — the best-of-both posture (in: do + remember · out: orchestration + integration)
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> ING
+
+  subgraph K8S["k8s cluster — orchestration + integration lean OUT"]
+    ING["webhook-ingress service → POST /runs"]
+    ART["agent-runtime pod — the loop is app code"]
+    TG["tool-gateway (Design A) + OBO token vault"]
+    AUTH["TokenReview / mesh authn · OPA authz"]
+    IG["inference-gateway + Gate + claims — the shell"]
+    OTEL["ADOT → OpenSearch (+ Evaluations reads the same OTLP)"]
+  end
+
+  subgraph AC["AgentCore — do + remember lean IN"]
+    CI["Code Interpreter (Model A) · Runtime-as-box (Model B)"]
+    MEM["Memory — IAM-scoped namespaces per tenant"]
+  end
+
+  EXT["GitHub API · Jira · MCP servers"]
+  BR["Bedrock models"]
+
+  ING --> ART
+  AUTH -. "gates every call" .-> ART
+  ART -->|"do"| CI
+  ART -->|"remember"| MEM
+  ART -->|"external tools"| TG --> EXT
+  ART -->|"think"| IG -->|"InvokeModel"| BR
+  CI -. "only sanctioned egress = the gateway" .-> IG
+```
+
+**The mixed column is the sketched posture** — *in* on sandbox + memory (the two
+primitives where managed isolation/zero-idle pay most), *out* on orchestration +
+integration (the loop is app code under org governance; the tool gateway keeps Design
+A, credential custody, and the org's OPA/mesh stack). Its one seam to watch: leaning
+*out* on tools while *in* on memory means two credential regimes (broker-held secrets
+vs IAM-scoped Memory access) — fine, but document which secrets live where.
+
+### 4.3 Max lean-out — the cost-curve endpoint
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> ING
+
+  subgraph K8S["EKS (prod) / k3s (local) — everything self-hosted"]
+    ING["webhook-ingress service → POST /runs"]
+    ART["agent-runtime pod — the loop"]
+    SBX["gVisor/Kata sandbox pods + NetworkPolicy wall + Squid egress door"]
+    TG["tool-gateway + OBO token vault"]
+    MEMO["files-first memory + pgvector/Postgres SoR"]
+    AUTH["Istio mesh mTLS · OPA sidecars"]
+    CRD["Agent CRDs + controllers · claims/allowances"]
+    OTEL["ADOT → OpenSearch/Grafana"]
+    IG["inference-gateway + Gate — the same shell"]
+  end
+
+  EXT["GitHub API · Jira · MCP servers"]
+  BR["Bedrock models"]
+
+  ING --> ART
+  ART -->|"do"| SBX
+  ART -->|"remember"| MEMO
+  ART -->|"external tools"| TG --> EXT
+  ART -->|"think"| IG -->|"InvokeModel"| BR
+  SBX -. "only sanctioned egress = the gateway" .-> IG
+  AUTH -. "gates every call" .-> ART
+```
+
+**Max lean-out** is the [ADR-0024](decisions/0024-build-vs-buy-managed-agent-platforms.md)
+cost-curve endpoint: the cluster is always-on and the isolation tier is re-owned, so it's
+justified only by sustained utilization data, never by principle
+([costs.md](costs.md) — premature self-hosting loses on both cost and ops). Note what
+*doesn't* change from 4.1: the shell node, the `think → shell` edge, and the
+sandbox-egress invariant are identical in all three diagrams — that visual constancy *is*
+§5.
 
 ---
 
