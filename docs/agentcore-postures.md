@@ -348,9 +348,10 @@ layer (R5) is ours in both columns.
 
 ---
 
-## 4. Composite postures — three coherent stacks
+## 4. Composite postures — the coherent stacks
 
-The rows compose into three internally-consistent architectures:
+The rows compose into three internally-consistent architectures (columns below), plus a
+fourth worked variant (§4.3) that moves the loop itself into AgentCore:
 
 | Component | **Max lean-in** | **Mixed (the sketched posture)** | **Max lean-out** |
 |---|---|---|---|
@@ -416,7 +417,7 @@ shell" conclusion from the other direction. Note the loop rung: this posture use
 Runtime to host *our* loop; swapping to Harness would delete the `think → shell` edge
 and with it R2 (§3.1).
 
-### 4.2 Mixed — the best-of-both posture (in: do + remember · out: orchestration + integration)
+### 4.2 Mixed, variant A — loop on k8s (in: do + remember · out: orchestration + integration)
 
 ```mermaid
 flowchart LR
@@ -455,7 +456,82 @@ A, credential custody, and the org's OPA/mesh stack). Its one seam to watch: lea
 *out* on tools while *in* on memory means two credential regimes (broker-held secrets
 vs IAM-scoped Memory access) — fine, but document which secrets live where.
 
-### 4.3 Max lean-out — the cost-curve endpoint
+### 4.3 Mixed, variant B — the loop lives in AgentCore (invoke-and-go)
+
+If Model A's per-tool-call round-trip (k8s loop → AgentCore sandbox for every
+`runCode`/`runCmd`) proves infeasible — latency, chattiness, or an AWS hop on the hot
+path of every `do` — the mix flips at the loop-hosting row instead: **k8s keeps only the
+control plane and the shell, and the controller literally calls `InvokeAgentRuntime`**,
+which spins up our loop container in a per-session Runtime microVM (§3.1 rung 1 — *our*
+loop, not Harness).
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> ING
+
+  subgraph K8S["k8s — control plane + shell only (lean out)"]
+    ING["webhook-ingress / controller"]
+    CRD["Agent CRDs · claims/allowances"]
+    TG["tool-gateway (Design A) + OBO vault"]
+    IG["inference-gateway + Gate — the shell"]
+    OTEL["ADOT → OpenSearch"]
+  end
+
+  subgraph AC["AgentCore (lean in)"]
+    subgraph VM["Runtime session — one microVM per run"]
+      LOOP["OUR loop container"]
+      WS["workspace — model-written code executes in-place"]
+    end
+    MEM["Memory — IAM-scoped namespaces"]
+    ID["Identity — SigV4 / JWT authorizer on the invoke"]
+  end
+
+  EXT["GitHub API · Jira · MCP servers"]
+  BR["Bedrock models"]
+
+  CRD -. "resolves AgentSpec" .-> ING
+  ING -->|"InvokeAgentRuntime — spins up the session"| LOOP
+  ID -. "authenticates the invoke" .-> LOOP
+  LOOP -->|"do — local exec, no network hop"| WS
+  LOOP -->|"remember"| MEM
+  LOOP -->|"external tools"| TG --> EXT
+  LOOP -->|"think — injected INFERENCE_GATEWAY_URL"| IG -->|"InvokeModel"| BR
+  LOOP -. "OTLP" .-> OTEL
+```
+
+What this buys, relative to 4.2:
+
+- **The Model-A round-trip disappears.** The microVM *is* the isolation boundary, so the
+  loop can execute model-written code in its own filesystem — the sandbox is the
+  session. No `SandboxProvider` network hop per tool call; `LocalSandboxProvider`
+  semantics become safe because the whole process is already in a Firecracker box.
+- **k8s scale-to-zero for the runtime.** No idle `agent-runtime` pod; the cluster's job
+  shrinks to triggers, CRDs/claims, the tool-gateway, and the shell.
+- **The controls survive** — it's our loop code, so gate/record/guard still run per
+  step, and `think` still routes through the shell via the injected gateway URL, same
+  mechanism that governs Model B today.
+
+What it costs — and this is the honest ledger:
+
+- **The trust shape becomes Model B's** ([ADR-0020](decisions/0020-sandbox-execution-model.md)/[0022](decisions/0022-sandbox-backends-for-coding-agents.md)):
+  loop and untrusted code share one box, so the loop's credentials sit inside the blast
+  radius. Mitigations are the Model-B ones — short-lived per-session/per-tenant creds,
+  and **egress lockdown as the load-bearing control**, now enforced with Runtime VPC
+  attachment + security groups (allow only the shell + tool-gateway) instead of
+  NetworkPolicy + Squid.
+- **Authn to the shell flips profiles.** No mesh/TokenReview from inside AgentCore — the
+  gateway authenticates the session via the cheap-profile verifiers
+  ([ADR-0027](decisions/0027-two-deployment-profiles.md): offline JWT / IAM-SigV4),
+  which the `Authenticator` port already names.
+- **Runtime's operational envelope applies**: ≤8 h sessions, ≤2 vCPU/8 GB, memory
+  GB-hours billed across idle time within a session, 100 MB payloads.
+- **It relaxes [ADR-0006](decisions/0006-agentcore-execution-environment.md)'s "the
+  agent is *not* deployed into AgentCore."** As theory this is just another point in the
+  option space; adopting it for real would be a superseding ADR — the k8s-loop stance in
+  0006 was chosen when Runtime was weaker (no direct code deploy, no session storage/EFS,
+  no resource policies), so the re-evaluation is legitimate, not heresy.
+
+### 4.4 Max lean-out — the cost-curve endpoint
 
 ```mermaid
 flowchart LR
