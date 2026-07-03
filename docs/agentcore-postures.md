@@ -52,14 +52,14 @@ Runtime/Memory/Gateway). All consumption-priced, no minimums.
 | **Code Interpreter** | GA | Firecracker-per-session code execution; Public/Sandbox/VPC network modes | `SandboxProvider` (Model A) |
 | **Browser** | GA | managed isolated browser sessions | — (no counterpart; net-new capability) |
 | **Gateway** | GA | OpenAPI/Smithy/Lambda/MCP/HTTP → one MCP endpoint; 1-click connectors (Jira, Slack, Salesforce…); semantic tool search; Web Search + Managed KB built-ins | `tool-gateway` service |
-| **Identity** | GA | workload identities + token vault; inbound JWT/SigV4, outbound OAuth 2LO/**3LO**, **OBO token exchange** (Apr 2026) | `Authenticator` + `CredentialBroker`/OBO vault |
+| **Identity** | GA | two jobs: verifies *who may invoke an agent* (IAM-signed call or a JWT from your IdP), and holds a **token vault** of the agent's third-party credentials — machine tokens, user-consented "act on my Jira" tokens, and agent-acting-for-user-X exchange (Apr 2026) — stored and auto-refreshed outside the agent's reach | `Authenticator` + `CredentialBroker`/OBO vault |
 | **Memory** | GA | short-term events + long-term extraction strategies (semantic/summary/preference/**episodic**); hierarchical namespaces + IAM condition keys | `MemoryAdapter` (+ parts of `RunStore`) |
 | **Policy** | **GA Mar 2026** | **Cedar** engines on Gateways — deterministic tool-call interception outside the loop; NL→Cedar authoring w/ automated-reasoning validation | `Authorizer` (OPA) at the tool boundary |
 | **Observability** | GA | OTEL-based tracing/dashboards on CloudWatch | `TelemetrySink` → ADOT/OpenSearch |
 | **Evaluations** | **GA Mar 2026** | 13 built-in + custom evaluators, online (sampled prod traces) + batch; **works for agents outside AgentCore** | — (eval harness is a named gap) |
 | **Optimization** | GA Jun 2026 | trace-driven prompt/tool recommendations, A/B via Gateway traffic split | — |
 | **Registry** | Preview | governed catalog of agents/MCP servers/skills, semantic search | `agent-registry` / Agent CRDs |
-| **Payments** | Preview | x402 micropayments (Coinbase/Stripe wallets) — commerce, **not** inference budgets | — (deliberately *not* the R2 gate) |
+| **Payments** | Preview | lets agents *buy things* (x402 micropayments, Coinbase/Stripe wallets) — commerce spend, **not** inference budgets | — (deliberately *not* the R2 gate) |
 
 Pricing anchors: Runtime/tools $0.0895/vCPU-hr (active CPU only; memory GB-hr bills the
 whole session incl. idle — tune `idleRuntimeSessionTimeout` down from 15 min). Gateway
@@ -164,11 +164,22 @@ servers (Atlassian/Linear — DCR, consent, refresh).
   API-Gateway stages / other Runtime agents** as MCP tools; **1-click connectors
   including Jira, Slack, Salesforce, Zendesk**; built-in Web Search and Managed
   Knowledge Base (6 RAG connectors); semantic tool search.
-- **Identity supplies exactly the owed OAuth:** 2LO + 3LO credential providers with
-  refresh (3LO for MCP targets GA Apr 2026), per-end-user tokens, **OBO token exchange**
-  (Apr 2026 — the managed twin of our RFC 8693
-  [`OboTokenVaultBroker`](../packages/core/src/adapters/obo-token-vault-broker.ts)), and
-  Secrets Manager ARN references so key custody/rotation stays ours.
+- **Identity supplies exactly the owed OAuth.** Concretely, four abilities, each a thing
+  we'd otherwise build:
+  - *Machine credentials* (2-legged OAuth): the agent authenticates to an external API
+    **as itself** — client id/secret held and refreshed by the vault, never present in
+    the pod or the prompt.
+  - *User-consented credentials* (3-legged OAuth; GA for MCP targets Apr 2026): the flow
+    [ADR-0011](decisions/0011-tool-mcp-gateway.md) names as unbuilt — a human clicks
+    through **"allow this agent to access my Atlassian account"** once; the vault keeps
+    that per-user token and refreshes it, so the agent acts *as that user* on Jira
+    without ever seeing a password.
+  - *On-behalf-of exchange* (Apr 2026): swap a token proving "the agent" for one proving
+    "the agent, acting for user X" — the managed twin of our RFC 8693
+    [`OboTokenVaultBroker`](../packages/core/src/adapters/obo-token-vault-broker.ts).
+  - *Secrets Manager references* (Jun 2026): the vault can point at secrets kept in
+    **our** Secrets Manager instead of storing copies — key custody, rotation, and KMS
+    policy stay ours.
 - Governance at the managed choke point: **Policy (Cedar) intercepts every tool call**,
   Guardrails scan tool I/O (Jun 2026), WAF attaches (Jun 2026), Lambda interceptors on
   Runtime targets.
@@ -253,8 +264,8 @@ governance data the gate writes, not agent memory.
 
 | Sub-component | Today (lean out) | Lean in |
 |---|---|---|
-| **Inbound authn** (`Authenticator`) | k8s TokenReview / mesh headers (Istio XFCC, Linkerd) — verified, keyless | Runtime/Gateway **JWT authorizer** (any IdP) or IAM SigV4; resource policies (e.g. "only invocable from our Gateway", Jun 2026) |
-| **Outbound creds** (`CredentialBroker`, OBO vault) | `OboTokenVaultBroker` (RFC 8693) + broker-held static bearers | Identity **token vault**: OAuth 2LO/3LO w/ refresh, **OBO token exchange** (Apr 2026), API keys, Secrets Manager ARN refs |
+| **Inbound authn** (`Authenticator`) | k8s TokenReview / mesh headers (Istio XFCC, Linkerd) — verified, keyless | AWS-signed calls (SigV4 — the caller *is* its IAM role) or a **JWT authorizer** checking bearer tokens against your IdP; resource policies tighten the door further (e.g. "only invocable from our Gateway", Jun 2026) |
+| **Outbound creds** (`CredentialBroker`, OBO vault) | `OboTokenVaultBroker` (RFC 8693) + broker-held static bearers | Identity **token vault** — stores + auto-refreshes the agent's third-party credentials: machine tokens, user-consented per-user tokens (the "allow this agent on my Jira" flow), agent-for-user-X exchange, plain API keys; can reference secrets held in our own Secrets Manager (see §3.3 for each spelled out) |
 | **Per-tenant cloud identity** (`TenantCredentials`) | STS AssumeRole chain per tenant (Pod Identity → `agentos-<tenant>`), Budget-Action backstop | unchanged — this *is* IAM; note Identity's workload-identity quota (1,000/region) vs tenant count |
 
 The outbound row is where lean-in pays most: AWS shipped the exact thing
@@ -382,7 +393,7 @@ flowchart LR
       CI["Code Interpreter · Browser (do)"]
       GWY["Gateway — tools/MCP + Jira/Slack connectors + Cedar Policy + Guardrails"]
       MEM["Memory — IAM-scoped namespaces per tenant (remember)"]
-      ID["Identity — JWT authn in · OAuth 2LO/3LO/OBO vault out"]
+      ID["Identity — checks who may invoke · vault of the agent's third-party tokens"]
       OBS["Observability + Evaluations"]
       REG["Registry — agent catalog (preview)"]
     end
@@ -483,7 +494,7 @@ flowchart LR
       WS["workspace — model-written code executes in-place"]
     end
     MEM["Memory — IAM-scoped namespaces"]
-    ID["Identity — SigV4 / JWT authorizer on the invoke"]
+    ID["Identity — the invoke is an AWS-signed call (caller = its IAM role) or a JWT from your IdP"]
   end
 
   EXT["GitHub API · Jira · MCP servers"]
