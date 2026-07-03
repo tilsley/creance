@@ -10,6 +10,48 @@
 
 ---
 
+## TL;DR — the platform in eight jobs
+
+The whole map, reduced to the jobs the platform does. Two versions, because the first
+two jobs can be arranged two ways: **split** — the loop runs in one place and ships each
+code step to a sandbox (today's default, [ADR-0006](decisions/0006-agentcore-execution-environment.md);
+step-by-step governance, but a network hop per tool call) — or **co-located** — the loop
+lives *inside* the sandboxed box and executes code in place (§4.3's invoke-and-go; no
+hop, but governance is per-box, not per-step).
+
+**Shape 1 — split: the loop and the code run in different places**
+
+| What it does | Self-hosted | AgentCore |
+|---|---|---|
+| **Runs the agent loop** | `agent-runtime` pod on k8s | Runtime (microVM per session) |
+| **Executes code** | gVisor/Kata pods + egress wall (or E2B) | Code Interpreter |
+| **Calls external tools** (GitHub, Jira…) | `tool-gateway` + credential broker | Gateway + Identity token vault |
+| **Remembers** | markdown files + Postgres/pgvector | Memory (per-tenant namespaces) |
+| **Proves who's calling** | k8s TokenReview / mesh | IAM-signed calls / JWT check |
+| **Decides what's allowed** | OPA | Policy (Cedar) |
+| **Watches & scores runs** | ADOT → OpenSearch | Observability + Evaluations |
+| **Calls the model & stops overspend** | Bun inference-gateway + budget gate | **nothing — always ours** |
+
+**Shape 2 — co-located: the agent and its code share one box**
+
+| What it does | Self-hosted | AgentCore |
+|---|---|---|
+| **Runs the agent + executes its code — one box** | a sandboxed pod (gVisor/Kata) with the loop or CLI inside, egress locked down | Runtime — the session microVM is both the loop's home and its workspace |
+| **Calls external tools** (GitHub, Jira…) | `tool-gateway` + credential broker | Gateway + Identity token vault |
+| **Remembers** | markdown files + Postgres/pgvector | Memory (per-tenant namespaces) |
+| **Proves who's calling** | k8s TokenReview / mesh | IAM-signed calls / JWT check (on the invoke) |
+| **Decides what's allowed** | OPA | Policy (Cedar) |
+| **Watches & scores runs** | ADOT → OpenSearch | Observability + Evaluations |
+| **Calls the model & stops overspend** | Bun inference-gateway + budget gate | **nothing — always ours** |
+
+Left out of both, deliberately: **webhook triggers** (neither side has it — you build the
+front door in both worlds, §3.4); **Browser / Payments / Registry** (lean-in extras with
+no self-hosted counterpart); the **STS per-tenant role chain** and **Crossplane**
+(identical in both columns). And the last row is the doc's thesis in one line: whichever
+shape and whichever column you pick, the model call and the budget stop are yours.
+
+---
+
 ## 1. Framing — posture is a dial per component, not a switch
 
 Two properties of the existing design make "lean in vs lean out" a **per-component dial**
