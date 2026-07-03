@@ -424,6 +424,41 @@ fourth worked variant (§4.3) that moves the loop itself into AgentCore:
 
 ### 4.1 Max lean-in — everything AgentCore sells, and the floor it leaves
 
+**The plain view — the eight jobs, nothing else:**
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> FD
+
+  subgraph AWS["AWS runs it"]
+    FD["front door"]
+    LOOP["runs the agent loop"]
+    CODE["executes code"]
+    TOOLS["calls external tools"]
+    MEM["remembers"]
+    WHO["proves who's calling"]
+    ALLOW["decides what's allowed"]
+    WATCH["watches + scores runs"]
+  end
+
+  subgraph OURS["we run it — always"]
+    SHELL["calls the model + stops overspend"]
+  end
+
+  BR["Bedrock models"]
+
+  FD --> LOOP
+  LOOP --> CODE
+  LOOP --> TOOLS
+  LOOP --> MEM
+  WHO -. checks .-> LOOP
+  ALLOW -. checks .-> TOOLS
+  LOOP --> SHELL --> BR
+  LOOP -.-> WATCH
+```
+
+**The detailed view:**
+
 ```mermaid
 flowchart LR
   WH["GitHub / Jira webhooks"] --> FD
@@ -472,6 +507,42 @@ and with it R2 (§3.1).
 
 ### 4.2 Mixed, variant A — loop on k8s (in: do + remember · out: orchestration + integration)
 
+**The plain view — the eight jobs, nothing else:**
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> FD
+
+  subgraph K8S["we run it on k8s"]
+    FD["front door"]
+    LOOP["runs the agent loop"]
+    TOOLS["calls external tools"]
+    WHO["proves who's calling"]
+    ALLOW["decides what's allowed"]
+    WATCH["watches + scores runs"]
+    SHELL["calls the model + stops overspend"]
+  end
+
+  subgraph AWS["AWS runs it"]
+    CODE["executes code"]
+    MEM["remembers"]
+  end
+
+  EXT["GitHub · Jira"]
+  BR["Bedrock models"]
+
+  FD --> LOOP
+  LOOP --> CODE
+  LOOP --> MEM
+  LOOP --> TOOLS --> EXT
+  WHO -. checks .-> LOOP
+  ALLOW -. checks .-> TOOLS
+  LOOP --> SHELL --> BR
+  LOOP -.-> WATCH
+```
+
+**The detailed view:**
+
 ```mermaid
 flowchart LR
   WH["GitHub / Jira webhooks"] --> ING
@@ -517,6 +588,41 @@ path of every `do` — the mix flips at the loop-hosting row instead: **k8s keep
 control plane and the shell, and the controller literally calls `InvokeAgentRuntime`**,
 which spins up our loop container in a per-session Runtime microVM (§3.1 rung 1 — *our*
 loop, not Harness).
+
+**The plain view — the eight jobs, nothing else** (note the first two jobs are now one
+box):
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> FD
+
+  subgraph K8S["we run it on k8s"]
+    FD["front door — just calls invoke"]
+    TOOLS["calls external tools"]
+    ALLOW["decides what's allowed"]
+    WATCH["watches + scores runs"]
+    SHELL["calls the model + stops overspend"]
+  end
+
+  subgraph AWS["AWS runs it"]
+    WHO["proves who's calling — checks the invoke"]
+    BOX["runs the agent loop + executes code — one box"]
+    MEM["remembers"]
+  end
+
+  EXT["GitHub · Jira"]
+  BR["Bedrock models"]
+
+  FD -->|"invoke"| BOX
+  WHO -. checks .-> BOX
+  BOX --> MEM
+  BOX --> TOOLS --> EXT
+  ALLOW -. checks .-> TOOLS
+  BOX --> SHELL --> BR
+  BOX -.-> WATCH
+```
+
+**The detailed view:**
 
 ```mermaid
 flowchart LR
@@ -585,6 +691,39 @@ What it costs — and this is the honest ledger:
   no resource policies), so the re-evaluation is legitimate, not heresy.
 
 ### 4.4 Max lean-out — the cost-curve endpoint
+
+**The plain view — the eight jobs, nothing else:**
+
+```mermaid
+flowchart LR
+  WH["GitHub / Jira webhooks"] --> FD
+
+  subgraph K8S["we run all of it on k8s"]
+    FD["front door"]
+    LOOP["runs the agent loop"]
+    CODE["executes code"]
+    TOOLS["calls external tools"]
+    MEM["remembers"]
+    WHO["proves who's calling"]
+    ALLOW["decides what's allowed"]
+    WATCH["watches + scores runs"]
+    SHELL["calls the model + stops overspend"]
+  end
+
+  EXT["GitHub · Jira"]
+  BR["Bedrock models"]
+
+  FD --> LOOP
+  LOOP --> CODE
+  LOOP --> MEM
+  LOOP --> TOOLS --> EXT
+  WHO -. checks .-> LOOP
+  ALLOW -. checks .-> TOOLS
+  LOOP --> SHELL --> BR
+  LOOP -.-> WATCH
+```
+
+**The detailed view:**
 
 ```mermaid
 flowchart LR
