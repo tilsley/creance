@@ -1,8 +1,9 @@
+import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
-import * as ecr from "aws-cdk-lib/aws-ecr";
+import * as ecrAssets from "aws-cdk-lib/aws-ecr-assets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
@@ -17,14 +18,20 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
  *
  * Cost shape (the whole point): no NAT gateway and no ALB. Tasks run in PUBLIC
  * subnets with a public IP so they reach Bedrock / DynamoDB / ECR directly; the
- * cluster holds zero running tasks at rest. Idle cost ≈ the ECR repo + log
- * retention ≈ $0. A run costs only for the seconds its task is alive.
+ * cluster holds zero running tasks at rest. Idle cost ≈ log retention ≈ $0. A run
+ * costs only for the seconds its task is alive.
+ *
+ * The agent-runtime image is a **CDK DockerImageAsset**: `cdk deploy` builds it and
+ * pushes it to the CDK-managed assets ECR repo, then BOTH the Fargate task and the
+ * Lambda reference that one image (different CMDs). So the whole thing — image build,
+ * push, and every resource — is one `cdk deploy`; no manual docker push, no repo to
+ * manage. (Trade-off: deploy needs Docker running, since it builds the image.)
  *
  * What's deployed:
- *   - ECR repo (agent-os-serverless) holding the agent-runtime image.
+ *   - the agent-runtime image (DockerImageAsset — built + pushed by CDK).
  *   - a minimal public VPC + Fargate cluster + a task security group (egress only).
- *   - the executor task definition: the agent-runtime image with the task.ts CMD,
- *     RUN_ID injected per run via a container override at RunTask time.
+ *   - the executor task definition: the image with the task.ts CMD, RUN_ID injected
+ *     per run via a container override at RunTask time.
  *   - a least-privilege task role (runs+budgets tables, Bedrock invoke, AgentCore).
  *   - a router role: ecs:RunTask + iam:PassRole — what the front door assumes to
  *     dispatch a task-per-run, plus tables access for create + budget checks.
@@ -41,16 +48,19 @@ export class ServerlessStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const imageTag = this.node.tryGetContext("serverlessImageTag") ?? "latest";
+    // Optional demo bearer tokens for the front door's LocalGate, injected at deploy
+    // (`-c gateTokens=...`) so nothing static is committed. See the FrontDoor env below.
+    const gateTokens = this.node.tryGetContext("gateTokens");
 
-    // The image registry — push the agent-runtime image here (one image, two
-    // entrypoints: server.ts for the front door, task.ts for the executor).
-    const repo = new ecr.Repository(this, "Repo", {
-      repositoryName: "agent-os-serverless",
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // POC
-      emptyOnDelete: true,
-      imageScanOnPush: true,
-      lifecycleRules: [{ maxImageCount: 10 }], // don't accumulate old layers
+    // The agent-runtime image, built + pushed by CDK at deploy time (one image, three
+    // entrypoints: server.ts / task.ts / lambda.ts — the consumer picks via CMD). The
+    // build context is the repo root (the Dockerfile's `COPY . .`); .dockerignore there
+    // strips node_modules/.git/venvs. x86_64 to match the Intel build host (native, no
+    // QEMU); switch to LINUX_ARM64 + arm64 task/Lambda when building on Graviton.
+    const image = new ecrAssets.DockerImageAsset(this, "Image", {
+      directory: path.join(__dirname, "..", ".."),
+      file: "services/agent-runtime/Dockerfile",
+      platform: ecrAssets.Platform.LINUX_AMD64,
     });
 
     // Minimal public VPC: 2 AZs, public subnets only, NO NAT gateway (~$32/mo
@@ -71,7 +81,7 @@ export class ServerlessStack extends cdk.Stack {
     // dials in — the task is not a server).
     const taskSg = new ec2.SecurityGroup(this, "TaskSg", {
       vpc,
-      description: "agent-os serverless task-per-run — egress only",
+      description: "agent-os serverless task-per-run - egress only",
       allowAllOutbound: true,
     });
 
@@ -88,7 +98,7 @@ export class ServerlessStack extends cdk.Stack {
     // The task's cloud identity — least privilege for what a run actually does.
     const taskRole = new iam.Role(this, "TaskRole", {
       roleName: "agent-os-serverless-task",
-      description: "agent-os task-per-run — runs+budgets tables, Bedrock invoke, AgentCore sandbox",
+      description: "agent-os task-per-run - runs+budgets tables, Bedrock invoke, AgentCore sandbox",
       assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
     });
     runs.grantReadWriteData(taskRole); // persist conversation/status per turn
@@ -120,9 +130,16 @@ export class ServerlessStack extends cdk.Stack {
       cpu: 512,
       memoryLimitMiB: 1024,
       taskRole,
+      // x86_64 (the default): the image builds natively on the Intel build host, no
+      // QEMU emulation. arm64/Graviton would be ~cheaper at runtime but needs an arm64
+      // builder; revisit if building on Apple Silicon or in CI with buildx.
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
     });
     taskDef.addContainer("agent-runtime-task", {
-      image: ecs.ContainerImage.fromEcrRepository(repo, imageTag),
+      image: ecs.ContainerImage.fromDockerImageAsset(image),
       command: ["bun", "run", "services/agent-runtime/task.ts"], // the task-per-run entrypoint
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "task" }),
       environment: {
@@ -146,7 +163,7 @@ export class ServerlessStack extends cdk.Stack {
     // execution roles. Attach this to the Lambda/Fargate that serves POST /runs.
     const routerRole = new iam.Role(this, "RouterRole", {
       roleName: "agent-os-serverless-router",
-      description: "agent-os serverless front door — ecs:RunTask + PassRole + tables",
+      description: "agent-os serverless front door - ecs:RunTask + PassRole + tables",
       assumedBy: new iam.CompositePrincipal(
         new iam.ServicePrincipal("lambda.amazonaws.com"),
         new iam.ServicePrincipal("ecs-tasks.amazonaws.com"), // if fronted by a Fargate service
@@ -179,18 +196,20 @@ export class ServerlessStack extends cdk.Stack {
       iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"),
     );
 
-    // The FRONT DOOR compute — the same image, the lambda.ts entrypoint (a native
-    // Lambda Runtime API loop; no HTTP server, no Web Adapter — ADR-0031). It runs
-    // the router: DISPATCH=runtask makes POST /runs launch a Fargate task-per-run.
-    // NOT in the VPC — it reaches DynamoDB + ecs:RunTask over public AWS APIs, so it
-    // needs no NAT (keeping idle cost at ~$0). It scales to zero between requests.
+    // The front door — the SAME image asset, the lambda.ts entrypoint (a native Lambda
+    // Runtime API loop; no HTTP server, no Web Adapter — ADR-0031). It runs the router:
+    // DISPATCH=runtask makes POST /runs launch a Fargate task-per-run. NOT in the VPC —
+    // it reaches DynamoDB + ecs:RunTask over public AWS APIs, so it needs no NAT (idle
+    // cost ~$0). It scales to zero between requests. Referencing the asset's repo+tag
+    // (not fromImageAsset) reuses the ONE build the task already uses — no second build.
     const frontDoor = new lambda.DockerImageFunction(this, "FrontDoor", {
       functionName: "agent-os-serverless-router",
-      description: "agent-os serverless front door — gate + dispatch a Fargate task-per-run (ADR-0031)",
-      code: lambda.DockerImageCode.fromEcr(repo, {
-        tagOrDigest: imageTag,
+      description: "agent-os serverless front door - gate + dispatch a Fargate task-per-run (ADR-0031)",
+      code: lambda.DockerImageCode.fromEcr(image.repository, {
+        tagOrDigest: image.imageTag,
         cmd: ["bun", "run", "services/agent-runtime/lambda.ts"], // the Runtime API loop
       }),
+      architecture: lambda.Architecture.X86_64, // match the x86_64 image asset (native Intel build)
       role: routerRole,
       memorySize: 512,
       timeout: cdk.Duration.seconds(30), // gate + RunTask is quick; the run itself is the task's life
@@ -212,6 +231,10 @@ export class ServerlessStack extends cdk.Stack {
         SPEND_STORE: "dynamodb",
         SPEND_TABLE: "agent-os-budgets",
         GATE: "local", // authn (bearer) + budget admission at the door (ADR-0009/0013)
+        // Static demo tokens (LocalGate is dev-only) injected at deploy via context, NOT
+        // committed: `-c gateTokens="tok:tenant:subject,..."`. Unset ⇒ every request 401s
+        // (safe default). Real deploys swap LocalGate for keyless authn (mesh/OIDC).
+        ...(gateTokens ? { GATE_TOKENS: String(gateTokens) } : {}),
       },
     });
 
@@ -221,7 +244,8 @@ export class ServerlessStack extends cdk.Stack {
     const fnUrl = frontDoor.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
     // The front door's env contract — wire these into the router (DISPATCH=runtask).
-    new cdk.CfnOutput(this, "EcrRepoUri", { value: repo.repositoryUri });
+    new cdk.CfnOutput(this, "FrontDoorFunctionName", { value: frontDoor.functionName });
+    new cdk.CfnOutput(this, "FrontDoorUrl", { value: fnUrl.url });
     new cdk.CfnOutput(this, "EcsCluster", { value: cluster.clusterName });
     new cdk.CfnOutput(this, "EcsTaskDefinition", { value: taskDef.family });
     new cdk.CfnOutput(this, "EcsContainerName", { value: "agent-runtime-task" });
@@ -232,8 +256,5 @@ export class ServerlessStack extends cdk.Stack {
     new cdk.CfnOutput(this, "EcsAssignPublicIp", { value: "true" }); // public subnets, no NAT
     new cdk.CfnOutput(this, "RouterRoleArn", { value: routerRole.roleArn });
     new cdk.CfnOutput(this, "TaskRoleArn", { value: taskRole.roleArn });
-    // The front door itself — POST /runs here to gate + dispatch a task-per-run.
-    new cdk.CfnOutput(this, "FrontDoorFunctionName", { value: frontDoor.functionName });
-    new cdk.CfnOutput(this, "FrontDoorUrl", { value: fnUrl.url });
   }
 }
