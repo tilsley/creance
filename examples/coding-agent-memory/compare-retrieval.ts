@@ -34,7 +34,25 @@ const veSearch = vector.tools(tenant).find((t) => t.spec.name === "memory_search
 
 console.log(`memory:\n${vector.recall(tenant)}`);
 console.log(`\nquery: "${query}"\n`);
+
+const kw = await kwSearch.run({ query });
+const ve = await veSearch.run({ query });
 console.log("── keyword (cheap profile · FilesMemory) ──");
-console.log(await kwSearch.run({ query }));
+console.log(kw);
 console.log("\n── vector (full profile · VectorMemory + Titan embeddings) ──");
-console.log(await veSearch.run({ query }));
+console.log(ve);
+
+// verdict (so this doubles as a regression check, not just a demo): the no-keyword query MUST miss
+// under keyword and MUST surface the test note first under vector. That gap is the reason the full
+// profile exists.
+const kwMissed = kw.includes("(no matching memory)");
+const veFound = (ve.split("\n")[0] ?? "").includes("bun test");
+console.log("\n──────── verdict ────────");
+console.log(kwMissed ? "✅ keyword MISSED (no shared keyword) — as expected" : `❌ keyword unexpectedly matched: ${kw}`);
+console.log(veFound ? "✅ vector FOUND it by meaning (test note ranked first)" : `❌ vector did not rank the test note first:\n${ve}`);
+if (kwMissed && veFound) {
+  console.log("✅ semantic edge proven — vector recalls what keyword can't.");
+  process.exit(0);
+}
+console.log("❌ FAILED — the semantic-edge contrast did not hold.");
+process.exit(1);

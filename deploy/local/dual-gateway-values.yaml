@@ -1,0 +1,75 @@
+# AWS-light: BOTH gateways folded into charts/agent-os — the agent pod holds NEITHER model nor tool
+# creds (the symmetry of ADR-0019 + ADR-0029). think → inference-gateway (the sole holder of Bedrock
+# creds); do-tools → tool-gateway (holds the MCP connection). The runtime forwards only its identity
+# (oidc-sa) and holds no aws-creds at all. Used by deploy/local/dual-gateway-e2e.sh.
+image:
+  repository: agent-runtime
+  tag: dev
+  pullPolicy: IfNotPresent
+
+runtime:
+  replicas: 1
+  env:
+    REGION: eu-west-2
+    SANDBOX_PROVIDER: local
+    AGENT_REGISTRY: memory
+    RUN_STORE: memory
+    SPEND_STORE: memory
+    TELEMETRY: console
+    GATE: noop
+    AUTHN: oidc-sa # verify + preserve the caller token so it forwards to BOTH gateways
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-dual:tgw-caller":{}}'
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    # the runtime is a gateway CLIENT (INFERENCE_GATEWAY_URL injected by the template) — it makes no
+    # Bedrock call and needs no model creds. INFERENCE_PROVIDER=bedrock builds an (unused) base
+    # provider lazily; the gateway path wins. Drop the AWS control-plane env.
+    GUARDRAIL_ID: null
+    TENANT_ASSUME_ROLE: null
+    AUTHZ: null
+    OPA_URL: null
+    GATE_BUDGET_SOURCE: null
+    GATE_BUDGET_USD: null
+  awsCredsSecret: "" # <-- the runtime holds NO model creds (the whole point)
+  gateTokensSecret: ""
+  hpa:
+    enabled: false
+  memory:
+    enabled: false
+
+# `think`'s chokepoint — holds the Bedrock creds, verifies the forwarded identity, enforces budget.
+inferenceGateway:
+  enabled: true
+  image:
+    repository: inference-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  env:
+    CLAIM_SOURCE: static # no DynamoDB
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-dual:tgw-caller":{"model":"claude-haiku","monthlyBudgetUsd":5}}'
+    SPEND_STORE: memory # in-memory budget counter (no DynamoDB)
+  awsCredsSecret: aws-creds # <-- the model creds live HERE, in the gateway pod
+
+# `do`-tools chokepoint — the mock orders MCP server (no PAT needed to prove the symmetry).
+toolGateway:
+  enabled: true
+  image:
+    repository: tool-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  env:
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static
+    CLAIMS_STATIC: '{"system:serviceaccount:agentos-dual:tgw-caller":{}}'
+    CRED_BROKER: noop
+    MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"],"tenants":["system:serviceaccount:agentos-dual:tgw-caller"]}}'
+
+opa: { enabled: false }
+controller: { enabled: false }
+claimPolicy: { enabled: false }
+sampleAgents: { enabled: false }
+networkPolicy: { enabled: false }
+quota: { enabled: false }

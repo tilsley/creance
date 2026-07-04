@@ -42,9 +42,20 @@ echo; echo "════════ RUN 2 — FRESH session, recall (the task d
 RUN2="$(run_agent "A new contributor asks two things: what command runs the tests, and what architecture pattern does this project use? Answer from your memory." 2>&1)"
 echo "$RUN2"
 
-echo; echo "──────── verdict ────────"; pass=0
+echo; echo "──────── verdict (persistence) ────────"; pass=0
 echo "$RUN2" | grep -qiE 'bun test'                 && echo "✅ recalled the test command (bun test) — from memory, not the prompt" || { echo "❌ did not recall 'bun test'"; pass=1; }
 echo "$RUN2" | grep -qiE 'ports.?and.?adapters|ports-and-adapters' && echo "✅ recalled the architecture (ports-and-adapters) — from memory" || { echo "❌ did not recall the architecture"; pass=1; }
 echo "─────────────────────────"
 [ $pass -eq 0 ] && echo "✅ files-first memory proven — the agent remembered across a fresh session." || echo "❌ FAILED — see the runs above."
+
+# RUN 3 — the SEMANTIC EDGE (why the vector/full profile exists), at the tool level on purpose:
+# the agent preloads ALL of MEMORY.md into its system prompt, so at demo scale it answers any question
+# from loaded memory and never needs memory_search — search quality only bites at scale (ADR-0023).
+# So we isolate it where it's real: one no-shared-keyword query through both adapters' memory_search,
+# live Bedrock Titan embeddings. Keyword MUST miss; vector MUST find it by meaning.
+echo; echo "════════ RUN 3 — semantic recall: keyword MISSES, vector FINDS (live Titan) ════════"
+bun run examples/coding-agent-memory/compare-retrieval.ts || { echo "❌ semantic-edge check FAILED — see above."; pass=1; }
+
+echo; echo "──────── overall ────────"
+[ $pass -eq 0 ] && echo "✅ memory proven end-to-end — persists across runs AND recalls by meaning." || echo "❌ FAILED — see the runs above."
 exit $pass

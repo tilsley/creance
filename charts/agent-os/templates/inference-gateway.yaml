@@ -1,0 +1,98 @@
+{{- if .Values.inferenceGateway.enabled }}
+# The inference gateway as a pod (ADR-0019/0028) — `think`'s governed chokepoint, folded into the
+# umbrella chart as the symmetric twin of the tool gateway. It is the sole holder of
+# bedrock:InvokeModel; the runtime forwards only the caller's identity (INFERENCE_GATEWAY_URL) and
+# holds no model creds. Verifies caller SA tokens via TokenReview (AUTHN=oidc-sa); enforces the
+# worst-case budget reserve (R2). Kept dumb (no agent loop) — it is the high-value target.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inference-gateway
+---
+# Cluster reads: TokenReview (authn) always; the claim CRDs only when CLAIM_SOURCE=kube — granted
+# unconditionally (read-only on two CRDs is harmless and keeps the chart switch-by-env).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-inference-gateway-tokenreview
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  # the claims the gateway reads for budget + model routing. InferenceClaim/InferenceAllowance live in
+  # agent-os.io (claimPolicy); the legacy tenantinferenceprofiles (platform.agent-os.io) kept for compat.
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["platform.agent-os.io"]
+    resources: ["tenantinferenceprofiles"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-inference-gateway-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: inference-gateway
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-inference-gateway-tokenreview
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inference-gateway-config
+data:
+{{- range $k, $v := .Values.inferenceGateway.env }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-gateway
+spec:
+  replicas: {{ .Values.inferenceGateway.replicas }}
+  selector:
+    matchLabels: { app: inference-gateway }
+  template:
+    metadata:
+      labels: { app: inference-gateway }
+    spec:
+      serviceAccountName: inference-gateway
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: "{{ .Values.inferenceGateway.image.repository }}:{{ .Values.inferenceGateway.image.tag }}"
+          imagePullPolicy: {{ .Values.inferenceGateway.image.pullPolicy }}
+          ports:
+            - containerPort: 3100
+          envFrom:
+            - configMapRef: { name: inference-gateway-config }
+          {{- if .Values.inferenceGateway.awsCredsSecret }}
+            - secretRef: { name: {{ .Values.inferenceGateway.awsCredsSecret | quote }}, optional: true }
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3100 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources: {{ .Values.inferenceGateway.resources | toYaml | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-gateway
+spec:
+  selector: { app: inference-gateway }
+  ports:
+    - { port: {{ .Values.inferenceGateway.servicePort }}, targetPort: 3100 }
+{{- end }}

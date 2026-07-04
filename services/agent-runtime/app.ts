@@ -140,6 +140,7 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
         authz: authorizer.name,
         guard: providers.guard.name,
         agentRegistry: agentRegistry.name,
+        memory: providers.memory?.name ?? "off",
       });
     }
 

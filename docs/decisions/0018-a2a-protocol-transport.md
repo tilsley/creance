@@ -53,3 +53,16 @@ Speak A2A for inter-agent calls (core subset):
 - **Deferred:** streaming (`message/stream` over SSE), push notifications,
   `tasks/cancel`, and the optional gRPC/REST transport bindings; richer Agent Card
   skills/auth negotiation.
+
+## Proven in-cluster (2026-06-24)
+
+Beyond the local two-process demo: `deploy/local/a2a-multiagent-e2e.sh` runs **two real
+agent-runtime pods** on k3s. `agent-a` is asked an order question but has **no orders tool**, so it
+must **delegate** to `agent-b` via `call_agent` over A2A (card discovery → `message/send` →
+`tasks/get`). `agent-b` **authenticates the inbound hop** (an *unauthenticated* A2A call gets `401`),
+resolves its own agent spec, runs its orders MCP tool, and returns the result — which `agent-a` folds
+into its answer. The **broker is the agent allowlist**: a target the caller isn't granted is
+default-denied (`no access to agent 'agent-x'`). So the A2A wire + the gate-at-every-hop + the
+broker-as-directory all hold live. **Static fidelity** — the identity `act` chain ([0017](0017-a2a-identity-propagation.md))
+is a *static* delegation token here; carrying the real **user** through the hops is the OBO
+follow-up ([0016](0016-obo-token-vault.md)), a broker-adapter swap with no `call_agent`/gate change.

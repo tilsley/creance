@@ -1,0 +1,263 @@
+# agent-os — the stack (ideas)
+
+> Diagram-per-idea, no speaker notes. This deck is **ideas, not a demo** — what an
+> agentic platform actually needs. I built each piece to *understand* it; the building
+> was the way in, not the point. For the prose reference see [`platform.md`](platform.md)
+> and [`primitives.md`](primitives.md).
+
+---
+
+## 1 · The harnesses we use every day
+
+```mermaid
+flowchart TB
+  subgraph TOOLS["the tools we use — all harnesses"]
+    direction LR
+    TUI["TUI<br/>OpenCode · Claude Code"] ~~~ WEB["web UI<br/>Gemini · ChatGPT"]
+  end
+  TOOLS ==> V["the vocabulary they taught you:<br/>skills · workflows · evals · reasoning · MCP · context"]
+  V ==> H["…and each one quietly handles the rest for you:<br/>the model call · the tools · your history · the bill"]
+```
+
+*These are the tools we use every day — and each one quietly handles a lot underneath. This deck names what they handle, so the words mean the same thing for all of us.*
+
+---
+
+## 2 · Agent vs harness
+
+```mermaid
+flowchart TB
+  subgraph HARNESS["HARNESS — the software you run · OpenCode (TUI) · Gemini (web UI)<br/>UI · tool dispatch · context · persistence"]
+    Start(["task"]) --> Think["<b>call a model</b>"]
+    Think --> Q{"act?"}
+    Q -- "no" --> Done(["answer"])
+    Q -- "yes" --> Do["<b>call a tool</b> (e.g. run code)"]
+    Do --> Rem["<b>save to memory</b>"]
+    Rem --> Think
+  end
+```
+
+```mermaid
+flowchart LR
+  H["<b>harness</b> · the engine<br/><i>runtime</i>"] -->|"loads an"| A["<b>agent</b> · prompt · tools · model · budget<br/><i>program / config</i>"] -->|"instantiated per task as a"| Run["<b>run</b> · one live execution<br/><i>process / instance</i>"]
+```
+
+*The harness runs the loop above. An **agent** is a *configuration* of that loop — a purpose: prompt + tools + model + budget. A **run** is one execution of it. So: **engine → program → process** — one harness runs many agents; each agent spawns many runs. (A harness can also run *non*-agentic flows — one question, one answer, no loop.)*
+
+---
+
+## 3 · Why care — what changes when you host
+
+```mermaid
+flowchart LR
+  Lap["<b>on your laptop (n=1)</b><br/>you ARE the user · you pay the bill ·<br/>it's your machine · you trust yourself<br/>→ you absorb all of it, silently"]
+  Lap ==>|"host it for other people"| Host["<b>now someone has to answer:</b><br/>who's calling? · who pays? ·<br/>what can it break / reach? ·<br/>is the memory poisoned?"]
+```
+
+*These problems don't appear at scale — they were always there. At n=1 you absorb them: you're the only user, it's your money, your machine, your trust. Hosting just makes them un-absorbable — someone has to answer each one. **That someone is the platform.** (Each piece I only believed once I'd built it and watched it matter.)*
+
+---
+
+## 4 · The picture — it's a stack
+
+```mermaid
+flowchart TB
+  subgraph CRAFT["THE CRAFT — making the agent good"]
+    direction LR
+    Pr["prompts"] ~~~ Sk["skills"] ~~~ Wf["workflows"] ~~~ Ev["evals"]
+  end
+  subgraph HARNESS["THE HARNESS — the software that runs the agent loop"]
+    L["model call → tool call → memory, every step"]
+  end
+  subgraph PLATFORM["THE PLATFORM — the part your tools handle for you"]
+    direction LR
+    P["model calls · tool calls · memory"] ~~~ Ct["gate · record · guard · contain"]
+  end
+  CRAFT -->|"rests on"| HARNESS
+  HARNESS -->|"rests on"| PLATFORM
+```
+
+*The craft sits on a harness; the harness sits on a platform. Strip the vocabulary and most of the craft is just a way to arrange `model calls`, `tool calls`, `memory`. Take a layer away and everything above it falls.*
+
+---
+
+## 5 · The platform — two kinds of foundation
+
+```mermaid
+flowchart LR
+  subgraph PRIM["PRIMITIVES — the agent's work"]
+    direction LR
+    T["model calls"] ~~~ D["tool calls"] ~~~ Rm["memory"]
+  end
+  subgraph CTRL["CONTROLS — the platform's checks"]
+    direction LR
+    G["gate"] ~~~ Rc["record"] ~~~ Gu["guard"] ~~~ Co["contain"]
+  end
+```
+
+*A **primitive** is a basic thing an agent does to make progress — a building block you can't make from the others. Test — **delete it**: can't make progress = a **primitive** · runs but ungoverned = a **control**. Same split as k8s: pods vs RBAC + quota + admission. The four controls are the four answers from slide 3: who's calling → **gate** · who pays → **gate** · what can it reach → **contain** · is it poisoned → **guard** (and **record** keeps every step accountable).*
+
+---
+
+## 6 · That's the idea — now here's how we build it
+
+```mermaid
+flowchart LR
+  Idea["<b>the idea</b> · vendor-neutral<br/>craft needs a harness ·<br/>harness needs a platform<br/>→ the platform is the precondition<br/>for production, not a demo"] ==>|"so: build the platform,<br/>start the craft now on stubs"| Build["<b>our build</b> · next slides<br/>agent-runtime · inference-gateway ·<br/>sandbox-manager · store<br/>— each primitive + control behind a port"]
+```
+
+*Everything up to here is true of **any** agentic platform. From here it's **our** implementation of it — the same parts, named as components. The craft is necessary but not sufficient; the platform is what makes it survive production; the seam (ports) is what lets us build it without blocking the craft.*
+
+---
+
+## 7 · Architecture — where it sits, how it interacts
+
+```mermaid
+flowchart LR
+  Caller(["caller<br/>+ identity"]) -->|"① POST /runs"| RT["<b>agent-runtime</b> — the harness (the loop)<br/>the only fully-trusted code"]
+  RT -->|"② model call"| GW["<b>inference-gateway</b><br/>gate (authn · authz · budget 402) + guard<br/>holds the model credential"]
+  GW <-->|"call"| Model["model<br/>(Bedrock / …)"]
+  RT -->|"③ tool call"| SB["<b>sandbox-manager</b><br/>contain · isolation + egress lockdown"]
+  RT -->|"④ memory"| ST[("<b>store</b><br/>Postgres · Redis")]
+  RT -.->|"record · every step"| OB["telemetry"]
+```
+
+*The runtime is the loop; its primitives — **model call · tool call · memory** — fan out to the components, and the controls ride along: **gate + guard** at the gateway (the choke point holding the credential and the 402), **contain** at the sandbox-manager (untrusted code never touches the runtime), **record** across every step.*
+
+---
+
+## 8 · The same architecture, in a harness we use
+
+```mermaid
+flowchart LR
+  Caller(["you<br/>in the terminal"]) -->|"① prompt"| RT["<b>opencode</b> — TUI client + server<br/>the harness (the loop)"]
+  RT -->|"② model call"| GW["🚫 no gateway<br/>direct provider call ·<br/>key in auth.json on your disk"]
+  GW <-->|"call"| Model["model"]
+  RT -->|"③ tool call"| SB["🚫 no containment<br/>tools hit your real shell + cwd ·<br/>permission prompt = manual gate"]
+  RT -->|"④ memory"| ST[("local SQLite<br/>opencode.db")]
+  RT -.->|"record"| OB["local log files"]
+```
+
+*Same harness, same loop — but the **entire platform layer collapsed to local** because n=1: gateway → a key on disk, containment → none (tools hit your real machine), store → one SQLite file, telemetry → a log file. The boxes that vanished are exactly the four you'd have to answer the moment you host it (slide 3). The platform **is** the gap between "opencode on my Mac" and "opencode for 200 engineers running untrusted code on a budget."*
+
+---
+
+## 9 · The seam — stub today, swap later
+
+```mermaid
+flowchart LR
+  subgraph S["stub — start today"]
+    direction TB
+    s1["model call · direct SDK call"]
+    s2["tool call · run tools locally"]
+    s3["memory · in-memory"]
+    s4["gate · allow-all + static token"]
+    s5["record · console.log"]
+    s6["guard · passthrough"]
+    s7["contain · none — your machine"]
+  end
+  subgraph R["real — swap in later"]
+    direction TB
+    r1["inference-gateway · budget 402 · authz"]
+    r2["tool-gateway · MCP servers"]
+    r3["Postgres + pgvector · Redis"]
+    r4["TokenReview · OPA · reserve/settle"]
+    r5["OTel → OpenSearch"]
+    r6["Guardrails / Llama Guard"]
+    r7["sandbox microVM · egress lockdown"]
+  end
+  s1 -.->|"one env var"| r1
+  s2 -.-> r2
+  s3 -.-> r3
+  s4 -.-> r4
+  s5 -.-> r5
+  s6 -.-> r6
+  s7 -.-> r7
+```
+
+*Same port, different adapter — chosen by config ([ADR-0003](decisions/0003-ports-and-adapters.md)). The craft never knows which one it's talking to.*
+
+---
+
+## 10 · So we build in parallel
+
+```mermaid
+flowchart TB
+  subgraph C["CRAFT TRACK — start today"]
+    Cc["prompts · skills · workflows · evals<br/>against stubs"]
+  end
+  subgraph P["PLATFORM TRACK — in parallel, underneath"]
+    Pp["inference · tools · memory · gate · record · guard · contain<br/>harden each adapter"]
+  end
+  C <==>|"meet at the ports —<br/>swap stub → real, no rewrite"| P
+```
+
+*Works only if the stubs honor the real **contract** — its failures and limits, not just the happy path: the stub `gate` must sometimes **402**, the stub `contain` must **lock egress**, state must be **async** (submit→poll) from day one. Stub the happy path only and 'parallel' just defers integration to the worst possible moment.*
+
+---
+
+## 11 · What we're building — and what's still open
+
+```mermaid
+flowchart TB
+  subgraph BUILD["What we're building"]
+    B["the <b>platform</b> — the governed foundation + the harness loop,<br/>with <b>agents as the first tenant</b>, starting on stubs in parallel"]
+  end
+  subgraph OPEN["What we decide together — today"]
+    direction TB
+    O1["<b>first use case</b> — what's the first agent, and what does it produce?"]
+    O2["<b>scope</b> — how far does it go? hand back a diff · merge · deploy"]
+    O3["<b>autonomy</b> — human-in-the-loop · guardrailed · fully autonomous"]
+    O4["<b>first slice</b> — which port gets the real adapter first (prove the seam)"]
+  end
+  BUILD --> OPEN
+```
+
+*The shape is settled; the boundaries are this meeting. Pick the first use case, how far it's allowed to go, and the first vertical slice — then the craft track and the platform track both start Monday.*
+
+---
+
+# Backup
+
+## B1 · Why the craft isn't a primitive or a control
+
+```mermaid
+flowchart TB
+  Q["&quot;Aren't skills / evals / workflows<br/>just more primitives or controls?&quot;"]
+  Q --> A["<b>No — the craft is never irreducible.</b><br/>Dependencies point down: a skill imports model + tool calls;<br/>a model call never imports a skill."]
+  A --> C1["most craft = <b>composition</b><br/>reasoning · skills · workflows · harness<br/>are arrangements of model calls / tool calls / memory<br/>→ reducible, so not a primitive"]
+  A --> C2["evals = <b>meta-activity</b><br/>runs out-of-band on the <i>record</i> —<br/>not in-path, can't say no<br/>→ not a control"]
+```
+
+*Position, not function: the same LLM-judge is an **eval** scoring yesterday's runs — or, moved in-path at the gateway where it can block, it's **guard**. What makes a control is where it sits, not what it does.*
+
+---
+
+## B2 · Glossary — the terms, placed on the stack
+
+```mermaid
+flowchart TB
+  RT["<b>reasoning techniques</b> — how you shape a <i>model call</i> (inside one step)"]
+  SK["<b>skills</b> — packaged tool calls: instructions + tools, reusable"]
+  WF["<b>workflows</b> — a graph you draw up front"]
+  EV["<b>evals</b> — out-of-band quality; beside the path, not in it"]
+  HN["<b>harness</b> — the software that runs the loop"]
+  PL["<b>platform</b> — the governed mechanism underneath"]
+  RT ~~~ SK ~~~ WF ~~~ EV ~~~ HN ~~~ PL
+```
+
+*Strip the vocabulary and most of it is a way to arrange `model calls`, `tool calls`, `memory`.*
+
+---
+
+## B3 · If not primitives, then what?
+
+```mermaid
+flowchart LR
+  COMP["<b>composition</b><br/>harness · workflows"] -->|"runs / arranges"| PRIM
+  PROT["<b>protocol / interface</b><br/>MCP · A2A"] -->|"plugs into"| PRIM
+  CONF["<b>config / content</b><br/>skills · prompts · agent specs"] -->|"fed into"| PRIM
+  META["<b>meta-activity</b><br/>evals"] -->|"measures the output of"| PRIM["<b>PRIMITIVES</b><br/>model calls · tool calls · memory<br/><i>irreducible mechanism, behind a port</i>"]
+```
+
+*A primitive is the mechanism; everything else is defined **relative** to it. The harness **runs** it · MCP **plugs into** it · a skill is **fed into** it (content it consumes, not a capability of its own) · evals **measure** its output. Pull the primitives out and the rest is inert — MCP has nothing to connect to, a skill nothing to feed, the harness nothing to loop over. They can't return the favor.*

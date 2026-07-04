@@ -1,0 +1,99 @@
+{{- if .Values.toolGateway.enabled }}
+# The centralized tool/MCP gateway as a pod (ADR-0011 dir. b / ADR-0029) — `do`'s tool face.
+# One shared endpoint holds the MCP connections, the per-tenant allowlist, and the broker creds;
+# the runtime resolves (POST /tools/list) + invokes (POST /tools/call) external tools through it,
+# forwarding only the caller's identity. Folded in from charts/tool-gateway so the governed-egress
+# topology deploys as one chart. Kept dumb (no agent loop, no sandbox) — it is the high-value target.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tool-gateway
+---
+# The one cluster read it performs: TokenReview (authn) — submit callers' SA tokens to the API
+# server for verification (AUTHN=oidc-sa). Cluster-scoped by API design. No claim-CRD RBAC: the
+# gateway reads no claims (per-tenant policy is the static binding + the MCP_SERVERS allowlist).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-tool-gateway-tokenreview
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  # under AUTHN=oidc-sa the gateway resolves the caller SA → tenant from the claim binding (for its
+  # per-tenant tool allowlist). Read-only; harmless when CLAIM_SOURCE=static (no claims read).
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-tool-gateway-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: tool-gateway
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-tool-gateway-tokenreview
+  apiGroup: rbac.authorization.k8s.io
+---
+# config (the ports/adapters seam as env), mirrors agent-runtime-config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tool-gateway-config
+data:
+{{- range $k, $v := .Values.toolGateway.env }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tool-gateway
+spec:
+  replicas: {{ .Values.toolGateway.replicas }}
+  selector:
+    matchLabels: { app: tool-gateway }
+  template:
+    metadata:
+      labels: { app: tool-gateway }
+    spec:
+      serviceAccountName: tool-gateway
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: "{{ .Values.toolGateway.image.repository }}:{{ .Values.toolGateway.image.tag }}"
+          imagePullPolicy: {{ .Values.toolGateway.image.pullPolicy }}
+          ports:
+            - containerPort: 3200
+          envFrom:
+            - configMapRef: { name: tool-gateway-config }
+          {{- if .Values.toolGateway.credBrokerSecret }}
+            # the broker's grant table (CRED_BROKER_CONFIG) carries downstream tool creds (e.g. a
+            # GitHub PAT) — a Secret, never the ConfigMap. The PAT lives ONLY in this pod (ADR-0010).
+            - secretRef: { name: {{ .Values.toolGateway.credBrokerSecret | quote }} }
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3200 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources: {{ .Values.toolGateway.resources | toYaml | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tool-gateway
+spec:
+  selector: { app: tool-gateway }
+  ports:
+    - { port: {{ .Values.toolGateway.servicePort }}, targetPort: 3200 }
+{{- end }}

@@ -37,6 +37,17 @@ test("ranks the semantically-closest note first (vector beats keyword overlap)",
   expect(res.split("\n")[0]).toContain("bun test");
 });
 
+test("hybrid: an exact symbol/ID match surfaces even when semantics are uninformative", async () => {
+  const m = vm(mkdtempSync(join(tmpdir(), "vm-")));
+  await tool(m, "remember").run({ note: "The test command is bun test" });
+  await tool(m, "remember").run({ note: "Ticket DELTA-7 tracks the flaky integration suite" });
+  // "DELTA-7" embeds to [0,0,0] under the toy embedder (no test/deploy/auth keyword) → cosine 0 for
+  // every note, so pure semantic can't rank it. The exact keyword boost surfaces the DELTA-7 note,
+  // and the hyphen survives tokenisation (internal symbol chars are kept).
+  const res = await tool(m, "memory_search").run({ query: "DELTA-7" });
+  expect(res.split("\n")[0]).toContain("DELTA-7");
+});
+
 test("self-heals the index from a human edit to MEMORY.md", async () => {
   const dir = mkdtempSync(join(tmpdir(), "vm-"));
   const m = vm(dir);

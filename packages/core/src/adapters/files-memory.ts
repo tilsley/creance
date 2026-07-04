@@ -18,13 +18,41 @@ import { mkdirSync, existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "../tools";
 import type { MemoryAdapter } from "../memory";
+import type { ContentGuard } from "../ports";
+import { NoopContentGuard } from "./noop-guard";
 
 // prettier-ignore
 const STOPWORDS = new Set("a an and are as at be but by do does for from how i in into is it of on or our that the this to was what when where which who will with you your".split(" "));
 
 export class FilesMemory implements MemoryAdapter {
   readonly name = "files";
-  constructor(protected readonly root: string) {}
+  constructor(
+    protected readonly root: string,
+    // A remembered note is re-injected into FUTURE sessions' system prompts, so unsafe content
+    // persisted here would re-enter the agent across runs. Screen writes at the door (ADR-0030
+    // access-policy / ADR-0008 guard). Defaults to no-op so the demo runs without a guardrail.
+    protected readonly guard: ContentGuard = new NoopContentGuard(),
+  ) {}
+
+  /** Screen a note before it is persisted. Returns the (possibly masked) text to store, or `null`
+   *  if the guard blocked it outright — the note must NOT be written. Direction is "output": the
+   *  agent is emitting content into the durable store (it becomes ingress when re-injected later). */
+  protected async screenWrite(note: string): Promise<string | null> {
+    const v = await this.guard.screen(note, "output");
+    return v.blocked ? null : v.text;
+  }
+
+  /** Tokenise a query into match terms: lowercase, strip only LEADING/TRAILING punctuation (keep
+   *  internal code-symbol chars like - _ . / : so IDs and symbols — `ORD-42`, `foo_bar`,
+   *  `agent-os.io` — match exactly), drop stopwords + single chars. `protected` so VectorMemory's
+   *  hybrid search uses the identical keyword signal. */
+  protected queryTerms(query: string): string[] {
+    return query
+      .toLowerCase()
+      .split(/\s+/)
+      .map((w) => w.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
+      .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+  }
 
   /** per-tenant directory (isolation); `protected` so VectorMemory can index the same files. */
   protected dir(tenant: string): string {
@@ -61,8 +89,10 @@ export class FilesMemory implements MemoryAdapter {
         run: async (i) => {
           const note = String(i.note ?? "").trim().replace(/\s+/g, " ");
           if (!note) return "error: empty note";
-          appendFileSync(this.memoryFile(tenant), `- ${note}\n`);
-          return `remembered: ${note}`;
+          const safe = await this.screenWrite(note);
+          if (safe === null) return "refused: that note was blocked by content safety and was NOT saved";
+          appendFileSync(this.memoryFile(tenant), `- ${safe}\n`);
+          return `remembered: ${safe}`;
         },
       },
       {
@@ -79,11 +109,7 @@ export class FilesMemory implements MemoryAdapter {
           // keyword search, with stopword removal so the baseline is honest (not a strawman that
           // false-matches on "the"/"is"). Its limit — and why the vector adapter exists — is that it
           // can't match meaning: a query sharing no keywords with the note returns nothing.
-          const words = String(i.query ?? "")
-            .toLowerCase()
-            .split(/\s+/)
-            .map((w) => w.replace(/[^a-z0-9]/g, ""))
-            .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+          const words = this.queryTerms(String(i.query ?? ""));
           const text = this.recall(tenant);
           if (!text) return "(memory is empty)";
           const hits = text.split("\n").filter((line) => words.some((w) => line.toLowerCase().includes(w)));

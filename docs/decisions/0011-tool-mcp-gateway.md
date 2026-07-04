@@ -74,3 +74,53 @@ the same `ToolProvider` port), forwarding only identity. So 50 agents share one 
 and one credential holder, not 50 — the centralization realized in [ADR-0029](0029-governed-egress-choke-points.md)'s
 choke-point map, without the AWS coupling. Connection pooling (a fresh connect per call today) and
 the managed AgentCore endpoint remain the scale/managed follow-ups.
+
+## Clarification — gateway *shape*, MCP-client placement, and the auth gap (2026-06-24)
+
+A design discussion (while folding the tool gateway into the umbrella chart, [ADR-0029](0029-governed-egress-choke-points.md))
+surfaced three things worth pinning down. None reverses the decision; they sharpen what was built —
+and correct one imprecision above.
+
+- **Two gateway *shapes* — ours terminates MCP; it is not an MCP endpoint.** The "direction (b)"
+  framing above ("a single **MCP** endpoint for any client") describes **AgentCore Gateway**: clients
+  speak MCP *to* it — a bilateral MCP router. The self-hosted `services/tool-gateway` is a **different
+  shape**: a **tool-resolution** gateway. Callers use its neutral `POST /tools/list|call` HTTP and
+  **never speak MCP**; the gateway is the MCP *client* outward — it **terminates** MCP. Both sit behind
+  the `ToolProvider` port, but they are not the same wire. Call them **Design A** (tool-resolution —
+  ours) and **Design B** (bilateral MCP router — AgentCore Gateway). You need **B** only when the
+  client is a **third-party MCP host you don't control** (Claude Desktop, an IDE) and must interpose
+  transparently. agent-os **owns its runtime**, so the agent calls our tool API and **A is correct +
+  sufficient**. This is why we keep the name **`tool-gateway`** and *don't* call it `mcp-gateway`:
+  in the wild that name already denotes **Design B**. Microsoft's
+  [`mcp-gateway`](https://github.com/microsoft/mcp-gateway) is *"a reverse proxy and management layer
+  for MCP servers… session-aware stateful routing"* that clients connect to **as an MCP server**
+  (`POST /mcp`); Docker's *MCP Gateway* and `mcp-proxy` are the same shape. So `mcp-gateway` wouldn't
+  be merely vague — it would import a concrete *wrong* model (a session-sticky MCP reverse proxy).
+  Our gateways are named by **primitive** anyway (`inference-gateway`, not `anthropic-gateway` —
+  though it speaks that wire — nor `bedrock-gateway`), and MCP is a **swappable backend** here
+  (AgentCore Gateway is the swap-in). If "tool" ever needs disambiguating from the sandbox tools, the
+  right qualifier is **external** (`do`-tools), not the backend protocol.
+- **Where the MCP client lives is the real choice — our agents don't speak MCP.** No LLM speaks MCP;
+  the model emits provider-native **tool-use** (Bedrock Converse / Anthropic), and the **host** maps
+  that to tool execution. MCP is a *tool-source* protocol the host speaks, **not** the model's calling
+  convention. The common default (LangChain, the Anthropic SDK, Cursor, Claude Desktop) runs the MCP
+  client **in-process** in the agent; we move it **into the gateway** so the agent pod holds no MCP
+  connection and no tool credential — a standard **platform-scale** move (cf. Cloudflare / Docker MCP
+  gateways), not a deviation. Note the word "tool" spans two buckets: **`do`-execution** (sandbox
+  bash/read/write/exec — *sandbox*-governed, [ADR-0020](0020-sandbox-execution-model.md)) vs
+  **`do`-tools** (external/MCP — *gateway*-governed). The gateway governs only the latter, and is
+  **MCP-only today** behind the `ToolProvider` port.
+- **The unbuilt part is authorization, not the gateway — and the static-bearer half is now proven
+  against a real server.** `credentialTarget` injects a **static bearer** (Authorization header / stdio
+  env) that the **CredentialBroker** mints per tenant (default-deny). As of 2026-06-24 this runs
+  against a **real remote MCP server**: GitHub's `https://api.githubcopilot.com/mcp/readonly` over HTTP,
+  with a read-only PAT the broker injects — a Bedrock agent reaches **live GitHub issues**, the PAT
+  stays server-side, and an ungranted tenant is denied, proven **local** (`examples/github-mcp/`) *and*
+  **in-cluster** (`deploy/local/tool-gateway-github-e2e.sh`, the PAT in a k8s Secret mounted only on the
+  gateway pod). What remains owed is narrower: servers that require **OAuth 2.1** (Atlassian, Linear —
+  dynamic client registration, an authorization-code flow **with consent**, **token refresh**) need the
+  **OBO token vault** ([ADR-0016](0016-obo-token-vault.md)) wired to the MCP path, or auth punted to the
+  **AgentCore Gateway** swap-in (which provides OAuth). The static-bearer `LocalCredentialBroker` is the
+  dev shape; prod mints short-lived tokens (a GitHub-App installation token / the vault) — no static PAT.
+  (Owning the loop that drives all this is a separate, deliberate choice — the governance shell of
+  [ADR-0024](0024-build-vs-buy-managed-agent-platforms.md), not a consequence of the gateway.)

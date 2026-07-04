@@ -2,13 +2,13 @@
 /**
  * agent-os CDK app entry point.
  *
- * SKELETON: stacks below are comment-only shells. CDK bootstraps the day-0
- * CONTROL PLANE (VPC, EKS, Crossplane). Untrusted code execution is NOT here —
- * it runs in AWS Bedrock AgentCore (see ADR-0006). Run with `bunx cdk synth`.
+ * CDK provisions the cheap, always-on AWS resources (state/spend stores, Bedrock,
+ * data/log). The EKS control plane is NOT here — it's owned by eksctl as
+ * config-as-code (deploy/eks/cluster.yaml: cluster + VPC + Pod Identity), which is
+ * tear-down-friendly and native to keyless identity. Untrusted code execution runs
+ * in AWS Bedrock AgentCore (ADR-0006). Run with `bunx cdk synth`.
  */
 import * as cdk from "aws-cdk-lib";
-import { CoreVpcStack } from "../lib/core-vpc-stack";
-import { EksClusterStack } from "../lib/eks-cluster-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
@@ -39,13 +39,8 @@ new PostgresStack(app, "AgentOsPostgres", { env });
 //   cdk deploy AgentOsServerless        (needs Docker running — it builds the image)
 new ServerlessStack(app, "AgentOsServerless", { env });
 
-// SKELETON — day-0 EKS control plane, not yet implemented.
-const vpc = new CoreVpcStack(app, "AgentOsCoreVpc", { env });
-const cluster = new EksClusterStack(app, "AgentOsEksCluster", { env });
+// SKELETON — the data/log plane, not yet implemented.
+// (The EKS cluster + VPC are owned by eksctl, not CDK — see deploy/eks/cluster.yaml.)
 new DataLogStack(app, "AgentOsDataLog", { env });
-
-// Suppress unused-var noise while these are shells.
-void vpc;
-void cluster;
 
 app.synth();

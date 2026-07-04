@@ -55,16 +55,21 @@ export async function processRun(
       // HTTP client to the standalone gateway — this runtime then holds no model creds
       // (ADR-0019). The caller token is forwarded so the gateway re-derives the tenant.
       const inference = await providers.inferenceForTenant(tenant, principal.token, id);
+      // remember (ADR-0030): inject this tenant's durable memory into the prompt and offer the memory
+      // tools alongside the resolved toolset, when memory is configured (AGENT_MEMORY_DIR). Per-tenant
+      // isolation + guard-screened writes live in the adapter.
+      const memoryTools = providers.memory?.tools(tenant) ?? [];
+      const systemPrompt = withMemory(spec?.systemPrompt, providers.memory?.recall(tenant) ?? "", !!providers.memory);
       result = await runOnSession({
         inference,
         guard: providers.guard,
         telemetry: providers.telemetry,
         session,
         task: existing.task,
-        systemPrompt: spec?.systemPrompt,
+        systemPrompt,
         maxSteps: spec?.maxSteps,
         maxOutputTokens: opts.maxOutputTokens,
-        tools: () => toolset.tools,
+        tools: () => [...toolset.tools, ...memoryTools],
         onProgress: (messages) => {
           store.update(id, { messages }).catch(() => {}); // durable per-turn state
         },
@@ -80,4 +85,20 @@ export async function processRun(
     await toolset.close().catch(() => {});
     await session.close().catch(() => {});
   }
+}
+
+/** Compose the run's system prompt with this tenant's durable memory (ADR-0030). When memory is
+ *  off (no AGENT_MEMORY_DIR) the agent's prompt is unchanged; when on, the recalled MEMORY.md is
+ *  injected and the agent is told it has the `remember` / `memory_search` tools. */
+function withMemory(base: string | undefined, recalled: string, enabled: boolean): string | undefined {
+  if (!enabled) return base;
+  const block = recalled
+    ? `\n\n## Your memory (durable, from past sessions):\n${recalled}`
+    : "\n\n(Your durable memory is empty so far.)";
+  return (
+    (base ?? "") +
+    block +
+    "\n\nUse the `remember` tool to save durable facts, decisions, and preferences worth keeping for " +
+    "future sessions, and `memory_search` to look them up."
+  );
 }

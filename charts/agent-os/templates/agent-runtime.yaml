@@ -3,6 +3,23 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: agent-runtime
+{{- if and .Values.runtime.memory.enabled .Values.runtime.memory.persistence.enabled (not .Values.runtime.memory.persistence.existingClaim) }}
+---
+# remember (ADR-0030): the durable, per-tenant long-term memory volume. One PVC; the adapter keeps
+# per-tenant subdirs under the mount. Survives pod restarts (files-first = the Markdown is the truth).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-runtime-memory
+spec:
+  accessModes: [{{ .Values.runtime.memory.persistence.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.runtime.memory.persistence.size | quote }}
+  {{- if .Values.runtime.memory.persistence.storageClass }}
+  storageClassName: {{ .Values.runtime.memory.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}
 ---
 # adapter selection (the ports/adapters seam as config). AGENTS_NAMESPACE is the release ns.
 apiVersion: v1
@@ -14,6 +31,22 @@ data:
   {{ $k }}: {{ $v | quote }}
 {{- end }}
   AGENTS_NAMESPACE: {{ .Release.Namespace | quote }}
+{{- if .Values.runtime.memory.enabled }}
+  AGENT_MEMORY_DIR: {{ .Values.runtime.memory.dir | quote }}
+  MEMORY_RETRIEVAL: {{ .Values.runtime.memory.retrieval | quote }}
+{{- end }}
+{{- if .Values.toolGateway.enabled }}
+  # `do`'s tool face routes through the centralized gateway (ADR-0011 dir. b / ADR-0029): the
+  # runtime resolves external tools from here and forwards the caller's identity — it holds no tool
+  # creds. Requires a token-preserving runtime authn (AUTHN=oidc-sa/mesh) so the token reaches it.
+  TOOL_GATEWAY_URL: {{ printf "http://tool-gateway:%v" .Values.toolGateway.servicePort | quote }}
+{{- end }}
+{{- if .Values.inferenceGateway.enabled }}
+  # `think` routes through the inference gateway (ADR-0019): the runtime becomes a gateway CLIENT and
+  # holds no model creds — the gateway holds bedrock:InvokeModel and enforces the budget. Same
+  # token-preserving authn requirement; drop the runtime's awsCredsSecret when this is on.
+  INFERENCE_GATEWAY_URL: {{ printf "http://inference-gateway:%v" .Values.inferenceGateway.servicePort | quote }}
+{{- end }}
 {{- if .Values.opa.enabled }}
 ---
 # OPA policy for the sidecar (ADR-0015). Source of truth: deploy/local/opa/authz.rego.
@@ -99,6 +132,10 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+          {{- if .Values.runtime.memory.enabled }}
+          volumeMounts:
+            - { name: memory, mountPath: {{ .Values.runtime.memory.dir | quote }} }
+          {{- end }}
           readinessProbe:
             httpGet: { path: /healthz, port: 3000 }
             initialDelaySeconds: 2
@@ -124,9 +161,22 @@ spec:
           resources:
             requests: { cpu: 10m, memory: 24Mi }
             limits: { cpu: 100m, memory: 64Mi }
+      {{- end }}
+      {{- if or .Values.opa.enabled .Values.runtime.memory.enabled }}
       volumes:
+      {{- if .Values.opa.enabled }}
         - name: opa-policy
           configMap: { name: opa-policy }
+      {{- end }}
+      {{- if .Values.runtime.memory.enabled }}
+        - name: memory
+        {{- if .Values.runtime.memory.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.runtime.memory.persistence.existingClaim | default "agent-runtime-memory" }}
+        {{- else }}
+          emptyDir: {}
+        {{- end }}
+      {{- end }}
       {{- end }}
 ---
 apiVersion: v1

@@ -1,6 +1,6 @@
 # ADR-0031: Serverless substrate for the agent run loop — Fargate task-per-run, Lambda front door
 
-- **Status:** Proposed (realizes the "Compute: serverless / scale-to-zero" cell of [0027](0027-two-deployment-profiles.md) for the *runtime*, reusing the ports of [0003](0003-ports-and-adapters.md))
+- **Status:** Accepted — deployed + verified live 2026-07-04 (realizes the "Compute: serverless / scale-to-zero" cell of [0027](0027-two-deployment-profiles.md) for the *runtime*, reusing the ports of [0003](0003-ports-and-adapters.md))
 - **Date:** 2026-06-29
 
 ## Context

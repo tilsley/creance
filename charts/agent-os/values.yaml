@@ -36,6 +36,21 @@ runtime:
   # set false); gateTokens: GATE_TOKENS=token:tenant:subject,… (optional, created out of band).
   awsCredsSecret: aws-creds
   gateTokensSecret: gate-tokens
+  # remember (ADR-0030): durable, per-tenant long-term memory as files. AGENT_MEMORY_DIR is mounted
+  # here; the adapter creates one subdir per tenant under it (isolation). retrieval=keyword (cheap,
+  # files-first) or =vector (Bedrock Titan embeddings, semantic). Set enabled:false to turn memory off.
+  memory:
+    enabled: true
+    dir: /var/lib/agent-os/memory
+    retrieval: keyword
+    persistence:
+      enabled: true # PVC so memory survives pod restarts; false ⇒ emptyDir (ephemeral, for testing)
+      size: 1Gi
+      # k3s default (local-path) is ReadWriteOnce — fine for the single-node POC (replicas:1). For
+      # EKS scale-out (HPA >1 across nodes) use a ReadWriteMany class (EFS): set accessMode + storageClass.
+      accessMode: ReadWriteOnce
+      storageClass: "" # "" = the cluster default StorageClass
+      existingClaim: "" # bring-your-own PVC instead of the chart creating one
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
@@ -44,6 +59,84 @@ runtime:
     minReplicas: 1
     maxReplicas: 3
     targetCPUUtilization: 70
+
+# Centralized tool/MCP gateway (ADR-0011 dir. b / ADR-0029) — `do`'s tool face as one shared,
+# governed egress chokepoint: it holds the MCP connections, the per-tenant allowlist, and the broker
+# creds; the runtime forwards only the caller's identity, so the agent pod holds no tool credential
+# and opens no tool connection. When enabled, the template auto-injects TOOL_GATEWAY_URL into the
+# runtime (it resolves external tools from here via GatewayToolProvider; built-in workspace/http
+# tools stay local). Was a separate `helm install charts/tool-gateway`; folded in so the whole
+# governed-egress topology is one chart.
+#
+# Opt-in (default off) because it couples to the runtime's authn: the runtime forwards the caller's
+# token to the gateway, so the runtime must use a TOKEN-PRESERVING authn (runtime.env.AUTHN=oidc-sa
+# or mesh) — under the default `token` authn principal.token is empty and the gateway would 401.
+# oidc-sa is the matched scheme: both verify the caller's SA token via TokenReview under one audience.
+toolGateway:
+  enabled: false
+  image:
+    repository: tool-gateway
+    tag: dev
+    pullPolicy: Never # local k3s docker image; EKS: IfNotPresent/Always + a registry repo
+  replicas: 1
+  servicePort: 3200
+  # config (env) — the ports/adapters seam, mirrors charts/tool-gateway. Credential-light: no AWS.
+  env:
+    # Bun's fetch needs the cluster CA for the in-pod TokenReview (else SELF_SIGNED_CERT_IN_CHAIN).
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    AUTHN: oidc-sa # TokenReview the caller's SA token (same audience as the runtime forwards)
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: static # SA→tenant binding; the gateway needs no budget claims / CRD RBAC
+    CLAIMS_STATIC: "{}" # e.g. '{"system:serviceaccount:ns:sa":{}}' — bind caller SAs to a tenant
+    CRED_BROKER: noop # downstream tool creds: none by default; local/vault to inject scoped creds
+    # the fronted MCP servers + per-tenant `tenants` allowlist (default-deny). Demo "orders" server,
+    # stdio, spawned in-pod (the image carries bun + examples/). Scope `tenants` per real install.
+    MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"]}}'
+  # a Secret supplying CRED_BROKER_CONFIG (the broker grant table with the tool token, e.g. a GitHub
+  # PAT) as env — mounted only on the tool gateway, so the token lives in one pod. "" = none.
+  credBrokerSecret: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# Inference gateway (ADR-0019/0028) — `think`'s governed chokepoint, the symmetric twin of
+# toolGateway. When enabled, the template injects INFERENCE_GATEWAY_URL into the runtime, which then
+# becomes a gateway CLIENT and holds NO model creds: the gateway is the sole holder of
+# bedrock:InvokeModel, verifies the forwarded caller identity, and enforces the worst-case budget
+# reserve (R2). Enable BOTH gateways and the agent pod holds neither model nor tool creds.
+#
+# Opt-in, and (like toolGateway) it needs the runtime on a token-preserving authn
+# (runtime.env.AUTHN=oidc-sa/mesh) so the caller token reaches it. When enabled, DROP the runtime's
+# aws creds (set runtime.awsCredsSecret="") and give them to the gateway here instead.
+inferenceGateway:
+  enabled: false
+  image:
+    repository: inference-gateway
+    tag: dev
+    pullPolicy: Never # local k3s docker image; EKS: IfNotPresent/Always + a registry repo
+  replicas: 1
+  servicePort: 3100
+  # config (env) — the ports/adapters seam, mirrors charts/inference-gateway. Holds the model creds.
+  env:
+    REGION: eu-west-2
+    AWS_REGION: eu-west-2
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt # in-pod TokenReview TLS
+    AUTHN: oidc-sa # TokenReview the caller's SA token (same audience the runtime forwards)
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: dynamo # per-tenant model + budget; static (CLAIMS_STATIC) for no-AWS dev
+    CLAIMS_TABLE: agent-os-claims
+    GATE: local # worst-case budget reserve/settle (R2)
+    GATE_BUDGET_USD: "1" # fallback cap when a claim names no budget
+    SPEND_STORE: dynamodb # durable monthly counter; memory for no-AWS dev
+    SPEND_TABLE: agent-os-budgets
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    MODEL_ALIASES: '{"claude-haiku":"eu.anthropic.claude-haiku-4-5-20251001-v1:0"}'
+    INFERENCE_PROVIDER: bedrock # the gateway IS the chokepoint — never set INFERENCE_GATEWAY_URL here
+    SANDBOX_PROVIDER: local # unused by the gateway; satisfies the shared providersFromEnv wiring
+  awsCredsSecret: aws-creds # the gateway holds Bedrock creds (EKS: IRSA, set "")
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
 
 # OPA policy sidecar (ADR-0015) — allow/deny over loopback.
 opa:
@@ -56,6 +149,18 @@ controller:
   reconcileIntervalMs: "10000"
   resources:
     requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+# the inference-claims reconciler (ADR-0021) — the cross-object + status half the VAP can't do:
+# sum each namespace's InferenceClaims against its InferenceAllowance and write status.conditions
+# [Ready]; the gateway's KubeClaimSource then honours only non-Rejected claims. Same image, different
+# entrypoint; reads claims cluster-wide (ClusterRole). Opt-in (pairs with claimPolicy); provisions
+# nothing in AWS.
+claimsController:
+  enabled: false
+  reconcileIntervalMs: "10000"
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
     limits: { cpu: 200m, memory: 256Mi }
 
 # the per-tenant compute bounds (pairs with the per-tenant $ budget).

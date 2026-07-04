@@ -6,6 +6,12 @@ kind: ClusterRole
 metadata:
   name: {{ .Release.Name }}-budget-reader
 rules:
+  # the claims the runtime resolves under AUTHN=oidc-sa (SA→tenant binding) + GATE_BUDGET_SOURCE=kube.
+  # InferenceClaim/InferenceAllowance (agent-os.io) are the current CRDs (claimPolicy); the legacy
+  # tenantinferenceprofiles (platform.agent-os.io) is kept for back-compat.
+  - apiGroups: ["agent-os.io"]
+    resources: ["inferenceclaims", "inferenceallowances"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["platform.agent-os.io"]
     resources: ["tenantinferenceprofiles"]
     verbs: ["get", "list", "watch"]
@@ -44,4 +50,31 @@ roleRef:
   kind: Role
   name: agent-reader
   apiGroup: rbac.authorization.k8s.io
+{{- if eq (.Values.runtime.env.AUTHN | default "") "oidc-sa" }}
+---
+# AUTHN=oidc-sa: the runtime verifies callers' ServiceAccount tokens via the TokenReview API
+# (e.g. so it can forward a verified identity to the tool gateway — ADR-0019/0029). TokenReview is
+# cluster-scoped by API design. Only emitted under oidc-sa; the default `token` authn needs no API call.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-runtime-tokenreview
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-runtime-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-runtime-tokenreview
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
 {{- end }}

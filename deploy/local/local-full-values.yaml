@@ -1,0 +1,107 @@
+# local-full — the WHOLE platform on, one chart, AWS-free except Bedrock (think/embeddings).
+# Unlike the single-feature slice overrides, this turns EVERYTHING on together and routes a real
+# agent run through the full governance stack:
+#   authn (oidc-sa) → authz (OPA) → budget (kube InferenceClaim) → think (inference-gateway, no model
+#   creds in the runtime) + do-tools (tool-gateway) + remember (durable memory) — under quota +
+#   networkPolicy, with the agent catalog from the kube registry (Agent CRs) and the claims control
+#   plane (CRDs + allowance VAP + controller) live.
+# Local adapters where real AWS is absent: memory stores, local sandbox, noop guard. Used by
+# deploy/local/local-full-e2e.sh (which also creates the namespace allowance + the caller's claim + SA).
+image:
+  repository: agent-runtime
+  tag: dev
+  pullPolicy: IfNotPresent
+
+runtime:
+  enabled: true
+  replicas: 1
+  env:
+    REGION: eu-west-2
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    INFERENCE_PROVIDER: bedrock # base provider (lazy, unused — INFERENCE_GATEWAY_URL routes think to the gw)
+    SANDBOX_PROVIDER: local
+    RUN_STORE: memory
+    SPEND_STORE: memory
+    AGENT_REGISTRY: kube # the agent catalog = Agent CRs (sampleAgents), read via KubeAgentRegistry
+    AUTHN: oidc-sa # verify caller SA tokens (TokenReview) + preserve the token for the gateways
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: kube # SA→tenant binding from InferenceClaim CRs (oidc-sa tenant resolution)
+    TENANT_CLAIM_GROUP: agent-os.io # the actual claims CRD (claimPolicy); source default is the legacy one
+    TENANT_CLAIM_VERSION: v1alpha1
+    TENANT_CLAIM_PLURAL: inferenceclaims
+    TENANT_CLAIM_SCOPE: Namespaced # tenant == the namespace (a non-default tenant ⇒ OPA admits)
+    AUTHZ: opa # the OPA sidecar over loopback
+    OPA_URL: http://localhost:8181/v1/data/agentos/authz
+    # run admission here is authn(oidc-sa) + authz(OPA) only; the inference gateway is the budget
+    # enforcer (R2), so the runtime gate does NOT also charge — GATE=noop avoids double-admission.
+    GATE: noop
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    # null ⇒ dropped from the AWS-targeting chart defaults: no role assumption (the gateway calls
+    # Bedrock), noop guard (no Bedrock guardrail), no Dynamo tables.
+    TENANT_ASSUME_ROLE: null
+    GUARDRAIL_ID: null
+    RUNS_TABLE: null
+    SPEND_TABLE: null
+  awsCredsSecret: "" # the runtime holds NO model creds — the inference gateway does
+  gateTokensSecret: "" # oidc-sa, not static tokens
+  memory:
+    enabled: true
+    dir: /var/lib/agent-os/memory
+    retrieval: keyword # files-first; no Bedrock embeddings needed
+    persistence:
+      enabled: true
+      size: 1Gi
+      accessMode: ReadWriteOnce
+      storageClass: ""
+  hpa:
+    enabled: false # RWO memory PVC ⇒ single replica
+
+# think chokepoint — holds the Bedrock creds, reads the claim for model+budget (R2).
+inferenceGateway:
+  enabled: true
+  image: { repository: inference-gateway, tag: dev, pullPolicy: IfNotPresent }
+  env:
+    CLAIM_SOURCE: kube
+    TENANT_CLAIM_GROUP: agent-os.io
+    TENANT_CLAIM_VERSION: v1alpha1
+    TENANT_CLAIM_PLURAL: inferenceclaims
+    TENANT_CLAIM_SCOPE: Namespaced
+    GATE: local # the gateway IS the budget enforcer (worst-case reserve/settle, R2)
+    GATE_BUDGET_SOURCE: kube
+    GATE_BUDGET_USD: "1.00" # fallback when the claim names no budget
+    SPEND_STORE: memory
+  awsCredsSecret: aws-creds
+
+# do-tools chokepoint — the orders mock MCP server (no PAT needed). Static SA→tenant (it reads no claims).
+toolGateway:
+  enabled: true
+  image: { repository: tool-gateway, tag: dev, pullPolicy: IfNotPresent }
+  env:
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    # kube claims so the gateway resolves the SAME tenant (= namespace) the runtime does — a static
+    # source would key on the SA subject, not the tenant, and 401 the forwarded call.
+    CLAIM_SOURCE: kube
+    TENANT_CLAIM_GROUP: agent-os.io
+    TENANT_CLAIM_VERSION: v1alpha1
+    TENANT_CLAIM_PLURAL: inferenceclaims
+    TENANT_CLAIM_SCOPE: Namespaced
+    CRED_BROKER: noop
+    MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"],"tenants":["agentos-full"]}}'
+
+# everything else: ON.
+opa:
+  enabled: true
+controller:
+  enabled: true
+claimsController:
+  enabled: true # the claims aggregate-controller (ADR-0021) — writes claim status.Ready
+claimPolicy:
+  enabled: true
+sampleAgents:
+  enabled: true
+quota:
+  enabled: true
+networkPolicy:
+  enabled: true

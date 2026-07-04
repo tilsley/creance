@@ -1,0 +1,106 @@
+# eks (FULL profile) — local-full, on EKS. The WHOLE current platform: authn(oidc-sa) →
+# authz(OPA) → budget(kube InferenceClaim) → think(inference-gateway) + do-tools(tool-gateway)
+# + remember(durable EBS memory), under quota + networkPolicy, with the claims control plane
+# (CRDs + allowance VAP + claims-controller) live. This is the "catch up to the current
+# platform" deploy — the field trip predated all of it.
+#
+# KEYLESS, the EKS way: the runtime holds NOTHING (think/do route through the gateways, stores
+# are in-memory), and the inference-gateway is the sole Bedrock holder via its Pod Identity
+# association in cluster.yaml. Nothing mounts an aws-creds Secret.
+#
+#   helm install agent-os charts/agent-os -n agent-os --create-namespace -f deploy/eks/eks-full-values.yaml
+#
+# Namespace MUST be agent-os (the Pod Identity bindings) and IS the tenant (OPA admits a
+# non-"default" tenant; the InferenceClaim/Allowance live here).
+image:
+  repository: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/agent-runtime
+  tag: dev
+  pullPolicy: IfNotPresent
+
+runtime:
+  enabled: true
+  replicas: 1
+  env:
+    REGION: eu-west-2
+    MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    INFERENCE_PROVIDER: bedrock # base provider lazy/unused — INFERENCE_GATEWAY_URL routes think out
+    SANDBOX_PROVIDER: local
+    RUN_STORE: memory # the runtime holds no AWS at all in the full profile
+    SPEND_STORE: memory
+    AGENT_REGISTRY: kube # the agent catalog = Agent CRs (sampleAgents)
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway # the audience the runtime forwards to the gateways
+    CLAIM_SOURCE: kube # SA→tenant from InferenceClaim CRs
+    TENANT_CLAIM_GROUP: agent-os.io
+    TENANT_CLAIM_VERSION: v1alpha1
+    TENANT_CLAIM_PLURAL: inferenceclaims
+    TENANT_CLAIM_SCOPE: Namespaced # tenant == namespace
+    AUTHZ: opa
+    OPA_URL: http://localhost:8181/v1/data/agentos/authz
+    GATE: noop # the inference gateway is the budget enforcer (R2) — avoid double-admission
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    TENANT_ASSUME_ROLE: null # the gateway calls Bedrock, not the runtime
+    GUARDRAIL_ID: null
+    RUNS_TABLE: null
+    SPEND_TABLE: null
+  awsCredsSecret: "" # KEYLESS — the runtime holds no model creds (the gateway does)
+  gateTokensSecret: ""
+  memory:
+    enabled: true
+    dir: /var/lib/agent-os/memory
+    retrieval: keyword
+    persistence:
+      enabled: true
+      size: 1Gi
+      accessMode: ReadWriteOnce
+      storageClass: gp3 # EBS, created by run.sh after the CSI addon
+  hpa:
+    enabled: false # RWO memory PVC ⇒ single replica
+
+# think chokepoint — the SOLE Bedrock holder, KEYLESS via the inference-gateway Pod Identity
+# association in cluster.yaml (agent-os-eks-inference-gateway). Reads the claim for model+budget.
+inferenceGateway:
+  enabled: true
+  image:
+    repository: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/inference-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  env:
+    CLAIM_SOURCE: kube
+    TENANT_CLAIM_GROUP: agent-os.io
+    TENANT_CLAIM_VERSION: v1alpha1
+    TENANT_CLAIM_PLURAL: inferenceclaims
+    TENANT_CLAIM_SCOPE: Namespaced
+    GATE: local # the gateway IS the budget enforcer (worst-case reserve/settle, R2)
+    GATE_BUDGET_SOURCE: kube
+    GATE_BUDGET_USD: "1.00"
+    SPEND_STORE: memory
+  awsCredsSecret: "" # KEYLESS — Bedrock creds come from Pod Identity, not a Secret
+
+# do-tools chokepoint — the orders mock MCP server. tenant == namespace (agent-os).
+toolGateway:
+  enabled: true
+  image:
+    repository: 233965347831.dkr.ecr.eu-west-2.amazonaws.com/tool-gateway
+    tag: dev
+    pullPolicy: IfNotPresent
+  env:
+    NODE_EXTRA_CA_CERTS: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    AUTHN: oidc-sa
+    OIDC_SA_AUDIENCE: agent-os-gateway
+    CLAIM_SOURCE: kube # resolve the SAME tenant (= namespace) the runtime does
+    TENANT_CLAIM_GROUP: agent-os.io
+    TENANT_CLAIM_VERSION: v1alpha1
+    TENANT_CLAIM_PLURAL: inferenceclaims
+    TENANT_CLAIM_SCOPE: Namespaced
+    CRED_BROKER: noop
+    MCP_SERVERS: '{"orders":{"transport":"stdio","command":"bun","args":["run","examples/mcp-gateway/mock-mcp-server.ts"],"tenants":["agent-os"]}}'
+
+# everything else: ON (all kube-only — no AWS).
+opa: { enabled: true }
+controller: { enabled: true }
+claimsController: { enabled: true } # writes InferenceClaim status.Ready (ADR-0021)
+claimPolicy: { enabled: true }
+sampleAgents: { enabled: true }
+quota: { enabled: true }
+networkPolicy: { enabled: true }

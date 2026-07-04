@@ -26,19 +26,7 @@ flowchart TB
 
 ---
 
-## 3 · The real question: buy, build, or both?
-
-```mermaid
-flowchart TB
-  Q["Run agents at scale & securely — buy or build?"]
-  Q --> B1["<b>BUY</b> · all-in managed<br/>AgentCore · Claude MA · Vertex<br/>~$0 idle, fast — but lock-in &<br/>no real-time budget cap"]
-  Q --> B2["<b>BUILD</b> · self-host everything<br/>control + cheapest at scale —<br/>but upfront build + idle cost"]
-  Q --> B3["<b>BOTH</b> · pick per capability,<br/>ride the cost curve<br/>← executed: managed as adapters,<br/>but the gateway engine is ours"]
-```
-
----
-
-## 4 · The whole thing in three layers
+## 3 · The whole thing in three layers
 
 ```mermaid
 flowchart TB
@@ -51,13 +39,31 @@ flowchart TB
 
 ---
 
+## 4 · First, watch one task run — the loop (this is "the agent")
+
+```mermaid
+flowchart TD
+  Start(["task comes in"]) --> Guard1["guard: screen input"]
+  Guard1 --> Think["<b>think</b>: model generates"]
+  Think --> Q{"wants a tool?"}
+  Q -- "no" --> Done(["return the answer"])
+  Q -- "yes" --> Do["<b>do</b>: run it in the sandbox"]
+  Do --> Guard2["guard: screen the result"]
+  Guard2 --> Rem["<b>remember</b>: persist progress"]
+  Rem --> Think
+```
+
+*The bold steps — **think · do · remember** — are the **primitives** (the agent's work); the **guard** wrapping them is a **control** (the platform's check). We name the parts next.*
+
+---
+
 ## 5 · L0 — the parts
 
 ```mermaid
 flowchart LR
   subgraph PRIM["PRIMITIVES — the agent's work (data plane)"]
     direction LR
-    T["think"] ~~~ D["do"] ~~~ R["remember"]
+    T["think"] ~~~ D["do (run / call)"] ~~~ R["remember"]
   end
   subgraph CTRL["CONTROLS — the platform's checks (control plane)"]
     direction LR
@@ -75,9 +81,9 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  T["<b>think</b> · InferenceProvider<br/>ask a model → text + tool calls"]
-  D["<b>do</b> · SandboxProvider + ToolProvider<br/>run code / call a tool, isolated"]
-  R["<b>remember</b> · RunStore → StateStore<br/>persist state across turns + runs"]
+  T["<b>think</b> · ask a model → text + tool calls<br/>InferenceProvider"]
+  D["<b>do</b> · run code or call a tool — isolated<br/>SandboxProvider + ToolProvider"]
+  R["<b>remember</b> · persist state across turns + runs<br/>RunStore → StateStore"]
 ```
 
 ---
@@ -107,23 +113,7 @@ flowchart LR
 
 ---
 
-## 9 · L1 — the loop (this is "the agent")
-
-```mermaid
-flowchart TD
-  Start(["task comes in"]) --> Guard1["guard: screen input"]
-  Guard1 --> Think["<b>think</b>: model generates"]
-  Think --> Q{"wants a tool?"}
-  Q -- "no" --> Done(["return the answer"])
-  Q -- "yes" --> Do["<b>do</b>: run it in the sandbox"]
-  Do --> Guard2["guard: screen the result"]
-  Guard2 --> Rem["<b>remember</b>: persist progress"]
-  Rem --> Think
-```
-
----
-
-## 10 · The gate, opened up
+## 9 · The gate, opened up
 
 ```mermaid
 sequenceDiagram
@@ -149,7 +139,7 @@ sequenceDiagram
 
 ---
 
-## 11 · A run, end to end
+## 10 · A run, end to end
 
 ```mermaid
 sequenceDiagram
@@ -175,7 +165,7 @@ sequenceDiagram
 
 ---
 
-## 12 · L1 vs L2 — one engine, many agents
+## 11 · L1 vs L2 — one engine, many agents
 
 ```mermaid
 flowchart LR
@@ -196,7 +186,7 @@ flowchart LR
 
 ---
 
-## 13 · L2 — policy sets the values; the platform enforces the limits
+## 12 · L2 — policy sets the values; the platform enforces the limits
 
 ```mermaid
 flowchart TB
@@ -208,7 +198,7 @@ flowchart TB
 
 ---
 
-## 14 · Sandbox — and coding agents
+## 13 · Sandbox — and coding agents
 
 ```mermaid
 flowchart TB
@@ -224,7 +214,7 @@ flowchart TB
 
 ---
 
-## 15 · Memory — the right store per tier
+## 14 · Memory — the right store per tier
 
 ```mermaid
 flowchart LR
@@ -235,7 +225,7 @@ flowchart LR
 
 ---
 
-## 16 · Managed vs self-hosted — the cost curve
+## 15 · Managed vs self-hosted — the cost curve
 
 ```mermaid
 flowchart LR
@@ -248,7 +238,7 @@ flowchart LR
 
 ---
 
-## 17 · Where it stands
+## 16 · Where it stands
 
 ```mermaid
 flowchart LR

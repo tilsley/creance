@@ -1,7 +1,8 @@
 # ADR-0029: Governed egress — every agent outbound flows through a bounding choke point
 
-- **Status:** Proposed
-- **Date:** 2026-06-14
+- **Status:** Accepted (the one owed build — the centralized tool/MCP gateway — is built,
+  in-cluster-proven, and chart-integrated; 2026-06-17)
+- **Date:** 2026-06-14 (accepted 2026-06-17)
 
 ## Context
 
@@ -120,8 +121,23 @@ if it upholds the seam: multi-tenant isolation + the constrained, non-SQL verb s
   `/tools/call`) holds the MCP connections, the per-tenant allowlist, and the broker creds; an agent
   resolves + invokes through it via `GatewayToolProvider`, forwarding only identity (it opens no tool
   connection and holds no tool credential). Validated: per-tenant list, server-side execution,
-  default-deny on un-permitted tools. *Follow-ups:* connection pooling (a fresh connect per call
-  today, per [0011](0011-tool-mcp-gateway.md)) and the AgentCore-managed hosted swap-in.
+  default-deny on un-permitted tools. **Proven in-cluster** (`deploy/local/tool-gateway-e2e.sh`): an
+  agent composes *both* governed chokepoints in one task — `think` → inference gateway → Bedrock and
+  `do`-tools → tool gateway → MCP — holding no model creds and no tool creds, only its SA token both
+  gateways verify via TokenReview. **Chart-integrated** (2026-06-17): folded into `charts/agent-os`
+  as the toggleable `toolGateway` component (auto-injects `TOOL_GATEWAY_URL` into the runtime; the
+  whole governed-egress topology is one chart), alongside the still-standalone `charts/tool-gateway`.
+  *Follow-ups:* connection pooling (a fresh connect per call today, per [0011](0011-tool-mcp-gateway.md))
+  and the AgentCore-managed hosted swap-in.
+- **Both chokepoints, one chart, credential-less agent** (2026-06-24): the **inference gateway**
+  ([0019](0019-inference-gateway.md)) is now *also* folded into `charts/agent-os` as the toggleable
+  `inferenceGateway` component (auto-injects `INFERENCE_GATEWAY_URL`; the runtime becomes a gateway
+  client holding no model creds). With both on, the agent pod holds **neither model nor tool creds** —
+  `think` and `do`-tools each terminate at a gateway that holds the credential and bounds the
+  capability. Proven in-cluster end to end: `deploy/local/dual-gateway-e2e.sh` (the runtime has no
+  `aws-creds`, yet completes a reasoning + tool task — so `think` *must* have gone through the
+  gateway), and `deploy/local/tool-gateway-github-e2e.sh` (a real GitHub MCP server reached through
+  the tool gateway with a broker-injected PAT that lives only in the gateway pod).
 - **Specify (control, not service):** the `remember` **access policy** — scoped reads, the
   append-mostly / destructive-op stance, volume limits, audit — alongside cross-run memory.
 
@@ -136,8 +152,9 @@ if it upholds the seam: multi-tenant isolation + the constrained, non-SQL verb s
   re-litigating it.
 - **−** **Authorized-misuse stays an open problem** — this ADR *bounds and names* it, it does not
   solve it; intent-level defense (`guard`, least privilege) remains weak.
-- **−** The centralized MCP gateway is now an **explicit, owed build**, not a vague "tools are
-  handled."
+- **−→+** The centralized MCP gateway was the one **explicit, owed build** this ADR named (not a
+  vague "tools are handled"). It is now **built, in-cluster-proven, and chart-integrated** — the debt
+  is paid; what remains (pooling, hosted swap-in) is optimization, not the load-bearing chokepoint.
 
 ## Relationship
 

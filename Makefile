@@ -104,6 +104,12 @@ sandbox-test: ## deploy charts/sandbox + prove egress lockdown (wall + allowlist
 gate-conformance: ## assert the gate contract (R1+R2) holds identically on both gateways (ADR-0027)
 	bash deploy/local/gate-conformance.sh
 
+local-full: ## run the WHOLE-platform local e2e — everything on, one governed run (the anchor)
+	bash deploy/local/run.sh local-full
+
+local: ## list all local e2e scenarios (then: bash deploy/local/run.sh <id>)
+	@bash deploy/local/run.sh
+
 # --- test agents (exercise the platform end-to-end) ---
 spine-agent: ## run the spine test agent through the live gateway (small Bedrock spend)
 	bash examples/spine-agent/run.sh
