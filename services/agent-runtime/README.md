@@ -6,10 +6,21 @@ The **L1 runtime as an HTTP service** — the "front door" from
 
 **Runs are async + persisted.** A run is a first-class entity (the State
 primitive — [`core/runs`](../../packages/core/src/runs.ts)): `POST /runs` returns
-immediately with a `runId`, an in-process worker executes it, and you poll for the
-result. State (conversation + status) is persisted to the `RunStore` each turn, so
-a run is inspectable mid-flight. Why async: real agent runs are long-lived and
-event-driven — a blocking request/response can't host them.
+immediately with a `runId`, a worker executes it, and you poll for the result.
+State (conversation + status) is persisted to the `RunStore` each turn, so a run is
+inspectable mid-flight. Why async: real agent runs are long-lived and event-driven —
+a blocking request/response can't host them.
+
+**One front door, two substrates** — [ADR-0031](../../docs/decisions/0031-serverless-substrate-for-the-run-loop.md).
+`POST /runs` always runs the same gate (`router.ts`: authn → authz → budget → create);
+only how the queued run is *dispatched* differs, by `DISPATCH`:
+- `inprocess` (default, full-k8s) — an in-process fire-and-forget worker runs the loop.
+- `runtask` (serverless) — the front door fires `ecs:RunTask`, a **Fargate task-per-run**
+  (`task.ts`) executes the loop and exits (~$0 idle). The front door itself runs either as
+  this always-on `server.ts` or on Lambda as a native Runtime API loop (`lambda.ts`) — the
+  *same* handler (`app.ts`), no HTTP server, no Web Adapter.
+
+See the ADR's **Request flow (end to end)** for the full doorman→worker→DynamoDB trace.
 
 ## Endpoints
 - `GET  /healthz` → `{ "status": "ok" }`
@@ -83,10 +94,12 @@ Same ports/adapters seam as the rest (ADR-0003), via env: `INFERENCE_PROVIDER`,
 - Trusted service → runs `runc`. **Language: TypeScript (Bun).**
 - Providers are built once at boot and reused; each run gets its own sandbox
   session and trace.
-- **Durability today vs later:** `RunStore` is in-memory (a restart loses runs;
-  fine for dev). Swap-in points, all behind ports: in-memory → **DynamoDB**;
-  in-process fire-and-forget worker → **SQS + worker deployment** (durable queue +
-  startup reconciliation of interrupted runs). Mid-run *resume* of in-flight work
-  also needs durable workspace state — deferred.
+- **Durability today vs later:** `RunStore` is in-memory by default (a restart loses
+  runs; fine for dev) → **DynamoDB** (`RUN_STORE=dynamodb`) for restart-survival, behind
+  the same port. Execution durability scales with `DISPATCH`: `inprocess` is
+  fire-and-forget (a crash loses in-flight runs); `runtask` isolates each run in its own
+  Fargate task. A durable **SQS + worker** queue (with startup reconciliation of
+  interrupted runs) is the remaining swap-in; mid-run *resume* also needs durable
+  workspace state — deferred (see [ADR-0031](../../docs/decisions/0031-serverless-substrate-for-the-run-loop.md) Open).
 - Next (#3, the `gate` control): authenticate `POST /runs`, attach
   tenant/principal to the run, scoped credentials + per-tenant budget.
