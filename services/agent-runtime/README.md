@@ -22,6 +22,19 @@ only how the queued run is *dispatched* differs, by `DISPATCH`:
 
 See the ADR's **Request flow (end to end)** for the full doorman→worker→DynamoDB trace.
 
+**Agents are data, not services** — a named `AgentSpec` (prompt + tool allowlist + model
++ maxSteps) the runtime resolves per run. In the serverless profile they live in a
+DynamoDB catalog (`AGENT_REGISTRY=dynamodb`, table `agent-os-agents`); register one and the
+next run can name it, no redeploy:
+```bash
+AWS_PROFILE=… bun run services/agent-runtime/agents-cli.ts \
+  put '{"name":"pirate","model":"amazon.nova-lite-v1:0","systemPrompt":"Answer in pirate speak.","tools":[],"maxSteps":2}'
+curl -X POST "$FRONT_DOOR_URL/runs" -H 'authorization: Bearer <tok>' \
+  -H 'content-type: application/json' -d '{"task":"say hi","agent":"pirate"}'
+```
+`agents-cli` also does `list` / `get <name>` / `delete <name>`. Custom *tools* (beyond the
+built-ins) still come from MCP servers; a `kind:"sandboxed"` agent runs its own code in the sandbox.
+
 ## Endpoints
 - `GET  /healthz` → `{ "status": "ok" }`
 - `POST /runs` → body `{ "task": "..." }` → **`202`** `{ runId, status:"queued", tenant }`

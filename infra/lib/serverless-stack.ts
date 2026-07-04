@@ -94,6 +94,7 @@ export class ServerlessStack extends cdk.Stack {
     // Reuse the durable stores from StateStack (imported by name — no new tables).
     const runs = dynamodb.Table.fromTableName(this, "RunsTable", "agent-os-runs");
     const budgets = dynamodb.Table.fromTableName(this, "BudgetsTable", "agent-os-budgets");
+    const agents = dynamodb.Table.fromTableName(this, "AgentsTable", "agent-os-agents");
 
     // The task's cloud identity — least privilege for what a run actually does.
     const taskRole = new iam.Role(this, "TaskRole", {
@@ -103,6 +104,7 @@ export class ServerlessStack extends cdk.Stack {
     });
     runs.grantReadWriteData(taskRole); // persist conversation/status per turn
     budgets.grantReadWriteData(taskRole); // durable per-turn spend (SPEND_STORE=dynamodb)
+    agents.grantReadData(taskRole); // resolve the named agent's spec (read-only)
     // Bedrock invoke — reuse BedrockStack's scoped managed policy (specific models +
     // ApplyGuardrail), not a fresh "bedrock:*".
     taskRole.addManagedPolicy(
@@ -150,6 +152,8 @@ export class ServerlessStack extends cdk.Stack {
         RUNS_TABLE: "agent-os-runs",
         SPEND_STORE: "dynamodb",
         SPEND_TABLE: "agent-os-budgets",
+        AGENT_REGISTRY: "dynamodb", // resolve the run's named agent from the catalog table
+        AGENTS_TABLE: "agent-os-agents",
         GATE: "local",
         INFERENCE_PROVIDER: "bedrock",
         MODEL_ID: "amazon.nova-lite-v1:0",
@@ -172,6 +176,7 @@ export class ServerlessStack extends cdk.Stack {
     });
     runs.grantReadWriteData(routerRole); // create queued Run + serve GET /runs/{id} polling
     budgets.grantReadData(routerRole); // gate.checkBudget before admitting a run
+    agents.grantReadData(routerRole); // validate the named agent + serve GET /agents
     routerRole.addToPolicy(
       new iam.PolicyStatement({
         sid: "DispatchRunTask",
@@ -230,6 +235,8 @@ export class ServerlessStack extends cdk.Stack {
         RUNS_TABLE: "agent-os-runs",
         SPEND_STORE: "dynamodb",
         SPEND_TABLE: "agent-os-budgets",
+        AGENT_REGISTRY: "dynamodb", // validate the named agent + serve GET /agents from the catalog
+        AGENTS_TABLE: "agent-os-agents",
         GATE: "local", // authn (bearer) + budget admission at the door (ADR-0009/0013)
         // Static demo tokens (LocalGate is dev-only) injected at deploy via context, NOT
         // committed: `-c gateTokens="tok:tenant:subject,..."`. Unset ⇒ every request 401s

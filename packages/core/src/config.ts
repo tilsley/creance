@@ -45,6 +45,7 @@ import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
 import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
 import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
+import { DynamoAgentRegistry } from "./adapters/dynamo-agent-registry";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
 import type { Gate, Authenticator, Authorizer } from "./gate";
 import type { CredentialBroker } from "./credentials";
@@ -313,11 +314,15 @@ export function providersFromEnv(env: Env = process.env): Providers {
       : new InMemoryRunStore();
 
   // agent control plane (#5): the registry of agent definitions the runtime reads.
-  // memory (seeded from AGENTS_JSON) for dev; kube reads Agent CRs (ADR-0012).
+  // memory (seeded from AGENTS_JSON) for dev; dynamodb (cheap mode — edit agents with a
+  // PutItem, no redeploy, ADR-0031); kube reads Agent CRs (ADR-0012).
+  // AGENTS_TABLE_ENDPOINT → DynamoDB Local.
   const agentRegistry: AgentRegistry = (() => {
     switch (env.AGENT_REGISTRY ?? "memory") {
       case "memory":
         return new InMemoryAgentRegistry(env.AGENTS_JSON ? (JSON.parse(env.AGENTS_JSON) as AgentSpec[]) : []);
+      case "dynamodb":
+        return new DynamoAgentRegistry(env.AGENTS_TABLE ?? "agent-os-agents", region, env.AGENTS_TABLE_ENDPOINT);
       case "kube":
         return new KubeAgentRegistry(env.AGENTS_NAMESPACE ?? "agent-os");
       default:

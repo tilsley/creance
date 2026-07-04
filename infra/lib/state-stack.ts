@@ -42,6 +42,16 @@ export class StateStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // the agent catalog (the AgentRegistry) — PK `name`, the item is the AgentSpec.
+    // DynamoAgentRegistry reads this; register an agent with a PutItem and the next
+    // run can invoke it, no redeploy (ADR-0012/0031). On-demand → ~$0 idle.
+    const agents = new dynamodb.Table(this, "AgentsTable", {
+      tableName: "agent-os-agents",
+      partitionKey: { name: "name", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // the runtime's cloud identity
     const runtimeRole = new iam.Role(this, "AgentRuntimeRole", {
       roleName: "agent-os-runtime",
@@ -63,9 +73,11 @@ export class StateStack extends cdk.Stack {
 
     runs.grantReadWriteData(runtimeRole); // scoped to the table + its indexes only
     budgets.grantReadWriteData(runtimeRole); // GetItem + atomic UpdateItem on spend
+    agents.grantReadWriteData(runtimeRole); // read the catalog + register/edit agents
 
     new cdk.CfnOutput(this, "RunsTableName", { value: runs.tableName });
     new cdk.CfnOutput(this, "BudgetsTableName", { value: budgets.tableName });
+    new cdk.CfnOutput(this, "AgentsTableName", { value: agents.tableName });
     new cdk.CfnOutput(this, "AgentRuntimeRoleArn", { value: runtimeRole.roleArn });
   }
 }
