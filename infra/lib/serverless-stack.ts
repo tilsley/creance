@@ -44,8 +44,14 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
  * assume AgentOsServerlessRouterRole, export the ECS_* outputs, and
  * `DISPATCH=runtask bun run services/agent-runtime/server.ts`.
  */
+export interface ServerlessStackProps extends cdk.StackProps {
+  /** Wire the front door to a Cognito user pool (ADR-0032): AUTHN=cognito with these
+   *  values. Unset ⇒ the pre-0032 static-token gate (context `-c gateTokens=...`). */
+  cognito?: { issuer: string; clientId: string };
+}
+
 export class ServerlessStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: ServerlessStackProps) {
     super(scope, id, props);
 
     // Optional demo bearer tokens for the front door's LocalGate, injected at deploy
@@ -237,11 +243,16 @@ export class ServerlessStack extends cdk.Stack {
         SPEND_TABLE: "agent-os-budgets",
         AGENT_REGISTRY: "dynamodb", // validate the named agent + serve GET /agents from the catalog
         AGENTS_TABLE: "agent-os-agents",
-        GATE: "local", // authn (bearer) + budget admission at the door (ADR-0009/0013)
-        // Static demo tokens (LocalGate is dev-only) injected at deploy via context, NOT
-        // committed: `-c gateTokens="tok:tenant:subject,..."`. Unset ⇒ every request 401s
-        // (safe default). Real deploys swap LocalGate for keyless authn (mesh/OIDC).
-        ...(gateTokens ? { GATE_TOKENS: String(gateTokens) } : {}),
+        GATE: "local", // budget admission at the door (ADR-0009/0013)
+        // authn (ADR-0032): with a Cognito pool wired, verify the console's id token
+        // offline against the pool JWKS — human identity, no static tokens. Without
+        // one, fall back to the pre-0032 demo tokens injected at deploy via context
+        // (`-c gateTokens="tok:tenant:subject,..."`); unset ⇒ every request 401s.
+        ...(props?.cognito
+          ? { AUTHN: "cognito", COGNITO_ISSUER: props.cognito.issuer, COGNITO_CLIENT_ID: props.cognito.clientId }
+          : gateTokens
+            ? { GATE_TOKENS: String(gateTokens) }
+            : {}),
       },
     });
 

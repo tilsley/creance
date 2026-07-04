@@ -9,6 +9,7 @@
  * in AWS Bedrock AgentCore (ADR-0006). Run with `bunx cdk synth`.
  */
 import * as cdk from "aws-cdk-lib";
+import { AuthStack } from "../lib/auth-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
@@ -32,12 +33,20 @@ new BedrockStack(app, "AgentOsBedrock", { env });
 // full-mode trips (`cdk deploy AgentOsPostgres -c dbAllowedCidr=<ip>/32`); destroy cleans up.
 new PostgresStack(app, "AgentOsPostgres", { env });
 
+// IMPLEMENTED — the console's human IdP (ADR-0032): a Cognito user pool whose id
+// token is the Bearer credential the front door verifies (AUTHN=cognito). ~$0 idle.
+const auth = new AuthStack(app, "AgentOsAuth", { env });
+
 // IMPLEMENTED — the cheap-profile serverless compute substrate (ADR-0031): the
 // agent loop as a Fargate task-per-run + a Lambda front door. Reuses AgentOsState's
 // tables + AgentOsBedrock's invoke policy. ~$0 idle (no NAT, no ALB, zero tasks at rest).
 // The image is a CDK DockerImageAsset, so one command builds + pushes + deploys it all:
 //   cdk deploy AgentOsServerless        (needs Docker running — it builds the image)
-new ServerlessStack(app, "AgentOsServerless", { env });
+// The front door authenticates the console's Cognito id token (ADR-0032).
+new ServerlessStack(app, "AgentOsServerless", {
+  env,
+  cognito: { issuer: auth.issuer, clientId: auth.clientId },
+});
 
 // SKELETON — the data/log plane, not yet implemented.
 // (The EKS cluster + VPC are owned by eksctl, not CDK — see deploy/eks/cluster.yaml.)

@@ -24,6 +24,7 @@ import { StaticTokenAuthenticator } from "./adapters/static-token-authenticator"
 import { MeshTrustAuthenticator } from "./adapters/mesh-trust-authenticator";
 import { MeshIdentityAuthenticator } from "./adapters/mesh-identity-authenticator";
 import { OidcServiceAccountAuthenticator, KubeTokenReviewer } from "./adapters/oidc-sa-authenticator";
+import { CognitoJwtAuthenticator } from "./adapters/cognito-jwt-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
 import { OpaAuthorizer } from "./adapters/opa-authorizer";
@@ -241,6 +242,17 @@ export function providersFromEnv(env: Env = process.env): Providers {
         // verified workload identity (ADR-0019): TokenReview-validate the caller's
         // ServiceAccount token; tenant comes from the SA→claim binding, not the token.
         return new OidcServiceAccountAuthenticator({ audience: env.OIDC_SA_AUDIENCE, resolver: claimSource, reviewer });
+      case "cognito": {
+        // verified HUMAN identity (ADR-0032): the console's Cognito id token, verified
+        // offline against the pool's JWKS; tenant from a custom claim (fail closed).
+        if (!env.COGNITO_ISSUER || !env.COGNITO_CLIENT_ID)
+          throw new Error("AUTHN=cognito requires COGNITO_ISSUER and COGNITO_CLIENT_ID");
+        return new CognitoJwtAuthenticator({
+          issuer: env.COGNITO_ISSUER,
+          clientId: env.COGNITO_CLIENT_ID,
+          tenantClaim: env.COGNITO_TENANT_CLAIM,
+        });
+      }
       case "noop":
         return new NoopAuthenticator();
       default:
