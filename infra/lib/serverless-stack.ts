@@ -8,6 +8,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 
 /**
  * ServerlessStack — the cheap-profile compute substrate for the agent run loop
@@ -33,6 +34,9 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
  *   - the executor task definition: the image with the task.ts CMD, RUN_ID injected
  *     per run via a container override at RunTask time.
  *   - a least-privilege task role (runs+budgets tables, Bedrock invoke, AgentCore).
+ *   - the claude-code runner (ADR-0033): a second image + task def for
+ *     kind="claude-code" agents — headless Claude Code per run, subscription token
+ *     from an SSM SecureString (default aws/ssm key, $0), its own minimal task role.
  *   - a router role: ecs:RunTask + iam:PassRole — what the front door assumes to
  *     dispatch a task-per-run, plus tables access for create + budget checks.
  *   - the front-door COMPUTE: a Lambda (the SAME image, lambda.ts CMD → a native
@@ -168,6 +172,61 @@ export class ServerlessStack extends cdk.Stack {
       },
     });
 
+    // ---- Claude Code runner (ADR-0033) --------------------------------------
+    // A SECOND executor for kind="claude-code" agents: one headless Claude Code
+    // invocation per run, same RUN_ID-override contract, same runs table. Its own
+    // image (the harness binary doesn't belong in the loop image) and its own task
+    // role (runs+agents tables only — no Bedrock, no AgentCore: the subscription
+    // token is the model credential).
+    const ccImage = new ecrAssets.DockerImageAsset(this, "ClaudeCodeImage", {
+      directory: path.join(__dirname, "..", ".."),
+      file: "services/claude-code-runner/Dockerfile",
+      platform: ecrAssets.Platform.LINUX_AMD64,
+    });
+
+    // The operator's Claude subscription token (`claude setup-token`), stored as an
+    // SSM SecureString under the default aws/ssm key — $0/mo vs Secrets Manager's
+    // $0.40. CloudFormation can't create SecureString VALUES, so the parameter is
+    // written once out-of-band (see services/claude-code-runner/README.md) and only
+    // REFERENCED here. ECS resolves it at task start; it never lands in the template.
+    const ccToken = ssm.StringParameter.fromSecureStringParameterAttributes(this, "ClaudeCodeToken", {
+      parameterName: "/agent-os/claude-code/oauth-token",
+    });
+
+    const ccTaskRole = new iam.Role(this, "ClaudeCodeTaskRole", {
+      roleName: "agent-os-claude-code-task",
+      description: "agent-os claude-code runner - runs table RW + agents table R, nothing else",
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+    });
+    runs.grantReadWriteData(ccTaskRole); // mirror the transcript + terminal status
+    agents.grantReadData(ccTaskRole); // resolve the agent spec (systemPrompt/maxSteps/model)
+
+    // Bigger than the loop executor on purpose: think is NOT remote here — the
+    // harness plus whatever a coding task builds/tests runs in this container.
+    const ccTaskDef = new ecs.FargateTaskDefinition(this, "ClaudeCodeTaskDef", {
+      family: "agent-os-claude-code-task",
+      cpu: 1024,
+      memoryLimitMiB: 2048,
+      taskRole: ccTaskRole,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+    ccTaskDef.addContainer("claude-code-runner", {
+      image: ecs.ContainerImage.fromDockerImageAsset(ccImage),
+      logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code" }),
+      // fromSsmParameter grants the EXECUTION role the read; the token reaches the
+      // process as CLAUDE_CODE_OAUTH_TOKEN and stays out of the task definition.
+      secrets: { CLAUDE_CODE_OAUTH_TOKEN: ecs.Secret.fromSsmParameter(ccToken) },
+      environment: {
+        // RUN_ID is injected per run via the RunTask container override (not here).
+        REGION: this.region,
+        RUNS_TABLE: "agent-os-runs",
+        AGENTS_TABLE: "agent-os-agents",
+      },
+    });
+
     // The router's identity (the front door). It does NOT run loops — it dispatches
     // them: create the queued Run, then ecs:RunTask the executor, passing the task +
     // execution roles. Attach this to the Lambda/Fargate that serves POST /runs.
@@ -187,9 +246,10 @@ export class ServerlessStack extends cdk.Stack {
       new iam.PolicyStatement({
         sid: "DispatchRunTask",
         actions: ["ecs:RunTask"],
-        // allow any revision of this family, so a redeploy doesn't break dispatch
+        // allow any revision of these families, so a redeploy doesn't break dispatch
         resources: [
           `arn:aws:ecs:${this.region}:${this.account}:task-definition/${taskDef.family}:*`,
+          `arn:aws:ecs:${this.region}:${this.account}:task-definition/${ccTaskDef.family}:*`,
         ],
         conditions: { ArnEquals: { "ecs:cluster": cluster.clusterArn } },
       }),
@@ -198,7 +258,12 @@ export class ServerlessStack extends cdk.Stack {
       new iam.PolicyStatement({
         sid: "PassTaskRoles",
         actions: ["iam:PassRole"],
-        resources: [taskRole.roleArn, taskDef.executionRole!.roleArn],
+        resources: [
+          taskRole.roleArn,
+          taskDef.executionRole!.roleArn,
+          ccTaskRole.roleArn,
+          ccTaskDef.executionRole!.roleArn,
+        ],
         conditions: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } },
       }),
     );
@@ -235,6 +300,9 @@ export class ServerlessStack extends cdk.Stack {
         ECS_SUBNETS: cdk.Fn.join(",", vpc.publicSubnets.map((s) => s.subnetId)),
         ECS_SECURITY_GROUPS: taskSg.securityGroupId,
         ECS_ASSIGN_PUBLIC_IP: "true", // public subnets, no NAT
+        // kind="claude-code" agents dispatch to their own task def (ADR-0033)
+        ECS_CC_TASK_DEFINITION: ccTaskDef.family,
+        ECS_CC_CONTAINER_NAME: "claude-code-runner",
         // the front door's own adapter bundle: durable stores + offline gate. It does
         // NOT run the loop, so inference/sandbox default and stay unused (no network).
         RUN_STORE: "dynamodb",
@@ -274,5 +342,7 @@ export class ServerlessStack extends cdk.Stack {
     new cdk.CfnOutput(this, "EcsAssignPublicIp", { value: "true" }); // public subnets, no NAT
     new cdk.CfnOutput(this, "RouterRoleArn", { value: routerRole.roleArn });
     new cdk.CfnOutput(this, "TaskRoleArn", { value: taskRole.roleArn });
+    new cdk.CfnOutput(this, "ClaudeCodeTaskDefinition", { value: ccTaskDef.family });
+    new cdk.CfnOutput(this, "ClaudeCodeTaskRoleArn", { value: ccTaskRole.roleArn });
   }
 }

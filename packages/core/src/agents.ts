@@ -23,8 +23,11 @@ export interface AgentSpec {
    * "sandboxed" = a self-contained delegated agent runs inside the sandbox; its inference
    * routes to the gateway (the agent speaks to the gateway), its execution stays in the
    * sandbox. No new primitive — just a different `do` shape.
+   * "claude-code" (ADR-0033) = the run IS one headless Claude Code invocation in its own
+   * Fargate task (the harness owns think+do); serverless dispatch only — it selects a
+   * different task definition, everything upstream (gate, run store, polling) is unchanged.
    */
-  kind?: "loop" | "sandboxed";
+  kind?: "loop" | "sandboxed" | "claude-code";
   /** For kind="sandboxed": the command that launches the delegated agent in the sandbox. */
   command?: string;
 }

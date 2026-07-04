@@ -1,0 +1,34 @@
+# claude-code-runner — headless Claude Code as a Fargate task-per-run (ADR-0033).
+# Bun runs the task.ts shim (run store + event mirroring); the Claude Code native
+# binary is the actual agent. Build context is the repo root (workspace install),
+# same as the agent-runtime image.
+#
+# POC NOTE: installs ALL workspace deps like the agent-runtime image — the shim only
+# needs @agent-os/core + the AWS SDK. TODO: multi-stage / split lockfile (shared debt).
+FROM oven/bun:1
+
+# git for real coding tasks; curl + certs to fetch the Claude Code installer.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+# .dockerignore strips node_modules/.git, so this is source + manifests only.
+COPY --chown=bun:bun . .
+
+# NON-ROOT is load-bearing, not hygiene: `--permission-mode bypassPermissions`
+# refuses to run as root, and the whole runner depends on it (no human to approve).
+USER bun
+ENV HOME=/home/bun
+ENV PATH="/home/bun/.local/bin:${PATH}"
+
+RUN bun install --frozen-lockfile
+# The Claude Code native binary (no Node needed) -> ~/.local/bin/claude. Version
+# floats to latest at image build (= every cdk deploy); auto-update at RUNTIME is
+# disabled by task.ts (DISABLE_AUTOUPDATER=1) so a task runs what was built.
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+  && claude --version
+
+# Each run works under $HOME/workspace/run-<id> (task.ts mkdirs it; WORKSPACE_DIR overrides).
+# Auth: CLAUDE_CODE_OAUTH_TOKEN is injected by ECS from SSM — never baked into the image.
+CMD ["bun", "run", "services/claude-code-runner/task.ts"]

@@ -9,7 +9,7 @@
  * Selected by DISPATCH (default inprocess), so server.ts is the front door in
  * both profiles; only the env bundle changes (ADR-0027).
  */
-import { type Providers, type Run, type RunStore } from "@agent-os/core";
+import { type AgentRegistry, type Providers, type Run, type RunStore } from "@agent-os/core";
 import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
 import { processRun, type ProcessRunOpts } from "./process-run";
 
@@ -34,6 +34,10 @@ export interface RunTaskConfig {
   securityGroups: string[];
   assignPublicIp: boolean;
   region?: string;
+  /** The kind="claude-code" executor (ADR-0033): a different task def in the SAME
+   *  cluster/subnets, same RUN_ID-override contract. Unset ⇒ claude-code runs fail
+   *  at dispatch (terminal, visible to the poller) rather than mis-running on the loop. */
+  claudeCode?: { taskDefinition: string; container: string };
 }
 
 /** Read the RunTask wiring the CDK stack publishes into the router's env. */
@@ -52,21 +56,40 @@ export function runTaskConfigFromEnv(env: Record<string, string | undefined> = p
     securityGroups: list("ECS_SECURITY_GROUPS"),
     assignPublicIp: (env.ECS_ASSIGN_PUBLIC_IP ?? "false").toLowerCase() === "true",
     region: env.REGION,
+    claudeCode: env.ECS_CC_TASK_DEFINITION
+      ? {
+          taskDefinition: env.ECS_CC_TASK_DEFINITION,
+          container: env.ECS_CC_CONTAINER_NAME ?? "claude-code-runner",
+        }
+      : undefined,
   };
 }
 
 /** serverless: launch a Fargate task-per-run that executes this run and exits
  *  (ADR-0031). The run id rides in as a RUN_ID container override, so one task
- *  def serves every run. On a dispatch failure the run can't silently rot in
- *  `queued` — mark it failed so the poller sees a terminal state. */
-export function runTaskDispatch(config: RunTaskConfig, runStore: RunStore): Dispatch {
+ *  def serves every run. kind="claude-code" agents (ADR-0033) route to their own
+ *  task def — the registry lookup here is the ONLY fork; the launch contract is
+ *  identical. On a dispatch failure the run can't silently rot in `queued` —
+ *  mark it failed so the poller sees a terminal state. */
+export function runTaskDispatch(
+  config: RunTaskConfig,
+  runStore: RunStore,
+  agentRegistry?: AgentRegistry,
+): Dispatch {
   const ecs = new ECSClient({ region: config.region ?? process.env.REGION ?? "eu-west-2" });
   return (run) => {
-    ecs
-      .send(
+    void (async () => {
+      let target = { taskDefinition: config.taskDefinition, container: config.container };
+      const spec = run.agent && agentRegistry ? await agentRegistry.get(run.agent) : undefined;
+      if (spec?.kind === "claude-code") {
+        if (!config.claudeCode)
+          throw new Error(`agent '${run.agent}' is kind=claude-code but ECS_CC_TASK_DEFINITION is not configured`);
+        target = config.claudeCode;
+      }
+      const res = await ecs.send(
         new RunTaskCommand({
           cluster: config.cluster,
-          taskDefinition: config.taskDefinition,
+          taskDefinition: target.taskDefinition,
           launchType: "FARGATE",
           count: 1,
           networkConfiguration: {
@@ -77,21 +100,19 @@ export function runTaskDispatch(config: RunTaskConfig, runStore: RunStore): Disp
             },
           },
           overrides: {
-            containerOverrides: [{ name: config.container, environment: [{ name: "RUN_ID", value: run.id }] }],
+            containerOverrides: [{ name: target.container, environment: [{ name: "RUN_ID", value: run.id }] }],
           },
         }),
-      )
-      .then((res) => {
-        const failures = res.failures ?? [];
-        if (failures.length) throw new Error(`RunTask failures: ${JSON.stringify(failures)}`);
-        console.log(`dispatched run ${run.id} -> ${res.tasks?.[0]?.taskArn ?? "(task)"}`);
-      })
-      .catch(async (e) => {
-        console.error(`RunTask dispatch failed for run ${run.id}: ${e?.message ?? e}`);
-        await runStore
-          .update(run.id, { status: "failed", error: `dispatch failed: ${e?.message ?? e}` })
-          .catch(() => {});
-      });
+      );
+      const failures = res.failures ?? [];
+      if (failures.length) throw new Error(`RunTask failures: ${JSON.stringify(failures)}`);
+      console.log(`dispatched run ${run.id} -> ${res.tasks?.[0]?.taskArn ?? "(task)"}`);
+    })().catch(async (e) => {
+      console.error(`RunTask dispatch failed for run ${run.id}: ${e?.message ?? e}`);
+      await runStore
+        .update(run.id, { status: "failed", error: `dispatch failed: ${e?.message ?? e}` })
+        .catch(() => {});
+    });
   };
 }
 
@@ -102,7 +123,7 @@ export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {})
     case "inprocess":
       return inProcessDispatch(providers, opts);
     case "runtask":
-      return runTaskDispatch(runTaskConfigFromEnv(), providers.runStore);
+      return runTaskDispatch(runTaskConfigFromEnv(), providers.runStore, providers.agentRegistry);
     default:
       throw new Error(`unknown DISPATCH: ${mode} (expected inprocess|runtask)`);
   }

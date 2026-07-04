@@ -1,0 +1,12 @@
+{
+  "name": "@agent-os/claude-code-runner",
+  "private": true,
+  "type": "module",
+  "description": "Headless Claude Code as a Fargate task-per-run (ADR-0033) — built on @agent-os/core",
+  "scripts": {
+    "start": "bun run task.ts"
+  },
+  "dependencies": {
+    "@agent-os/core": "workspace:*"
+  }
+}
