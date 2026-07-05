@@ -16,9 +16,9 @@ import * as cognito from "aws-cdk-lib/aws-cognito";
  *     also enabled so the curl-based proof (get a token without a browser:
  *     `aws cognito-idp initiate-auth --auth-flow USER_PASSWORD_AUTH ...`)
  *     works before the SPA exists; drop it once the console is the only client.
- *   - callback URLs come from context (`-c consoleCallbackUrls=a,b`), defaulting
- *     to localhost dev servers — the CloudFront URL joins the list when the SPA
- *     stack exists (M3).
+ *   - callback URLs come from context — persisted in infra/cdk.json (NOT a CLI
+ *     flag: a deploy that forgets the flag silently reverts the client to the
+ *     localhost defaults and breaks console login; learned the hard way).
  */
 export class AuthStack extends cdk.Stack {
   /** The pool's OIDC issuer — what the adapter's COGNITO_ISSUER expects. */

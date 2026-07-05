@@ -5,6 +5,7 @@
     "exclude": ["README.md", "cdk*.json", "node_modules", "cdk.out"]
   },
   "context": {
-    "@aws-cdk/core:newStyleStackSynthesis": true
+    "@aws-cdk/core:newStyleStackSynthesis": true,
+    "consoleCallbackUrls": "https://d1x3uwxrkjekua.cloudfront.net/,http://localhost:5173/"
   }
 }
