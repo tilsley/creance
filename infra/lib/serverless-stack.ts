@@ -153,6 +153,22 @@ export class ServerlessStack extends cdk.Stack {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
+    // record (ADR-0035): the loop's spans export OTLP DIRECT to Grafana Cloud —
+    // no collector, per-span flush fits a task-per-run. Opt in at deploy:
+    //   -c otelEndpoint=https://otlp-gateway-<zone>.grafana.net/otlp
+    // with the auth header ("Authorization=Basic <base64 instance:token>") in an
+    // SSM SecureString (same $0 pattern as the runner tokens, ADR-0033):
+    //   aws ssm put-parameter --name /agent-os/otel/otlp-headers --type SecureString --value '…'
+    // Unset ⇒ TELEMETRY=otel still runs the console exporter (spans → CloudWatch).
+    // (Replaces the dead RECORD env — config.ts reads TELEMETRY, so RECORD=otel
+    // had silently disabled spans since the first serverless deploy.)
+    const otelEndpoint = this.node.tryGetContext("otelEndpoint");
+    const otelHeaders = otelEndpoint
+      ? ssm.StringParameter.fromSecureStringParameterAttributes(this, "OtelHeaders", {
+          parameterName: "/agent-os/otel/otlp-headers",
+        })
+      : undefined;
+
     taskDef.addContainer("agent-runtime-task", {
       image: ecs.ContainerImage.fromDockerImageAsset(image),
       command: ["bun", "run", "services/agent-runtime/task.ts"], // the task-per-run entrypoint
@@ -171,8 +187,10 @@ export class ServerlessStack extends cdk.Stack {
         INFERENCE_PROVIDER: "bedrock",
         MODEL_ID: "amazon.nova-lite-v1:0",
         SANDBOX_PROVIDER: "agentcore",
-        RECORD: "otel", // emit spans; harmless if no collector is set
+        TELEMETRY: "otel", // the record control (ADR-0035)
+        ...(otelEndpoint ? { OTEL_EXPORTER_OTLP_ENDPOINT: String(otelEndpoint) } : {}),
       },
+      ...(otelHeaders ? { secrets: { OTEL_EXPORTER_OTLP_HEADERS: ecs.Secret.fromSsmParameter(otelHeaders) } } : {}),
     });
 
     // ---- Claude Code runner (ADR-0033) --------------------------------------

@@ -1,6 +1,6 @@
 # ADR-0032: Web console behind Cognito — human identity as an authenticator adapter
 
-- **Status:** Proposed (consumes the substrate of [0031](0031-serverless-substrate-for-the-run-loop.md); realizes the human-IdP leg of the authn port split in [0015](0015-split-authn-authz-ports.md); runs in the cheap profile of [0027](0027-two-deployment-profiles.md))
+- **Status:** Accepted (deployed + verified live 2026-07-05 — console on CloudFront, hosted-UI login, governed run watched end to end; consumes the substrate of [0031](0031-serverless-substrate-for-the-run-loop.md); realizes the human-IdP leg of the authn port split in [0015](0015-split-authn-authz-ports.md); runs in the cheap profile of [0027](0027-two-deployment-profiles.md))
 - **Date:** 2026-07-04
 
 ## Context

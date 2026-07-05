@@ -60,8 +60,7 @@ export class AuthStack extends cdk.Stack {
 
     const client = pool.addClient("Console", {
       userPoolClientName: "agent-os-console",
-      generateSecret: false, // public SPA client — PKCE, not a secret
-      authFlows: { userPassword: true }, // curl-based proof pre-SPA; remove post-M3
+      generateSecret: false, // public SPA client — PKCE, not a secret; no password flow (post-M3)
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
