@@ -125,10 +125,16 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
         return Response.json({ error: "missing 'task' (string)" }, { status: 400 });
       }
       const agent = body?.agent != null ? String(body.agent) : undefined;
-      // same gate as A2A: authn → authz(agent) → budget → create (ADR-0015/0018)
-      const r = await authorizeAndCreate(bearer(req), headerMap(req), agent, task);
+      // target repo for coding runs (ADR-0034): "owner/name" only — a resource the
+      // gate authorizes, then the egress sidecar pins its allowlist to.
+      const repo = body?.repo != null ? String(body.repo) : undefined;
+      if (repo !== undefined && !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+        return Response.json({ error: "invalid 'repo' (expected owner/name)" }, { status: 400 });
+      }
+      // same gate as A2A: authn → authz(agent, repo) → budget → create (ADR-0015/0018)
+      const r = await authorizeAndCreate(bearer(req), headerMap(req), agent, task, repo);
       if (!r.ok) return Response.json({ error: r.error, reason: r.reason }, { status: r.status });
-      return Response.json({ runId: r.run.id, status: r.run.status, agent, tenant: r.run.principal!.tenant }, { status: 202 });
+      return Response.json({ runId: r.run.id, status: r.run.status, agent, repo, tenant: r.run.principal!.tenant }, { status: 202 });
     }
 
     if (req.method === "GET" && url.pathname === "/agents") {

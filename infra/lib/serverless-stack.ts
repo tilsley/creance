@@ -264,11 +264,10 @@ export class ServerlessStack extends cdk.Stack {
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code-sidecar" }),
       secrets: { GITHUB_TOKEN: ecs.Secret.fromSsmParameter(ccGithubToken) },
       environment: {
-        // RUN_ID arrives via the same RunTask override; the sidecar resolves its
-        // per-run repo allowlist from the registry itself (task role covers it).
+        // RUN_ID arrives via the same RunTask override; the sidecar reads the
+        // run's gate-authorized repo from the runs table (task role covers it).
         REGION: this.region,
         RUNS_TABLE: "agent-os-runs",
-        AGENTS_TABLE: "agent-os-agents",
       },
     });
     ccContainer.addContainerDependencies({

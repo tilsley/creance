@@ -19,12 +19,19 @@ export class OpaAuthorizer implements Authorizer {
   /** e.g. http://opa:8181/v1/data/agentos/authz (the decision document path). */
   constructor(private readonly url: string) {}
 
-  async authorize(principal: Principal, action: string, resource?: string): Promise<PolicyDecision> {
+  async authorize(
+    principal: Principal,
+    action: string,
+    resource?: string,
+    attributes?: Record<string, unknown>,
+  ): Promise<PolicyDecision> {
     try {
       const res = await fetch(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ input: { principal, action, resource } }),
+        // attributes: extra resource context (e.g. { repo } for coding runs) —
+        // additive, so existing Rego reading principal/action/resource is unaffected
+        body: JSON.stringify({ input: { principal, action, resource, ...(attributes ? { attributes } : {}) } }),
       });
       if (!res.ok) return { allow: false, reason: `opa http ${res.status}` };
       const result = (await res.json())?.result;

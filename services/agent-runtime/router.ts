@@ -18,6 +18,7 @@ export function makeAuthorizeAndCreate(providers: Providers, dispatch: Dispatch)
     headers: Record<string, string>,
     agent: string | undefined,
     task: string,
+    repo?: string,
   ): Promise<GateOutcome> {
     let principal;
     try {
@@ -26,13 +27,15 @@ export function makeAuthorizeAndCreate(providers: Providers, dispatch: Dispatch)
       if (e instanceof UnauthorizedError) return { ok: false, status: 401, error: "unauthorized" };
       throw e;
     }
-    const decision = await authorizer.authorize(principal, "run:create", agent);
+    // repo is a caller-chosen RESOURCE (ADR-0034): the authorizer decides whether
+    // this principal may target it (Rego under AUTHZ=opa; AllowAll in the POC).
+    const decision = await authorizer.authorize(principal, "run:create", agent, repo ? { repo } : undefined);
     if (!decision.allow) return { ok: false, status: 403, error: "forbidden", reason: decision.reason };
     const budget = await gate.checkBudget(principal.tenant);
     if (!budget.ok) return { ok: false, status: 402, error: "budget exceeded" };
     if (agent != null && !(await agentRegistry.get(agent))) return { ok: false, status: 404, error: `unknown agent '${agent}'` };
     const now = new Date().toISOString();
-    const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, principal, messages: [], createdAt: now, updatedAt: now };
+    const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, repo, principal, messages: [], createdAt: now, updatedAt: now };
     await store.create(run);
     dispatch(run); // substrate seam (ADR-0031): in-process worker vs ECS RunTask
     return { ok: true, run };

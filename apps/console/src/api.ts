@@ -28,6 +28,8 @@ export interface RunSummary {
   status: RunStatus;
   task: string;
   agent?: string;
+  /** Target repo for coding runs (ADR-0034) — the resource the gate authorized. */
+  repo?: string;
   principal?: { tenant: string; subject: string };
   costUsd?: number;
   createdAt: string;
@@ -86,10 +88,10 @@ export class Api {
 
   listRuns = () => this.req<RunSummary[]>("/runs");
   getRun = (id: string) => this.req<Run>(`/runs/${id}`);
-  createRun = (task: string, agent?: string) =>
+  createRun = (task: string, agent?: string, repo?: string) =>
     this.req<{ runId: string; status: RunStatus; tenant: string }>("/runs", {
       method: "POST",
-      body: JSON.stringify(agent ? { task, agent } : { task }),
+      body: JSON.stringify({ task, ...(agent ? { agent } : {}), ...(repo ? { repo } : {}) }),
     });
   listAgents = () => this.req<AgentSpec[]>("/agents");
   budget = (tenant: string) => this.req<BudgetStatus>(`/tenants/${encodeURIComponent(tenant)}/budget`);

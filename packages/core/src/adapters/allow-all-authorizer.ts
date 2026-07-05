@@ -7,7 +7,12 @@ import type { Authorizer, Principal, PolicyDecision } from "../gate";
 
 export class AllowAllAuthorizer implements Authorizer {
   readonly name = "allow-all";
-  async authorize(_principal: Principal, _action: string, _resource?: string): Promise<PolicyDecision> {
+  async authorize(
+    _principal: Principal,
+    _action: string,
+    _resource?: string,
+    _attributes?: Record<string, unknown>,
+  ): Promise<PolicyDecision> {
     return { allow: true };
   }
 }

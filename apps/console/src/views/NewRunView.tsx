@@ -5,8 +5,13 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [agent, setAgent] = useState<string>("");
   const [task, setTask] = useState("");
+  const [repo, setRepo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // repo targeting applies to coding runs (ADR-0034): the agent is repo-agnostic,
+  // the run names the repo, the gate authorizes it.
+  const isCodingAgent = agents.find((a) => a.name === agent)?.kind === "claude-code";
 
   useEffect(() => {
     api
@@ -21,7 +26,7 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
     setBusy(true);
     setError(null);
     try {
-      const r = await api.createRun(task.trim(), agent || undefined);
+      const r = await api.createRun(task.trim(), agent || undefined, (isCodingAgent && repo.trim()) || undefined);
       window.location.hash = `#/runs/${r.runId}`;
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return onUnauthorized();
@@ -59,6 +64,17 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
             ))}
           </select>
         </label>
+        {isCodingAgent && (
+          <label>
+            Repo <span className="hint">(optional — owner/name; the run clones it and pushes a run/&lt;id&gt; branch + PR)</span>
+            <input
+              type="text"
+              value={repo}
+              placeholder="tilsley/chart-val"
+              onChange={(e) => setRepo(e.target.value)}
+            />
+          </label>
+        )}
         {error && <p className="error">{error}</p>}
         <div className="actions">
           <button className="button" disabled={busy || !task.trim()} onClick={launch}>

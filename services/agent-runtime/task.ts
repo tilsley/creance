@@ -36,16 +36,23 @@ console.log(
 // try/catch is the backstop for a crash *outside* the run body — provider build, a
 // missing run id, an unreachable store. The exit code mirrors the terminal status so
 // ECS surfaces a real failure as a non-zero task exit.
+// Bounded telemetry flush (ADR-0035): the root span's OTLP POST is still in flight
+// when the run finishes — exiting without a flush loses it. Bounded, because a hung
+// flush must never keep a paid task alive (worse than lost spans for this POC).
+const flushTelemetry = () =>
+  Promise.race([
+    providers.telemetry.shutdown?.().catch((e: any) => console.error(`telemetry flush failed: ${e?.message ?? e}`)),
+    new Promise((r) => setTimeout(r, 5000)),
+  ]);
+
 try {
   await processRun(providers, runId, { maxOutputTokens });
   const run = await providers.runStore.get(runId);
   console.log(`agent-runtime task: run ${runId} finished status=${run?.status ?? "unknown"}`);
-  // TODO(ADR-0031 open): flush the OTel batch span processor before exit — process.exit
-  // can drop the last spans. We exit hard regardless because a hung task burns money,
-  // which for a cost-sensitive POC is worse than a few lost spans. Revisit with a
-  // telemetry shutdown() hook + a bounded flush timeout.
+  await flushTelemetry();
   process.exit(run?.status === "failed" ? 1 : 0);
 } catch (e: any) {
   console.error(`agent-runtime task: run ${runId} crashed: ${e?.message ?? String(e)}`);
+  await flushTelemetry();
   process.exit(1);
 }

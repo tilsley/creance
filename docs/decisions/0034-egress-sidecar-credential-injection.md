@@ -1,6 +1,6 @@
 # ADR-0034: Credential-injecting egress sidecar — the git choke point for hosted harnesses
 
-- **Status:** Proposed (realizes the do-net cell of [0029](0029-governed-egress-choke-points.md) for the claude-code runner of [0033](0033-claude-code-hosted-runner.md))
+- **Status:** Proposed (realizes the do-net cell of [0029](0029-governed-egress-choke-points.md) for the claude-code runner of [0033](0033-claude-code-hosted-runner.md); + 2026-07-05 refinement — repo moved from AgentSpec to Run, see below)
 - **Date:** 2026-07-05
 
 ## Context
@@ -72,3 +72,22 @@ base URL; until then the inference credential stays an ECS secret on the agent c
   upgrade); the whole task fails at start if the github-token parameter is missing (ECS
   secrets resolve up front — even for repo-less runs); receive-pack bodies are buffered (100MB
   cap) to parse the command section; the inference token is not yet behind the choke point.
+
+## Refinement (2026-07-05): the repo is the Run's resource, not the agent's config
+
+As first shipped, `AgentSpec.repo` bound one registered agent per repo — conflating what the
+agent *is* (capability) with what a caller *may target* (permission), and scaling as one
+catalog entry per repo. Corrected to the platform's own layering ([0015](0015-split-authn-authz-ports.md)):
+
+- **`AgentSpec` is repo-agnostic** (the `repo` field is removed — one `claude-code` agent).
+- **`Run.repo`** — the caller names the target repo in `POST /runs`; format-validated at the
+  door (`owner/name`).
+- **Authz decides**: the gate passes `{ repo }` as decision attributes through the `Authorizer`
+  port (additive param; OPA input gains `input.attributes.repo` for Rego like "may tenant T
+  target repo R"; a tenant claim can later carry an allowed-repos pattern). Under the POC's
+  AllowAll, the PAT's own repo coverage is the effective bound.
+- **The sidecar pins to the authorized artifact**: it reads `run.repo` from the runs table —
+  the run row exists only if the gate admitted it — and no longer consults the registry.
+
+The choke-point guarantees are unchanged: one repo per run, `refs/heads/run/*` pushes only,
+credential never in the agent container.

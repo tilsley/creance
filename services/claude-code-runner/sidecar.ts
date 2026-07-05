@@ -19,7 +19,7 @@
  * /proc/1/environ hole the shim-holds-the-PAT design would have had.
  */
 import { gunzipSync } from "bun";
-import { DynamoAgentRegistry, DynamoDBRunStore } from "@agent-os/core";
+import { DynamoDBRunStore } from "@agent-os/core";
 
 const PORT = Number(process.env.SIDECAR_PORT ?? 8081);
 const UPSTREAM = process.env.GIT_UPSTREAM ?? "https://github.com";
@@ -81,16 +81,17 @@ export function pullsRepoFromPath(pathname: string): string | undefined {
 // ---- wiring (not under test) -------------------------------------------------
 
 async function resolveAllowedRepo(): Promise<string | undefined> {
-  // Local dev / no-registry escape hatch.
+  // Local dev / no-store escape hatch.
   if (process.env.GIT_ALLOWED_REPO) return process.env.GIT_ALLOWED_REPO;
   const runId = process.env.RUN_ID;
   if (!runId) return undefined;
   const region = process.env.REGION ?? "eu-west-2";
   const store = new DynamoDBRunStore(process.env.RUNS_TABLE ?? "agent-os-runs", region);
-  const registry = new DynamoAgentRegistry(process.env.AGENTS_TABLE ?? "agent-os-agents", region);
+  // The RUN's repo (ADR-0034 refinement): a caller-chosen resource the gate
+  // authorized before the run was created — the run row IS the authorization
+  // artifact. The agent spec stays repo-agnostic; policy lives in authz.
   const run = await store.get(runId);
-  const spec = run?.agent ? await registry.get(run.agent) : undefined;
-  return spec?.repo;
+  return run?.repo;
 }
 
 if (import.meta.main) {

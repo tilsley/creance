@@ -101,11 +101,14 @@ const spec = run.agent ? await registry.get(run.agent) : undefined;
 const workspace = `${process.env.WORKSPACE_DIR ?? `${process.env.HOME}/workspace`}/run-${runId}`;
 const branch = `run/${runId}`;
 const gitBase = process.env.GIT_PROXY_URL ?? "http://localhost:8081";
-if (spec?.repo) {
+// The target repo is the RUN's (a gate-authorized resource, ADR-0034 refinement) —
+// the agent is repo-agnostic; which repo a principal may target is authz's call.
+const repo = run.repo;
+if (repo) {
   // Clone THROUGH the sidecar: the remote is localhost, the PAT never enters this
   // container, and the sidecar's allowlist means this repo is the only one reachable.
   await waitForSidecar(gitBase);
-  git(process.env.HOME!, "clone", `${gitBase}/${spec.repo}.git`, workspace);
+  git(process.env.HOME!, "clone", `${gitBase}/${repo}.git`, workspace);
   git(workspace, "checkout", "-b", branch);
   git(workspace, "config", "user.name", "agent-os claude-code runner");
   git(workspace, "config", "user.email", "agent-os-claude-code@tilsley.dev");
@@ -128,8 +131,8 @@ const cmd = [
   [
     spec?.systemPrompt,
     UNATTENDED,
-    spec?.repo &&
-      `The working directory is a clone of ${spec.repo}, already on branch ${branch}. ` +
+    repo &&
+      `The working directory is a clone of ${repo}, already on branch ${branch}. ` +
         "Commit your work with clear messages as you go; do NOT push — the platform pushes your branch after you finish.",
   ]
     .filter(Boolean)
@@ -207,7 +210,7 @@ try {
 // Push the run branch (through the sidecar — the only container with the PAT
 // keeps its own policy: run/* branches only). A crashed run still pushes whatever
 // was committed, so partial work is inspectable rather than lost with the task.
-if (spec?.repo) {
+if (repo) {
   try {
     const dirty = git(workspace, "status", "--porcelain");
     if (dirty) {
@@ -218,13 +221,13 @@ if (spec?.repo) {
     if (ahead > 0) {
       git(workspace, "push", "origin", branch);
       console.log(`claude-code-runner: pushed ${branch} (${ahead} commit${ahead === 1 ? "" : "s"})`);
-      terminal.output = `${terminal.output ?? ""}\n\n[pushed ${spec.repo}@${branch} — ${ahead} commit${ahead === 1 ? "" : "s"}]`.trim();
+      terminal.output = `${terminal.output ?? ""}\n\n[pushed ${repo}@${branch} — ${ahead} commit${ahead === 1 ? "" : "s"}]`.trim();
       // Open the PR through the sidecar's one REST capability (POST .../pulls on the
       // allowed repo). Non-fatal: the pushed branch is the deliverable, the PR is sugar.
       try {
         const base = git(workspace, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").replace(/^origin\//, "");
         const title = git(workspace, "log", "-1", "--format=%s");
-        const res = await fetch(`${gitBase}/api/repos/${spec.repo}/pulls`, {
+        const res = await fetch(`${gitBase}/api/repos/${repo}/pulls`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({

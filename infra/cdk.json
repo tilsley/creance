@@ -6,6 +6,7 @@
   },
   "context": {
     "@aws-cdk/core:newStyleStackSynthesis": true,
-    "consoleCallbackUrls": "https://d1x3uwxrkjekua.cloudfront.net/,http://localhost:5173/"
+    "consoleCallbackUrls": "https://d1x3uwxrkjekua.cloudfront.net/,http://localhost:5173/",
+    "otelEndpoint": "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp"
   }
 }

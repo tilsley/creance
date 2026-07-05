@@ -122,4 +122,8 @@ export interface TelemetrySink {
   run<T>(attrs: Record<string, unknown>, fn: (span: TelemetrySpan) => Promise<T>): Promise<T>;
   /** Child span for one step (think / do / guard). Nests under the active run. */
   step<T>(name: string, attrs: Record<string, unknown>, fn: (span: TelemetrySpan) => Promise<T>): Promise<T>;
+  /** Flush any buffered/in-flight exports before process exit (ADR-0035). Optional:
+   *  only sinks that hold in-flight I/O need it; short-lived executors MUST call it
+   *  (bounded) or the last spans race process.exit and are lost. */
+  shutdown?(): Promise<void>;
 }

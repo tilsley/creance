@@ -105,6 +105,7 @@ export function RunDetailView({ api, id, onUnauthorized }: { api: Api; id: strin
         {run.messages.length === 0 && <div className="empty">Waiting for the first turn — the executor is starting.</div>}
         <div className={`meter${failed ? " failed" : ""}`}>
           <span>{run.agent ?? "loop"}</span>
+          {run.repo && <span className="tokens">{run.repo}</span>}
           {run.usage && (
             <span className="tokens">
               {run.usage.inputTokens ?? 0} in · {run.usage.outputTokens ?? 0} out

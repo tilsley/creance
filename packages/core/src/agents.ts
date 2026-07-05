@@ -30,13 +30,6 @@ export interface AgentSpec {
   kind?: "loop" | "sandboxed" | "claude-code";
   /** For kind="sandboxed": the command that launches the delegated agent in the sandbox. */
   command?: string;
-  /**
-   * For kind="claude-code" (ADR-0034): the GitHub repo this agent works on
-   * ("owner/name"). The runner clones it onto a run/<id> branch before the harness
-   * starts and pushes after; it is ALSO the egress sidecar's per-run allowlist —
-   * the git credential can only ever reach this repo. Unset ⇒ scratch workspace.
-   */
-  repo?: string;
 }
 
 export interface AgentRegistry {

@@ -1,6 +1,6 @@
 # ADR-0035: Record backend for the cheap profile — OTLP to Grafana Cloud
 
-- **Status:** Proposed
+- **Status:** Accepted (deployed + verified live 2026-07-05 — `agent.run` trace with run.id/guard/inference spans queryable in Tempo)
 - **Date:** 2026-07-05
 
 ## Context

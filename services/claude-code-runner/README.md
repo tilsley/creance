@@ -28,11 +28,14 @@ aws ssm put-parameter --name /agent-os/claude-code/oauth-token \
 
 ## Git via the egress sidecar (ADR-0034)
 
-Set `repo` on the agent to work on a real repo. The `egress-sidecar` container — the only
-holder of the GitHub PAT (`/agent-os/claude-code/github-token`, SSM SecureString) — proxies
-git smart-HTTP on `localhost:8081`, allowlisted per run to that one repo, and only accepts
-pushes creating/updating `refs/heads/run/*`. The shim clones through it onto `run/<id>`
-before the harness starts and pushes after (even on a crashed run); the agent container
+Name a `repo` ("owner/name") on the RUN — `POST /runs {"agent":"claude-code","repo":...}` —
+to work on a real repo. The agent is repo-agnostic; whether a principal may target that repo
+is authz's decision at the gate (`attributes.repo` — Rego under AUTHZ=opa, AllowAll in the
+POC). The `egress-sidecar` container — the only holder of the GitHub PAT
+(`/agent-os/claude-code/github-token`, SSM SecureString) — proxies git smart-HTTP on
+`localhost:8081`, allowlisted to the run's authorized repo, and only accepts pushes
+creating/updating `refs/heads/run/*`. The shim clones through it onto `run/<id>` before the
+harness starts and pushes + opens a PR after (even on a crashed run); the agent container
 never holds a git credential.
 
 ```sh
@@ -46,8 +49,6 @@ aws ssm put-parameter --name /agent-os/claude-code/github-token \
 ```sh
 AWS_PROFILE=... bun run services/agent-runtime/agents-cli.ts \
   put '{"name":"claude-code","kind":"claude-code","maxSteps":30}'
-# or repo-bound:
-#   put '{"name":"claude-code-agent-os","kind":"claude-code","repo":"tilsley/agent-os","maxSteps":30}'
 ```
 
 ## Guardrails
