@@ -52,10 +52,21 @@ const serverless = new ServerlessStack(app, "AgentOsServerless", {
 // IMPLEMENTED — the web console (ADR-0032): the built SPA on S3+CloudFront, with
 // /config.json written at deploy from the other stacks' outputs. Build first:
 //   bun run --cwd apps/console build && cdk deploy AgentOsConsole
+// The per-run "trace ↗" link (ADR-0035): where traces land, from persisted context
+// (cdk.json — NOT a CLI flag; those silently revert). Unset ⇒ no link rendered.
+const grafanaUrl = app.node.tryGetContext("grafanaUrl");
 new ConsoleStack(app, "AgentOsConsole", {
   env,
   apiUrl: serverless.frontDoorUrl,
   auth: { hostedUiBaseUrl: auth.hostedUiBaseUrl, clientId: auth.clientId },
+  ...(grafanaUrl
+    ? {
+        grafana: {
+          url: String(grafanaUrl),
+          tracesDatasourceUid: String(app.node.tryGetContext("grafanaTracesDatasourceUid") ?? "grafanacloud-traces"),
+        },
+      }
+    : {}),
 });
 
 // SKELETON — the data/log plane, not yet implemented.

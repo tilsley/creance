@@ -12,6 +12,20 @@ export interface ConsoleConfig {
   hostedUiBaseUrl: string;
   /** The SPA app client id (the id token's `aud`). */
   clientId: string;
+  /** Where run traces land (ADR-0035) — enables the per-run "trace" deep link.
+   *  Optional: absent ⇒ the link simply doesn't render. */
+  grafana?: { url: string; tracesDatasourceUid: string };
+}
+
+/** Grafana Explore URL for one run's trace — TraceQL by the run.id span attribute
+ *  (the loop stamps it on the agent.run root span). */
+export function traceExploreUrl(g: NonNullable<ConsoleConfig["grafana"]>, runId: string): string {
+  const state = {
+    datasource: g.tracesDatasourceUid,
+    queries: [{ refId: "A", queryType: "traceql", query: `{span.run.id="${runId}"}` }],
+    range: { from: "now-7d", to: "now" },
+  };
+  return `${g.url.replace(/\/$/, "")}/explore?left=${encodeURIComponent(JSON.stringify(state))}`;
 }
 
 export async function loadConfig(): Promise<ConsoleConfig> {

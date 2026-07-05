@@ -11,6 +11,8 @@ export interface ConsoleStackProps extends cdk.StackProps {
   apiUrl: string;
   /** Cognito wiring for the hosted-UI login (ADR-0032). */
   auth: { hostedUiBaseUrl: string; clientId: string };
+  /** Where run traces land (ADR-0035) — enables the console's per-run trace link. */
+  grafana?: { url: string; tracesDatasourceUid: string };
 }
 
 /**
@@ -81,6 +83,7 @@ export class ConsoleStack extends cdk.Stack {
           apiUrl: props.apiUrl,
           hostedUiBaseUrl: props.auth.hostedUiBaseUrl,
           clientId: props.auth.clientId,
+          ...(props.grafana ? { grafana: props.grafana } : {}),
         }),
       ],
     });

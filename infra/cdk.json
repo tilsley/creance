@@ -1,12 +1,20 @@
 {
   "app": "bun bin/agent-os.ts",
   "watch": {
-    "include": ["**"],
-    "exclude": ["README.md", "cdk*.json", "node_modules", "cdk.out"]
+    "include": [
+      "**"
+    ],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "node_modules",
+      "cdk.out"
+    ]
   },
   "context": {
     "@aws-cdk/core:newStyleStackSynthesis": true,
     "consoleCallbackUrls": "https://d1x3uwxrkjekua.cloudfront.net/,http://localhost:5173/",
-    "otelEndpoint": "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp"
+    "otelEndpoint": "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp",
+    "grafanaUrl": "https://mellowhovercraft3539.grafana.net"
   }
 }

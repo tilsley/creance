@@ -4,7 +4,7 @@
  * switch — three views don't need a router dependency.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { loadConfig, type ConsoleConfig } from "./config";
+import { loadConfig, traceExploreUrl, type ConsoleConfig } from "./config";
 import { completeLoginIfCallback, currentIdentity, login, logout, type Identity } from "./auth";
 import { Api } from "./api";
 import { RunsView } from "./views/RunsView";
@@ -109,7 +109,14 @@ export function App() {
       </aside>
       <main>
         {route.view === "runs" && <RunsView api={api} onUnauthorized={onUnauthorized} />}
-        {route.view === "run" && <RunDetailView api={api} id={route.id} onUnauthorized={onUnauthorized} />}
+        {route.view === "run" && (
+          <RunDetailView
+            api={api}
+            id={route.id}
+            onUnauthorized={onUnauthorized}
+            traceUrl={cfg.grafana && ((runId) => traceExploreUrl(cfg.grafana!, runId))}
+          />
+        )}
         {route.view === "new" && <NewRunView api={api} onUnauthorized={onUnauthorized} />}
       </main>
     </div>

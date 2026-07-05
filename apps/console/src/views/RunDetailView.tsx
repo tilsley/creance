@@ -75,7 +75,18 @@ function Turn({ msg, isFinal, failed }: { msg: Message; isFinal: boolean; failed
   );
 }
 
-export function RunDetailView({ api, id, onUnauthorized }: { api: Api; id: string; onUnauthorized: () => void }) {
+export function RunDetailView({
+  api,
+  id,
+  onUnauthorized,
+  traceUrl,
+}: {
+  api: Api;
+  id: string;
+  onUnauthorized: () => void;
+  /** Grafana Explore link for this run's trace (ADR-0035), when configured. */
+  traceUrl?: (runId: string) => string;
+}) {
   const [run, setRun] = useState<Run | null>(null);
   const terminal = run != null && TERMINAL.includes(run.status);
   // poll while live, stop at a terminal status — the last result stays rendered
@@ -112,6 +123,11 @@ export function RunDetailView({ api, id, onUnauthorized }: { api: Api; id: strin
             </span>
           )}
           {!terminal && <span className="tokens">watching…</span>}
+          {traceUrl && (
+            <a className="tokens" href={traceUrl(run.id)} target="_blank" rel="noreferrer">
+              trace ↗
+            </a>
+          )}
           <span className="total">
             metered <b>{cost(run.costUsd)}</b>
           </span>
