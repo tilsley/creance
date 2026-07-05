@@ -71,6 +71,26 @@ function toMessage(event: any): Message | undefined {
   return undefined;
 }
 
+/** Run a git command in the workspace, throwing with stderr on failure. */
+function git(cwd: string, ...args: string[]): string {
+  const r = Bun.spawnSync({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${r.stderr.toString().trim()}`);
+  return r.stdout.toString().trim();
+}
+
+/** The egress sidecar (ADR-0034) is this container's only route to GitHub — wait
+ *  for it before cloning (containers start together; registry reads take a beat). */
+async function waitForSidecar(base: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if ((await fetch(`${base}/healthz`)).ok) return;
+    } catch {}
+    await Bun.sleep(500);
+  }
+  throw new Error(`egress sidecar not healthy at ${base} after ${timeoutMs}ms`);
+}
+
 const run = await store.get(runId);
 if (!run) {
   console.error(`claude-code-runner: unknown run ${runId}`);
@@ -79,7 +99,19 @@ if (!run) {
 const spec = run.agent ? await registry.get(run.agent) : undefined;
 
 const workspace = `${process.env.WORKSPACE_DIR ?? `${process.env.HOME}/workspace`}/run-${runId}`;
-await mkdir(workspace, { recursive: true });
+const branch = `run/${runId}`;
+const gitBase = process.env.GIT_PROXY_URL ?? "http://localhost:8081";
+if (spec?.repo) {
+  // Clone THROUGH the sidecar: the remote is localhost, the PAT never enters this
+  // container, and the sidecar's allowlist means this repo is the only one reachable.
+  await waitForSidecar(gitBase);
+  git(process.env.HOME!, "clone", `${gitBase}/${spec.repo}.git`, workspace);
+  git(workspace, "checkout", "-b", branch);
+  git(workspace, "config", "user.name", "agent-os claude-code runner");
+  git(workspace, "config", "user.email", "agent-os-claude-code@tilsley.dev");
+} else {
+  await mkdir(workspace, { recursive: true });
+}
 
 const cmd = [
   "claude",
@@ -93,7 +125,15 @@ const cmd = [
   "--max-turns",
   String(spec?.maxSteps ?? 30),
   "--append-system-prompt",
-  [spec?.systemPrompt, UNATTENDED].filter(Boolean).join("\n\n"),
+  [
+    spec?.systemPrompt,
+    UNATTENDED,
+    spec?.repo &&
+      `The working directory is a clone of ${spec.repo}, already on branch ${branch}. ` +
+        "Commit your work with clear messages as you go; do NOT push — the platform pushes your branch after you finish.",
+  ]
+    .filter(Boolean)
+    .join("\n\n"),
   ...(spec?.model ? ["--model", spec.model] : []),
 ];
 
@@ -162,6 +202,54 @@ try {
   }
 } catch (e: any) {
   terminal = { status: "failed", error: e?.message ?? String(e) };
+}
+
+// Push the run branch (through the sidecar — the only container with the PAT
+// keeps its own policy: run/* branches only). A crashed run still pushes whatever
+// was committed, so partial work is inspectable rather than lost with the task.
+if (spec?.repo) {
+  try {
+    const dirty = git(workspace, "status", "--porcelain");
+    if (dirty) {
+      git(workspace, "add", "-A");
+      git(workspace, "commit", "-m", `chore: uncommitted changes at end of run ${runId}`);
+    }
+    const ahead = Number(git(workspace, "rev-list", "--count", "HEAD", "--not", "--remotes"));
+    if (ahead > 0) {
+      git(workspace, "push", "origin", branch);
+      console.log(`claude-code-runner: pushed ${branch} (${ahead} commit${ahead === 1 ? "" : "s"})`);
+      terminal.output = `${terminal.output ?? ""}\n\n[pushed ${spec.repo}@${branch} — ${ahead} commit${ahead === 1 ? "" : "s"}]`.trim();
+      // Open the PR through the sidecar's one REST capability (POST .../pulls on the
+      // allowed repo). Non-fatal: the pushed branch is the deliverable, the PR is sugar.
+      try {
+        const base = git(workspace, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").replace(/^origin\//, "");
+        const title = git(workspace, "log", "-1", "--format=%s");
+        const res = await fetch(`${gitBase}/api/repos/${spec.repo}/pulls`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title,
+            head: branch,
+            base,
+            body: `agent-os run \`${runId}\` (agent \`${run.agent}\`)\n\n**Task:**\n${run.task}`,
+          }),
+        });
+        const pr: any = await res.json();
+        if (!res.ok) throw new Error(pr?.errors?.[0]?.message ?? pr?.message ?? `HTTP ${res.status}`);
+        console.log(`claude-code-runner: opened PR ${pr.html_url}`);
+        terminal.output = `${terminal.output}\n[PR: ${pr.html_url}]`;
+      } catch (e: any) {
+        console.error(`claude-code-runner: PR creation failed: ${e?.message ?? e}`);
+        terminal.output = `${terminal.output}\n[PR creation failed: ${e?.message ?? e}]`;
+      }
+    } else {
+      console.log(`claude-code-runner: no commits on ${branch}, nothing to push`);
+    }
+  } catch (e: any) {
+    // a push failure shouldn't overwrite a successful run — annotate it instead
+    terminal.output = `${terminal.output ?? ""}\n\n[push of ${branch} FAILED: ${e?.message ?? e}]`.trim();
+    console.error(`claude-code-runner: push failed: ${e?.message ?? e}`);
+  }
 }
 
 await store.update(runId, { ...terminal, messages });

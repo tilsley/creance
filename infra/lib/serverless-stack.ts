@@ -234,7 +234,7 @@ export class ServerlessStack extends cdk.Stack {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
     });
-    ccTaskDef.addContainer("claude-code-runner", {
+    const ccContainer = ccTaskDef.addContainer("claude-code-runner", {
       image: ecs.ContainerImage.fromDockerImageAsset(ccImage),
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code" }),
       // fromSsmParameter grants the EXECUTION role the read; the token reaches the
@@ -246,6 +246,34 @@ export class ServerlessStack extends cdk.Stack {
         RUNS_TABLE: "agent-os-runs",
         AGENTS_TABLE: "agent-os-agents",
       },
+    });
+
+    // The egress sidecar (ADR-0034): SAME image, different CMD — the git choke
+    // point. The GitHub PAT is a secret on THIS container only; the agent container
+    // reaches GitHub exclusively through localhost:8081, where the sidecar injects
+    // the credential and enforces repo allowlist + run/*-branch push policy.
+    // essential=false: when the runner exits the task stops; a sidecar crash alone
+    // doesn't kill a run (the shim's git calls fail visibly instead).
+    const ccGithubToken = ssm.StringParameter.fromSecureStringParameterAttributes(this, "ClaudeCodeGithubToken", {
+      parameterName: "/agent-os/claude-code/github-token",
+    });
+    const ccSidecar = ccTaskDef.addContainer("egress-sidecar", {
+      image: ecs.ContainerImage.fromDockerImageAsset(ccImage),
+      command: ["bun", "run", "services/claude-code-runner/sidecar.ts"],
+      essential: false,
+      logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code-sidecar" }),
+      secrets: { GITHUB_TOKEN: ecs.Secret.fromSsmParameter(ccGithubToken) },
+      environment: {
+        // RUN_ID arrives via the same RunTask override; the sidecar resolves its
+        // per-run repo allowlist from the registry itself (task role covers it).
+        REGION: this.region,
+        RUNS_TABLE: "agent-os-runs",
+        AGENTS_TABLE: "agent-os-agents",
+      },
+    });
+    ccContainer.addContainerDependencies({
+      container: ccSidecar,
+      condition: ecs.ContainerDependencyCondition.START, // shim polls /healthz before cloning
     });
 
     // The router's identity (the front door). It does NOT run loops — it dispatches
@@ -321,9 +349,11 @@ export class ServerlessStack extends cdk.Stack {
         ECS_SUBNETS: cdk.Fn.join(",", vpc.publicSubnets.map((s) => s.subnetId)),
         ECS_SECURITY_GROUPS: taskSg.securityGroupId,
         ECS_ASSIGN_PUBLIC_IP: "true", // public subnets, no NAT
-        // kind="claude-code" agents dispatch to their own task def (ADR-0033)
+        // kind="claude-code" agents dispatch to their own task def (ADR-0033);
+        // the sidecar gets RUN_ID too, to resolve its git allowlist (ADR-0034)
         ECS_CC_TASK_DEFINITION: ccTaskDef.family,
         ECS_CC_CONTAINER_NAME: "claude-code-runner",
+        ECS_CC_SIDECAR_CONTAINER_NAME: "egress-sidecar",
         // the front door's own adapter bundle: durable stores + offline gate. It does
         // NOT run the loop, so inference/sandbox default and stay unused (no network).
         RUN_STORE: "dynamodb",

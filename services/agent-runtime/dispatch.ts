@@ -36,8 +36,10 @@ export interface RunTaskConfig {
   region?: string;
   /** The kind="claude-code" executor (ADR-0033): a different task def in the SAME
    *  cluster/subnets, same RUN_ID-override contract. Unset ⇒ claude-code runs fail
-   *  at dispatch (terminal, visible to the poller) rather than mis-running on the loop. */
-  claudeCode?: { taskDefinition: string; container: string };
+   *  at dispatch (terminal, visible to the poller) rather than mis-running on the loop.
+   *  sidecarContainer (ADR-0034): the egress sidecar also receives RUN_ID so it can
+   *  resolve its own per-run credential allowlist from the registry. */
+  claudeCode?: { taskDefinition: string; container: string; sidecarContainer?: string };
 }
 
 /** Read the RunTask wiring the CDK stack publishes into the router's env. */
@@ -60,6 +62,7 @@ export function runTaskConfigFromEnv(env: Record<string, string | undefined> = p
       ? {
           taskDefinition: env.ECS_CC_TASK_DEFINITION,
           container: env.ECS_CC_CONTAINER_NAME ?? "claude-code-runner",
+          sidecarContainer: env.ECS_CC_SIDECAR_CONTAINER_NAME,
         }
       : undefined,
   };
@@ -79,13 +82,19 @@ export function runTaskDispatch(
   const ecs = new ECSClient({ region: config.region ?? process.env.REGION ?? "eu-west-2" });
   return (run) => {
     void (async () => {
-      let target = { taskDefinition: config.taskDefinition, container: config.container };
+      let target: { taskDefinition: string; container: string; sidecarContainer?: string } = {
+        taskDefinition: config.taskDefinition,
+        container: config.container,
+      };
       const spec = run.agent && agentRegistry ? await agentRegistry.get(run.agent) : undefined;
       if (spec?.kind === "claude-code") {
         if (!config.claudeCode)
           throw new Error(`agent '${run.agent}' is kind=claude-code but ECS_CC_TASK_DEFINITION is not configured`);
         target = config.claudeCode;
       }
+      // RUN_ID reaches every listed container: the executor to run it, the egress
+      // sidecar (ADR-0034) to resolve its per-run credential allowlist from the registry.
+      const overrideContainers = [target.container, ...(target.sidecarContainer ? [target.sidecarContainer] : [])];
       const res = await ecs.send(
         new RunTaskCommand({
           cluster: config.cluster,
@@ -100,7 +109,10 @@ export function runTaskDispatch(
             },
           },
           overrides: {
-            containerOverrides: [{ name: target.container, environment: [{ name: "RUN_ID", value: run.id }] }],
+            containerOverrides: overrideContainers.map((name) => ({
+              name,
+              environment: [{ name: "RUN_ID", value: run.id }],
+            })),
           },
         }),
       );
