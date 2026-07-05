@@ -14,6 +14,13 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+# Go toolchain — the registered repos include Go projects (chart-val) and a coding
+# run must be able to `go build` / `go test` its own changes. Official tarball, not
+# apt (debian's golang lags releases). Bump the version alongside the repos' go.mod.
+ARG GO_VERSION=1.25.6
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 WORKDIR /app
 # .dockerignore strips node_modules/.git, so this is source + manifests only.
 COPY . .
