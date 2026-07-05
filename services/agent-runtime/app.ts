@@ -104,6 +104,24 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
   // lowercased header map for the Authenticator (mesh/IAP edge forwards claims here)
   const headerMap = (req: Request): Record<string, string> => Object.fromEntries(req.headers);
 
+  // READS are authenticated too (ADR-0032): run transcripts and budgets are tenant
+  // data, and the console proved the gap — an open GET /runs/{id} would hand out
+  // whatever the store holds. Same Authenticator as the create path; under noop
+  // authn (dev default) this stays open, so local flows are unchanged.
+  const authenticated = async (req: Request): Promise<boolean> => {
+    try {
+      await authenticator.authenticate({ credential: bearer(req), headers: headerMap(req) });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const unauthorized = () => Response.json({ error: "unauthorized" }, { status: 401 });
+  // Never return the caller's raw bearer token (it's a live credential the run
+  // carries for OBO exchange, ADR-0010) — strip it from every read response.
+  const redact = <T extends { principal?: { token?: string } }>(run: T): T =>
+    run.principal ? { ...run, principal: { ...run.principal, token: undefined } } : run;
+
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
 
@@ -145,8 +163,9 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
     }
 
     if (req.method === "GET" && url.pathname === "/runs") {
+      if (!(await authenticated(req))) return unauthorized();
       const runs = await store.list(100);
-      return Response.json(runs.map(({ messages, ...slim }) => slim)); // list omits the conversation
+      return Response.json(runs.map(({ messages, ...slim }) => redact(slim))); // list omits the conversation
     }
 
     if (req.method === "POST" && url.pathname === "/runs") {
@@ -168,17 +187,20 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
     }
 
     if (req.method === "GET" && url.pathname === "/agents") {
+      if (!(await authenticated(req))) return unauthorized();
       return Response.json(await agentRegistry.list());
     }
 
     const runMatch = url.pathname.match(/^\/runs\/([^/]+)$/);
     if (req.method === "GET" && runMatch) {
+      if (!(await authenticated(req))) return unauthorized();
       const run = await store.get(runMatch[1]!);
-      return run ? Response.json(run) : Response.json({ error: "run not found" }, { status: 404 });
+      return run ? Response.json(redact(run)) : Response.json({ error: "run not found" }, { status: 404 });
     }
 
     const budgetMatch = url.pathname.match(/^\/tenants\/([^/]+)\/budget$/);
     if (req.method === "GET" && budgetMatch) {
+      if (!(await authenticated(req))) return unauthorized();
       return Response.json(await gate.checkBudget(budgetMatch[1]!));
     }
 

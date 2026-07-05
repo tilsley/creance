@@ -5,7 +5,9 @@
 #
 # POC NOTE: installs ALL workspace deps like the agent-runtime image — the shim only
 # needs @agent-os/core + the AWS SDK. TODO: multi-stage / split lockfile (shared debt).
-FROM oven/bun:1
+# Pinned to the bun that wrote bun.lock: a floating oven/bun:1 (e.g. 1.3.14) has
+# re-resolved instead of honoring the lock and picked a yanked vite version.
+FROM oven/bun:1.3.4
 
 # git for real coding tasks; curl + certs to fetch the Claude Code installer.
 RUN apt-get update \
@@ -14,15 +16,17 @@ RUN apt-get update \
 
 WORKDIR /app
 # .dockerignore strips node_modules/.git, so this is source + manifests only.
-COPY --chown=bun:bun . .
+COPY . .
+# Install as root (bun's cache hardlinking breaks as a non-root user in Docker);
+# node_modules stays root-owned + world-readable — the runtime only reads it.
+RUN bun install --frozen-lockfile
 
-# NON-ROOT is load-bearing, not hygiene: `--permission-mode bypassPermissions`
-# refuses to run as root, and the whole runner depends on it (no human to approve).
+# NON-ROOT at runtime is load-bearing, not hygiene: `--permission-mode
+# bypassPermissions` refuses to run as root, and the whole runner depends on it
+# (no human to approve). Writes happen under $HOME (workspace, ~/.claude).
 USER bun
 ENV HOME=/home/bun
 ENV PATH="/home/bun/.local/bin:${PATH}"
-
-RUN bun install --frozen-lockfile
 # The Claude Code native binary (no Node needed) -> ~/.local/bin/claude. Version
 # floats to latest at image build (= every cdk deploy); auto-update at RUNTIME is
 # disabled by task.ts (DISABLE_AUTOUPDATER=1) so a task runs what was built.

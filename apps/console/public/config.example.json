@@ -1,0 +1,5 @@
+{
+  "apiUrl": "https://<front-door>.lambda-url.eu-west-2.on.aws",
+  "hostedUiBaseUrl": "https://agent-os-<account>.auth.eu-west-2.amazoncognito.com",
+  "clientId": "<user-pool-client-id>"
+}

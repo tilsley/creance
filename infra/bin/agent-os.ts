@@ -11,6 +11,7 @@
 import * as cdk from "aws-cdk-lib";
 import { AuthStack } from "../lib/auth-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
+import { ConsoleStack } from "../lib/console-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
 import { PostgresStack } from "../lib/postgres-stack";
@@ -43,9 +44,18 @@ const auth = new AuthStack(app, "AgentOsAuth", { env });
 // The image is a CDK DockerImageAsset, so one command builds + pushes + deploys it all:
 //   cdk deploy AgentOsServerless        (needs Docker running — it builds the image)
 // The front door authenticates the console's Cognito id token (ADR-0032).
-new ServerlessStack(app, "AgentOsServerless", {
+const serverless = new ServerlessStack(app, "AgentOsServerless", {
   env,
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
+});
+
+// IMPLEMENTED — the web console (ADR-0032): the built SPA on S3+CloudFront, with
+// /config.json written at deploy from the other stacks' outputs. Build first:
+//   bun run --cwd apps/console build && cdk deploy AgentOsConsole
+new ConsoleStack(app, "AgentOsConsole", {
+  env,
+  apiUrl: serverless.frontDoorUrl,
+  auth: { hostedUiBaseUrl: auth.hostedUiBaseUrl, clientId: auth.clientId },
 });
 
 // SKELETON — the data/log plane, not yet implemented.

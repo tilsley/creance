@@ -5,6 +5,10 @@ bun.lockb
 # CDK
 infra/cdk.out/
 infra/.cdk.staging/
+
+# console (ADR-0032): built bundle + per-dev runtime config (deployed one is CDK-written)
+apps/console/dist/
+apps/console/public/config.json
 *.js
 *.d.ts
 !**/*.config.js

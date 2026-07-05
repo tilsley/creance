@@ -12,3 +12,5 @@ node_modules
 **/.venv
 **/__pycache__
 **/*.pyc
+# Claude Code session state (worktrees hold a full stale repo copy) — never ship it
+.claude

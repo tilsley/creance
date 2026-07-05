@@ -3,7 +3,9 @@
 #
 # POC NOTE: installs ALL workspace deps (incl. infra's CDK) because bun resolves
 # the whole workspace. Not size-optimized — TODO: multi-stage / split lockfile.
-FROM oven/bun:1
+# Pinned to the bun that wrote bun.lock: a floating oven/bun:1 (e.g. 1.3.14) has
+# re-resolved instead of honoring the lock and picked a yanked vite version.
+FROM oven/bun:1.3.4
 
 WORKDIR /app
 

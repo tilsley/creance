@@ -25,6 +25,8 @@ export class AuthStack extends cdk.Stack {
   readonly issuer: string;
   /** The SPA client id — what the adapter's COGNITO_CLIENT_ID expects (`aud`). */
   readonly clientId: string;
+  /** The hosted UI base URL — where the console sends the login redirect (ADR-0032). */
+  readonly hostedUiBaseUrl: string;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -75,6 +77,7 @@ export class AuthStack extends cdk.Stack {
 
     this.issuer = `https://cognito-idp.${this.region}.amazonaws.com/${pool.userPoolId}`;
     this.clientId = client.userPoolClientId;
+    this.hostedUiBaseUrl = domain.baseUrl();
 
     new cdk.CfnOutput(this, "UserPoolId", { value: pool.userPoolId });
     new cdk.CfnOutput(this, "Issuer", { value: this.issuer }); // → COGNITO_ISSUER

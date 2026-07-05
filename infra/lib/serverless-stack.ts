@@ -55,6 +55,9 @@ export interface ServerlessStackProps extends cdk.StackProps {
 }
 
 export class ServerlessStack extends cdk.Stack {
+  /** The front door's public address — what the console's config.json points at (ADR-0032). */
+  readonly frontDoorUrl: string;
+
   constructor(scope: Construct, id: string, props?: ServerlessStackProps) {
     super(scope, id, props);
 
@@ -326,8 +329,19 @@ export class ServerlessStack extends cdk.Stack {
 
     // Public Function URL — auth is enforced at the APP layer by the gate (GATE=local
     // bearer + budget), so the URL itself is open (POC). Swap to AWS_IAM to require
-    // SigV4 in front of the app gate.
-    const fnUrl = frontDoor.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
+    // SigV4 in front of the app gate. CORS is answered at the URL layer so the
+    // console (a browser on a CloudFront origin) can preflight; '*' is acceptable
+    // because auth is a Bearer header, never a cookie — there's no ambient
+    // credential for a foreign origin to ride (ADR-0032).
+    const fnUrl = frontDoor.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      cors: {
+        allowedOrigins: ["*"],
+        allowedMethods: [lambda.HttpMethod.ALL],
+        allowedHeaders: ["authorization", "content-type"],
+      },
+    });
+    this.frontDoorUrl = fnUrl.url;
 
     // The front door's env contract — wire these into the router (DISPATCH=runtask).
     new cdk.CfnOutput(this, "FrontDoorFunctionName", { value: frontDoor.functionName });
