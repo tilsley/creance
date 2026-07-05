@@ -22,6 +22,7 @@ import {
   type RunStatus,
   type TokenUsage,
 } from "@agent-os/core";
+import { LoopDetector } from "./loop-detector";
 
 const runId = process.env.RUN_ID ?? process.argv[2];
 if (!runId) {
@@ -147,6 +148,10 @@ await store.update(runId, { status: "running" });
 
 let terminal: { status: RunStatus; output?: string; error?: string; usage?: TokenUsage; costUsd?: number } | undefined;
 const messages: Message[] = [{ role: "user", text: run.task }];
+// Set when WE stop the process early (loop detector) so the terminal status reflects
+// the reason instead of looking like a bare non-zero exit. CC_LOOP_THRESHOLD tunes it.
+let stoppedEarly: { status: RunStatus; error: string } | undefined;
+const loop = new LoopDetector(Number(process.env.CC_LOOP_THRESHOLD ?? 5));
 
 try {
   const proc = Bun.spawn({
@@ -181,6 +186,17 @@ try {
       if (message) {
         messages.push(message);
         await store.update(runId, { messages }).catch(() => {});
+        // Inner bound (ADR-0037): a run spinning on identical tool calls is stuck —
+        // stop it before it burns its turn budget / a quota slot for no progress.
+        for (const call of message.toolCalls ?? []) {
+          const reason = loop.record(call.name, call.input);
+          if (reason) {
+            console.error(`claude-code-runner: run ${runId} ${reason} — killing`);
+            stoppedEarly = { status: "stuck", error: reason };
+            proc.kill();
+            break;
+          }
+        }
       }
       if (event.type === "result") {
         terminal = {
@@ -200,7 +216,7 @@ try {
   const exitCode = await proc.exited;
   clearTimeout(killer);
   if (!terminal) {
-    terminal = {
+    terminal = stoppedEarly ?? {
       status: "failed",
       error: exitCode === 0 ? "claude produced no result event" : `claude exited with code ${exitCode} (timeout or crash)`,
     };
