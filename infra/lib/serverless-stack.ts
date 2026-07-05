@@ -237,14 +237,17 @@ export class ServerlessStack extends cdk.Stack {
     const ccContainer = ccTaskDef.addContainer("claude-code-runner", {
       image: ecs.ContainerImage.fromDockerImageAsset(ccImage),
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code" }),
-      // fromSsmParameter grants the EXECUTION role the read; the token reaches the
-      // process as CLAUDE_CODE_OAUTH_TOKEN and stays out of the task definition.
-      secrets: { CLAUDE_CODE_OAUTH_TOKEN: ecs.Secret.fromSsmParameter(ccToken) },
+      // NO secrets here (ADR-0034, completed): the agent container is fully
+      // credential-free. The harness needs *a* token to select OAuth mode, so it
+      // gets a dummy; the REAL subscription token lives on the sidecar, which
+      // injects it into /v1/* requests remapped via ANTHROPIC_BASE_URL.
       environment: {
         // RUN_ID is injected per run via the RunTask container override (not here).
         REGION: this.region,
         RUNS_TABLE: "agent-os-runs",
         AGENTS_TABLE: "agent-os-agents",
+        ANTHROPIC_BASE_URL: "http://localhost:8082",
+        CLAUDE_CODE_OAUTH_TOKEN: "sidecar-injected", // placeholder, never reaches the wire
       },
     });
 
@@ -262,7 +265,12 @@ export class ServerlessStack extends cdk.Stack {
       command: ["bun", "run", "services/claude-code-runner/sidecar.ts"],
       essential: false,
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code-sidecar" }),
-      secrets: { GITHUB_TOKEN: ecs.Secret.fromSsmParameter(ccGithubToken) },
+      secrets: {
+        GITHUB_TOKEN: ecs.Secret.fromSsmParameter(ccGithubToken),
+        // the subscription token moved HERE from the agent container (ADR-0034
+        // completed): the sidecar swaps it into remapped /v1/* inference calls.
+        CLAUDE_CODE_OAUTH_TOKEN: ecs.Secret.fromSsmParameter(ccToken),
+      },
       environment: {
         // RUN_ID arrives via the same RunTask override; the sidecar reads the
         // run's gate-authorized repo from the runs table (task role covers it).

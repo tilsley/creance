@@ -104,10 +104,12 @@ const gitBase = process.env.GIT_PROXY_URL ?? "http://localhost:8081";
 // The target repo is the RUN's (a gate-authorized resource, ADR-0034 refinement) —
 // the agent is repo-agnostic; which repo a principal may target is authz's call.
 const repo = run.repo;
+// The sidecar is now the only route to GitHub AND the inference API (the real
+// subscription token lives there) — every run needs it up before the harness starts.
+await waitForSidecar(gitBase);
 if (repo) {
   // Clone THROUGH the sidecar: the remote is localhost, the PAT never enters this
   // container, and the sidecar's allowlist means this repo is the only one reachable.
-  await waitForSidecar(gitBase);
   git(process.env.HOME!, "clone", `${gitBase}/${repo}.git`, workspace);
   git(workspace, "checkout", "-b", branch);
   git(workspace, "config", "user.name", "agent-os claude-code runner");

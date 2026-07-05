@@ -22,8 +22,10 @@ import { gunzipSync } from "bun";
 import { DynamoDBRunStore } from "@agent-os/core";
 
 const PORT = Number(process.env.SIDECAR_PORT ?? 8081);
+const INFERENCE_PORT = Number(process.env.SIDECAR_INFERENCE_PORT ?? 8082);
 const UPSTREAM = process.env.GIT_UPSTREAM ?? "https://github.com";
 const API_UPSTREAM = process.env.GITHUB_API_UPSTREAM ?? "https://api.github.com";
+const ANTHROPIC_UPSTREAM = process.env.ANTHROPIC_UPSTREAM ?? "https://api.anthropic.com";
 // Push pack buffering cap — a coding run's diff, not a repo import.
 const MAX_PUSH_BYTES = 100 * 1024 * 1024;
 
@@ -78,6 +80,13 @@ export function pullsRepoFromPath(pathname: string): string | undefined {
   return m?.[1];
 }
 
+/** The inference leg's capability bound (ADR-0034 deferred half, now live): the
+ *  subscription token may reach the inference API — /v1/* — and nothing else
+ *  (no /api/oauth token management, no account endpoints). */
+export function isAllowedAnthropicPath(pathname: string): boolean {
+  return pathname === "/" || pathname.startsWith("/v1/");
+}
+
 // ---- wiring (not under test) -------------------------------------------------
 
 async function resolveAllowedRepo(): Promise<string | undefined> {
@@ -100,6 +109,41 @@ if (import.meta.main) {
   // Basic auth, the form GitHub documents for PATs over git smart-HTTP.
   const auth = token ? `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}` : undefined;
   console.log(`egress-sidecar: :${PORT} -> ${UPSTREAM}  allowed repo: ${allowed ?? "(none — all git denied)"}`);
+
+  // ---- inference leg (:8082 -> api.anthropic.com) ---------------------------
+  // The agent container carries only a DUMMY token (the harness needs one to
+  // select OAuth mode); the real subscription token lives HERE and is swapped
+  // into the Authorization header on the way out. Verified live: subscription
+  // auth works through an ANTHROPIC_BASE_URL remap.
+  const anthropicToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  Bun.serve({
+    port: INFERENCE_PORT,
+    idleTimeout: 240, // long streamed completions
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (!isAllowedAnthropicPath(url.pathname)) {
+        console.log(`deny: ${req.method} ${url.pathname} (outside /v1/*)`);
+        return new Response("path not allowed\n", { status: 403 });
+      }
+      if (!anthropicToken) return new Response("no inference credential configured\n", { status: 403 });
+      const headers = new Headers(req.headers);
+      headers.set("authorization", `Bearer ${anthropicToken}`); // the injection
+      headers.delete("host");
+      const upstream = await fetch(`${ANTHROPIC_UPSTREAM}${url.pathname}${url.search}`, {
+        method: req.method,
+        headers,
+        body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer(),
+        redirect: "manual",
+      });
+      if (upstream.status >= 400) console.log(`${req.method} ${url.pathname} -> ${upstream.status}`);
+      // fetch already decoded the body — forward minimal headers or the stream corrupts
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+      });
+    },
+  });
+  console.log(`egress-sidecar: :${INFERENCE_PORT} -> ${ANTHROPIC_UPSTREAM} (/v1/* only)`);
 
   Bun.serve({
     port: PORT,

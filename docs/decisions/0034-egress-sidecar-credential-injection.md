@@ -55,10 +55,14 @@ run/*-branch push policy.** (`services/claude-code-runner/sidecar.ts` — same i
 - **Lifecycle**: sidecar is `essential: false` (runner exit stops the task); the runner
   `dependsOn: START` + polls `/healthz` before cloning.
 
-**Deferred, same seam**: moving `CLAUDE_CODE_OAUTH_TOKEN` behind the sidecar via
-`ANTHROPIC_BASE_URL` remapping — needs a live test of subscription auth against a remapped
-base URL; until then the inference credential stays an ECS secret on the agent container
-(inference-only token, lower blast radius than the PAT).
+**~~Deferred~~ Completed (2026-07-05)**: `CLAUDE_CODE_OAUTH_TOKEN` moved behind the sidecar.
+The live test passed: subscription auth works through an `ANTHROPIC_BASE_URL` remap with the
+sidecar swapping the Authorization header (the harness needs *a* token env var to select
+OAuth mode, so the agent container carries a dummy placeholder that never reaches the wire).
+The sidecar's `:8082` leg forwards `/v1/*` only — the token can do inference but not touch
+OAuth/token-management or account endpoints. **The agent container now holds zero real
+credentials.** (Implementation note: forward minimal response headers — fetch decodes the
+body, so passing upstream `content-encoding` through corrupts the stream.)
 
 ## Consequences
 
