@@ -299,7 +299,7 @@ export class ServerlessStack extends cdk.Stack {
     });
     runs.grantReadWriteData(routerRole); // create queued Run + serve GET /runs/{id} polling
     budgets.grantReadData(routerRole); // gate.checkBudget before admitting a run
-    agents.grantReadData(routerRole); // validate the named agent + serve GET /agents
+    agents.grantReadWriteData(routerRole); // reads + the gated agent writes (POST/DELETE /agents, ADR-0038)
     routerRole.addToPolicy(
       new iam.PolicyStatement({
         sid: "DispatchRunTask",
