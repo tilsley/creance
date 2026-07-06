@@ -53,14 +53,19 @@ export class DynamoAgentRegistry implements AgentRegistry {
     return ((r.Items ?? []) as AgentSpec[]).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** Register (or overwrite) an agent. Not part of the AgentRegistry port. */
-  async putAgent(spec: AgentSpec): Promise<void> {
+  /** Register (or overwrite) an agent — the port's optional governed write (ADR-0038). */
+  async put(spec: AgentSpec): Promise<void> {
     if (!spec.name) throw new Error("AgentSpec.name is required");
     await this.doc.send(new PutCommand({ TableName: this.table, Item: spec }));
   }
 
-  /** Remove an agent. Not part of the AgentRegistry port. */
-  async deleteAgent(name: string): Promise<void> {
+  /** Remove an agent — the port's optional governed write (ADR-0038). */
+  async delete(name: string): Promise<void> {
     await this.doc.send(new DeleteCommand({ TableName: this.table, Key: { name } }));
   }
+
+  /** @deprecated back-compat alias for the agents-cli (operator break-glass, ADR-0038). */
+  putAgent = (spec: AgentSpec) => this.put(spec);
+  /** @deprecated back-compat alias for the agents-cli (operator break-glass, ADR-0038). */
+  deleteAgent = (name: string) => this.delete(name);
 }

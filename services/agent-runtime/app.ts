@@ -10,10 +10,51 @@
  * dispatch) lives in router.ts; the dispatch strategy is picked by env in
  * dispatch.ts (DISPATCH=inprocess|runtask).
  */
-import { type Providers } from "@agent-os/core";
+import { UnauthorizedError, type AgentSpec, type Principal, type Providers } from "@agent-os/core";
 import { handleA2A, buildAgentCard } from "./a2a";
 import { makeAuthorizeAndCreate } from "./router";
 import { dispatchFromEnv } from "./dispatch";
+
+/** The handler-side schema for agent writes (ADR-0038) — the CRD's CEL, re-homed.
+ *  Projects an ALLOWLIST of fields (unknown keys dropped) and bounds each one;
+ *  returns the clean spec or a human-readable refusal. `tenant` is deliberately
+ *  not accepted here — ownership is stamped from the verified identity. */
+export function validateAgentSpec(body: any): { spec?: Omit<AgentSpec, "tenant">; error?: string } {
+  if (typeof body !== "object" || body == null) return { error: "body must be an AgentSpec object" };
+  const name = body.name;
+  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) {
+    return { error: "invalid 'name' (lowercase slug, max 63 chars)" };
+  }
+  const kind = body.kind ?? "loop";
+  if (!["loop", "sandboxed", "claude-code"].includes(kind)) return { error: `unknown 'kind' '${kind}'` };
+  if (body.systemPrompt != null && (typeof body.systemPrompt !== "string" || body.systemPrompt.length > 8000)) {
+    return { error: "invalid 'systemPrompt' (string, max 8000 chars)" };
+  }
+  if (body.model != null && (typeof body.model !== "string" || body.model.length > 128)) {
+    return { error: "invalid 'model'" };
+  }
+  const maxSteps = body.maxSteps ?? undefined;
+  if (maxSteps != null && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 50)) {
+    return { error: "invalid 'maxSteps' (integer 1-50)" };
+  }
+  if (body.tools != null && (!Array.isArray(body.tools) || !body.tools.every((t: any) => typeof t === "string"))) {
+    return { error: "invalid 'tools' (array of strings)" };
+  }
+  if (body.command != null && (kind !== "sandboxed" || typeof body.command !== "string")) {
+    return { error: "'command' is only valid for kind=sandboxed" };
+  }
+  return {
+    spec: {
+      name,
+      kind,
+      ...(body.model != null ? { model: body.model } : {}),
+      ...(body.systemPrompt != null ? { systemPrompt: body.systemPrompt } : {}),
+      ...(body.tools != null ? { tools: body.tools } : {}),
+      ...(maxSteps != null ? { maxSteps } : {}),
+      ...(body.command != null ? { command: body.command } : {}),
+    },
+  };
+}
 
 export interface AppOpts {
   /** per-turn output cap (ADR-0013); undefined → the loop's built-in default. */
@@ -140,6 +181,61 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
     if (req.method === "GET" && url.pathname === "/agents") {
       if (!(await authenticated(req))) return unauthorized();
       return Response.json(await agentRegistry.list());
+    }
+
+    // Agent onboarding (ADR-0038): the registry's governed write path — the cheap
+    // profile's API server. authn → authz(agent:register, {kind}) → validate →
+    // STAMP tenant from the verified identity → upsert. 501 when the registry has
+    // no write (kube: writes stay `kubectl apply` against the real API server).
+    if (req.method === "POST" && url.pathname === "/agents") {
+      let principal: Principal;
+      try {
+        principal = await authenticator.authenticate({ credential: bearer(req), headers: headerMap(req) });
+      } catch (e) {
+        if (e instanceof UnauthorizedError) return unauthorized();
+        throw e;
+      }
+      if (!agentRegistry.put) return Response.json({ error: `registry '${agentRegistry.name}' is not writable here` }, { status: 501 });
+      let body: any;
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "invalid JSON body" }, { status: 400 });
+      }
+      const { spec, error } = validateAgentSpec(body);
+      if (!spec) return Response.json({ error }, { status: 400 });
+      const decision = await authorizer.authorize(principal, "agent:register", spec.name, { kind: spec.kind! });
+      if (!decision.allow) return Response.json({ error: "forbidden", reason: decision.reason }, { status: 403 });
+      // ownership: an existing agent may only be overwritten by its owning tenant
+      const existing = await agentRegistry.get(spec.name);
+      if (existing?.tenant && existing.tenant !== principal.tenant) {
+        return Response.json({ error: "forbidden", reason: "agent is owned by another tenant" }, { status: 403 });
+      }
+      const stamped: AgentSpec = { ...spec, tenant: principal.tenant };
+      await agentRegistry.put(stamped);
+      return Response.json(stamped, { status: existing ? 200 : 201 });
+    }
+
+    const agentMatch = url.pathname.match(/^\/agents\/([^/]+)$/);
+    if (req.method === "DELETE" && agentMatch) {
+      let principal: Principal;
+      try {
+        principal = await authenticator.authenticate({ credential: bearer(req), headers: headerMap(req) });
+      } catch (e) {
+        if (e instanceof UnauthorizedError) return unauthorized();
+        throw e;
+      }
+      if (!agentRegistry.delete) return Response.json({ error: `registry '${agentRegistry.name}' is not writable here` }, { status: 501 });
+      const name = agentMatch[1]!;
+      const decision = await authorizer.authorize(principal, "agent:delete", name);
+      if (!decision.allow) return Response.json({ error: "forbidden", reason: decision.reason }, { status: 403 });
+      const existing = await agentRegistry.get(name);
+      if (!existing) return Response.json({ error: "agent not found" }, { status: 404 });
+      if (existing.tenant && existing.tenant !== principal.tenant) {
+        return Response.json({ error: "forbidden", reason: "agent is owned by another tenant" }, { status: 403 });
+      }
+      await agentRegistry.delete(name);
+      return Response.json({ deleted: name });
     }
 
     const runMatch = url.pathname.match(/^\/runs\/([^/]+)$/);

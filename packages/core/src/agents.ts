@@ -36,6 +36,12 @@ export interface AgentRegistry {
   readonly name: string;
   get(name: string): Promise<AgentSpec | undefined>;
   list(): Promise<AgentSpec[]>;
+  /** Governed writes (ADR-0038): OPTIONAL — only registries whose backing store has
+   *  no API server of its own implement these (dynamo, memory). The kube registry
+   *  deliberately does not: in the full profile, writes stay `kubectl apply` and the
+   *  platform's write route answers 501. */
+  put?(spec: AgentSpec): Promise<void>;
+  delete?(name: string): Promise<void>;
 }
 
 export class InMemoryAgentRegistry implements AgentRegistry {
@@ -49,5 +55,11 @@ export class InMemoryAgentRegistry implements AgentRegistry {
   }
   async list(): Promise<AgentSpec[]> {
     return [...this.agents.values()];
+  }
+  async put(spec: AgentSpec): Promise<void> {
+    this.agents.set(spec.name, spec);
+  }
+  async delete(name: string): Promise<void> {
+    this.agents.delete(name);
   }
 }
