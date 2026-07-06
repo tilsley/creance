@@ -115,3 +115,62 @@ test("the per-session cap stops a runaway session while the tenant still has roo
   expect((await gate.reserve("teama", 2, { sessionId: "run2" })).ok).toBe(true); // new session
   expect((await gate.checkBudget("teama")).spentUsd).toBe(6); // run1: 4 + run2: 2 (the refused one held nothing)
 });
+
+// --- run quota (ADR-0036/0037) — the admission R2-equivalent for foreign-L1 runs ---
+
+test("run quota is OFF by default — reserveRun always admits", async () => {
+  const gate = new LocalGate("1"); // no runQuota configured
+  for (let i = 0; i < 100; i++) expect((await gate.reserveRun("teama")).ok).toBe(true);
+});
+
+test("run quota admits up to N runs per period then 429s", async () => {
+  const gate = new LocalGate("1", { runQuota: 3 });
+  expect((await gate.reserveRun("teama")).ok).toBe(true); // 1/3
+  expect((await gate.reserveRun("teama")).ok).toBe(true); // 2/3
+  const third = await gate.reserveRun("teama");
+  expect(third.ok).toBe(true); // 3/3
+  expect(third.remaining).toBe(0);
+  const fourth = await gate.reserveRun("teama");
+  expect(fourth.ok).toBe(false); // 4th refused
+  expect(fourth.used).toBe(3);
+});
+
+test("run quota is per-tenant", async () => {
+  const gate = new LocalGate("1", { runQuota: 1 });
+  expect((await gate.reserveRun("teama")).ok).toBe(true);
+  expect((await gate.reserveRun("teama")).ok).toBe(false); // teama exhausted
+  expect((await gate.reserveRun("teamb")).ok).toBe(true); // teamb independent
+});
+
+test("refundRun releases a slot (e.g. dispatch failed)", async () => {
+  const gate = new LocalGate("1", { runQuota: 1 });
+  expect((await gate.reserveRun("teama")).ok).toBe(true); // 1/1
+  expect((await gate.reserveRun("teama")).ok).toBe(false); // full
+  await gate.refundRun("teama"); // the launched run never dispatched
+  expect((await gate.reserveRun("teama")).ok).toBe(true); // slot freed
+});
+
+test("run quota resets when the billing month rolls over", async () => {
+  let clock = new Date("2026-05-20T00:00:00Z");
+  const gate = new LocalGate("1", { runQuota: 2, now: () => clock });
+  expect((await gate.reserveRun("teama")).ok).toBe(true);
+  expect((await gate.reserveRun("teama")).ok).toBe(true);
+  expect((await gate.reserveRun("teama")).ok).toBe(false); // May exhausted
+  clock = new Date("2026-06-01T00:00:00Z");
+  expect((await gate.reserveRun("teama")).ok).toBe(true); // June fresh
+});
+
+test("concurrent reserveRun never exceeds the quota (TOCTOU closed)", async () => {
+  const gate = new LocalGate("1", { runQuota: 3 });
+  const results = await Promise.all(Array.from({ length: 8 }, () => gate.reserveRun("teama")));
+  expect(results.filter((r) => r.ok).length).toBe(3); // exactly 3 admitted, not 8
+});
+
+test("run count and dollar spend do not collide (separate namespaces)", async () => {
+  const gate = new LocalGate("100", { runQuota: 2 });
+  await gate.recordSpend("teama", 50); // dollars
+  await gate.reserveRun("teama"); // a run
+  expect((await gate.checkBudget("teama")).spentUsd).toBe(50); // spend unaffected by the run count
+  expect((await gate.reserveRun("teama")).ok).toBe(true); // 2/2 runs, independent of $
+  expect((await gate.reserveRun("teama")).ok).toBe(false); // quota hit; $ still has room
+});

@@ -64,6 +64,8 @@ export class ServerlessStack extends cdk.Stack {
     // Optional demo bearer tokens for the front door's LocalGate, injected at deploy
     // (`-c gateTokens=...`) so nothing static is committed. See the FrontDoor env below.
     const gateTokens = this.node.tryGetContext("gateTokens");
+    // Runs/period quota for kind=claude-code agents (ADR-0036/0037), off unless set.
+    const claudeCodeQuota = this.node.tryGetContext("claudeCodeQuota");
 
     // The agent-runtime image, built + pushed by CDK at deploy time (one image, three
     // entrypoints: server.ts / task.ts / lambda.ts — the consumer picks via CMD). The
@@ -370,6 +372,10 @@ export class ServerlessStack extends cdk.Stack {
         AGENT_REGISTRY: "dynamodb", // validate the named agent + serve GET /agents from the catalog
         AGENTS_TABLE: "agent-os-agents",
         GATE: "local", // budget admission at the door (ADR-0009/0013)
+        // per-tenant runs/period quota for kind=claude-code agents (ADR-0036/0037) — the
+        // admission R2-equivalent where dollars are meaningless. Off unless set at deploy
+        // (`-c claudeCodeQuota=N`); the dollar budget still governs every other run kind.
+        ...(claudeCodeQuota ? { GATE_CLAUDE_CODE_QUOTA: String(claudeCodeQuota) } : {}),
         // authn (ADR-0032): with a Cognito pool wired, verify the console's id token
         // offline against the pool JWKS — human identity, no static tokens. Without
         // one, fall back to the pre-0032 demo tokens injected at deploy via context

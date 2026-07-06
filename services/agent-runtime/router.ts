@@ -31,9 +31,23 @@ export function makeAuthorizeAndCreate(providers: Providers, dispatch: Dispatch)
     // this principal may target it (Rego under AUTHZ=opa; AllowAll in the POC).
     const decision = await authorizer.authorize(principal, "run:create", agent, repo ? { repo } : undefined);
     if (!decision.allow) return { ok: false, status: 403, error: "forbidden", reason: decision.reason };
-    const budget = await gate.checkBudget(principal.tenant);
-    if (!budget.ok) return { ok: false, status: 402, error: "budget exceeded" };
-    if (agent != null && !(await agentRegistry.get(agent))) return { ok: false, status: 404, error: `unknown agent '${agent}'` };
+    // Resolve the agent spec up front — its execution model picks the admission control.
+    let spec;
+    if (agent != null) {
+      spec = await agentRegistry.get(agent);
+      if (!spec) return { ok: false, status: 404, error: `unknown agent '${agent}'` };
+    }
+    // Admission control by execution model (ADR-0036): a foreign-L1 / subscription
+    // run (kind=claude-code) has no meaningful dollar cost, so R2 is a per-period run
+    // QUOTA reserved here; every other run is dollar-budget-gated as before.
+    if (spec?.kind === "claude-code") {
+      const quota = await gate.reserveRun(principal.tenant);
+      if (!quota.ok)
+        return { ok: false, status: 429, error: "run quota exhausted", reason: `${quota.used}/${quota.limit} claude-code runs this period` };
+    } else {
+      const budget = await gate.checkBudget(principal.tenant);
+      if (!budget.ok) return { ok: false, status: 402, error: "budget exceeded" };
+    }
     const now = new Date().toISOString();
     const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, repo, principal, messages: [], createdAt: now, updatedAt: now };
     await store.create(run);

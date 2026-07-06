@@ -214,9 +214,12 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // GATE_SESSION_BUDGET_USD adds a per-session cap alongside the monthly one — the
   // runaway-session stop (ADR-0019). Unset ⇒ only the tenant/month cap is enforced.
   const sessionLimitUsd = env.GATE_SESSION_BUDGET_USD ? Number(env.GATE_SESSION_BUDGET_USD) : undefined;
+  // GATE_CLAUDE_CODE_QUOTA caps runs/period for subscription/foreign-L1 agents (ADR-0036/0037) —
+  // the admission R2-equivalent where dollars are meaningless. Unset ⇒ quota off.
+  const runQuota = env.GATE_CLAUDE_CODE_QUOTA ? Number(env.GATE_CLAUDE_CODE_QUOTA) : undefined;
   const gate: Gate =
     (env.GATE ?? "noop") === "local"
-      ? new LocalGate(env.GATE_BUDGET_USD, { source: budgetSource, spendStore, sessionLimitUsd })
+      ? new LocalGate(env.GATE_BUDGET_USD, { source: budgetSource, spendStore, sessionLimitUsd, runQuota })
       : new NoopGate();
 
   // authn (ADR-0015): AUTHN picks the identity adapter. Default tracks the old

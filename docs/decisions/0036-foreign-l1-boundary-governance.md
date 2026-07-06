@@ -90,3 +90,15 @@ Three execution models now sit behind the one dispatch seam, by *where governanc
   gateway-target switch offered as a per-agent option if a tenant wants governed think and will
   pay Bedrock for it. None are required to keep the current runner correct — this ADR is the
   clarification that makes them nameable.
+
+### Realized (2026-07-06): the run quota (follow-on #1)
+
+The `Gate` port gains `reserveRun(tenant)` / `refundRun(tenant)` and a `QuotaStatus`. `LocalGate`
+counts runs through the SAME `SpendStore` in a `runs#<period>` namespace — so it inherits the
+atomic conditional-add (TOCTOU-closed) and monthly-reset-by-key-rotation for free, and run counts
+never collide with the dollar counter. The front door branches by execution model: `kind=claude-code`
+reserves a run against the quota (429 when exhausted); every other kind keeps the dollar `checkBudget`
+(402). Configured with `GATE_CLAUDE_CODE_QUOTA` (unset ⇒ off, per-tenant, per calendar month). Paired
+with the per-run **loop detector** ([0037](0037-hosted-claude-code-landscape.md)) as the inner bound,
+so one run can't spin through what the quota admits. Reserve-at-admission is the countable event (a
+launched run); a dispatch failure can `refundRun` so a never-launched run doesn't burn a slot.

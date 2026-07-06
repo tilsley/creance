@@ -8,7 +8,7 @@
  *
  *   GATE_BUDGET_USD="1.00"   (default cap; fallback when a tenant has no claim)
  */
-import type { Gate, BudgetStatus, BudgetScopes, BudgetSource, SpendStore } from "../gate";
+import type { Gate, BudgetStatus, BudgetScopes, BudgetSource, QuotaStatus, SpendStore } from "../gate";
 import { InMemorySpendStore, currentPeriod } from "../gate";
 
 export interface LocalGateOptions {
@@ -21,6 +21,11 @@ export interface LocalGateOptions {
   /** Per-session cap (USD) — the runaway-session stop (ADR-0019). Undefined ⇒ session
    *  scope off (only the tenant/month cap is enforced). */
   sessionLimitUsd?: number;
+  /** Per-tenant runs-per-period quota (ADR-0036/0037) — the R2-equivalent for
+   *  subscription/foreign-L1 runs. Undefined ⇒ quota off (reserveRun always ok).
+   *  Counted through the SAME SpendStore in a `runs#<period>` namespace, so it
+   *  inherits the atomic conditional-add + monthly reset for free. */
+  runQuota?: number;
 }
 
 export class LocalGate implements Gate {
@@ -30,6 +35,7 @@ export class LocalGate implements Gate {
   private readonly spend: SpendStore;
   private readonly now: () => Date;
   private readonly sessionLimitUsd?: number;
+  private readonly runQuota?: number;
 
   constructor(budgetUsd?: string, opts: LocalGateOptions = {}) {
     this.fallbackLimitUsd = Number(budgetUsd ?? "1.00");
@@ -37,6 +43,32 @@ export class LocalGate implements Gate {
     this.spend = opts.spendStore ?? new InMemorySpendStore();
     this.now = opts.now ?? (() => new Date());
     this.sessionLimitUsd = opts.sessionLimitUsd;
+    this.runQuota = opts.runQuota;
+  }
+
+  /** Run-quota period key — a `runs#` namespace on the SAME store, so run counts and
+   *  dollar spend never collide and both reset monthly by key rotation. */
+  private runPeriod(): string {
+    return `runs#${currentPeriod(this.now())}`;
+  }
+
+  async reserveRun(tenant: string): Promise<QuotaStatus> {
+    const limit = this.runQuota;
+    if (limit == null) return { tenant, limit: Infinity, used: 0, remaining: Infinity, ok: true }; // off
+    // delta is always 1, so a limit < 1 can never fit — refuse without touching the store
+    // (mirrors the reserve pre-check; also keeps DynamoSpendStore's first-write path safe).
+    if (limit < 1) return { tenant, limit, used: await this.spend.get(tenant, this.runPeriod()), remaining: 0, ok: false };
+    const total = await this.spend.reserve(tenant, this.runPeriod(), 1, limit);
+    if (total == null) {
+      const used = await this.spend.get(tenant, this.runPeriod());
+      return { tenant, limit, used, remaining: Math.max(0, limit - used), ok: false };
+    }
+    return { tenant, limit, used: total, remaining: limit - total, ok: true };
+  }
+
+  async refundRun(tenant: string): Promise<void> {
+    if (this.runQuota == null) return;
+    await this.spend.add(tenant, this.runPeriod(), -1);
   }
 
   async checkBudget(tenant: string): Promise<BudgetStatus> {
