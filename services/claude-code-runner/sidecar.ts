@@ -20,6 +20,7 @@
  */
 import { gunzipSync } from "bun";
 import { DynamoDBRunStore } from "@agent-os/core";
+import { mintInstallationToken } from "./github-app-token";
 
 const PORT = Number(process.env.SIDECAR_PORT ?? 8081);
 const INFERENCE_PORT = Number(process.env.SIDECAR_INFERENCE_PORT ?? 8082);
@@ -103,10 +104,39 @@ async function resolveAllowedRepo(): Promise<string | undefined> {
   return run?.repo;
 }
 
+/** Resolve the git credential the sidecar injects. Prefer a GitHub App
+ *  installation token minted for JUST this run's repo (self-expiring, minimal
+ *  scope — ADR-0034 follow-up); fall back to the long-lived PAT during the
+ *  transition (or when App vars / a run repo are absent). */
+async function resolveGitToken(allowed: string | undefined): Promise<string | undefined> {
+  const appId = process.env.GITHUB_APP_ID;
+  const installationId = process.env.GITHUB_APP_INSTALLATION_ID;
+  const privateKeyPem = process.env.GITHUB_APP_PRIVATE_KEY;
+  const pat = process.env.GITHUB_TOKEN;
+  if (appId && installationId && privateKeyPem && allowed) {
+    try {
+      const { token, expiresAt } = await mintInstallationToken({
+        appId,
+        installationId,
+        privateKeyPem,
+        repo: allowed,
+        apiUpstream: API_UPSTREAM,
+        nowSec: Math.floor(Date.now() / 1000),
+      });
+      console.log(`egress-sidecar: minted GitHub App token for ${allowed} (App ${appId}, expires ${expiresAt ?? "~1h"})`);
+      return token;
+    } catch (e) {
+      console.error(`egress-sidecar: App token mint failed (${e}) — ${pat ? "falling back to PAT" : "no PAT fallback"}`);
+    }
+  }
+  return pat;
+}
+
 if (import.meta.main) {
-  const token = process.env.GITHUB_TOKEN;
   const allowed = await resolveAllowedRepo();
-  // Basic auth, the form GitHub documents for PATs over git smart-HTTP.
+  const token = await resolveGitToken(allowed);
+  // Basic auth, the form GitHub documents for tokens over git smart-HTTP
+  // (x-access-token works for both PATs and App installation tokens).
   const auth = token ? `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}` : undefined;
   console.log(`egress-sidecar: :${PORT} -> ${UPSTREAM}  allowed repo: ${allowed ?? "(none — all git denied)"}`);
 

@@ -22,7 +22,7 @@ injected by ECS from an SSM SecureString (default `aws/ssm` key — $0):
 
 ```sh
 claude setup-token   # on your machine, prints a ~1-year token
-aws ssm put-parameter --name /agent-os/claude-code/oauth-token \
+aws ssm put-parameter --name /creance/claude-code/oauth-token \
   --type SecureString --value '<token>' --region eu-west-2
 ```
 
@@ -31,16 +31,28 @@ aws ssm put-parameter --name /agent-os/claude-code/oauth-token \
 Name a `repo` ("owner/name") on the RUN — `POST /runs {"agent":"claude-code","repo":...}` —
 to work on a real repo. The agent is repo-agnostic; whether a principal may target that repo
 is authz's decision at the gate (`attributes.repo` — Rego under AUTHZ=opa, AllowAll in the
-POC). The `egress-sidecar` container — the only holder of the GitHub PAT
-(`/agent-os/claude-code/github-token`, SSM SecureString) — proxies git smart-HTTP on
-`localhost:8081`, allowlisted to the run's authorized repo, and only accepts pushes
-creating/updating `refs/heads/run/*`. The shim clones through it onto `run/<id>` before the
-harness starts and pushes + opens a PR after (even on a crashed run); the agent container
+POC). The `egress-sidecar` container — the only holder of the git credential — proxies git
+smart-HTTP on `localhost:8081`, allowlisted to the run's authorized repo, and only accepts
+pushes creating/updating `refs/heads/run/*`. The shim clones through it onto `run/<id>` before
+the harness starts and pushes + opens a PR after (even on a crashed run); the agent container
 never holds a git credential.
 
+**Git credential — GitHub App (preferred) with PAT fallback.** The sidecar holds only the
+platform's GitHub **App private key** (one secret, `/creance/github-app-private-key`) and at
+run start mints a fresh **installation token down-scoped to JUST the run's repo** (contents +
+pull_requests write, ~1h TTL — `github-app-token.ts`). No long-lived credential ever has more
+reach than the single repo the gate authorized. Wire the App via env: `GITHUB_APP_ID`,
+`GITHUB_APP_INSTALLATION_ID` (not secret), `GITHUB_APP_PRIVATE_KEY` (SSM). If those are unset
+(or minting fails) it falls back to the legacy fine-grained PAT `GITHUB_TOKEN`
+(`/creance/claude-code/github-token`).
+
 ```sh
-# fine-grained PAT: selected repos only, Contents read/write
-aws ssm put-parameter --name /agent-os/claude-code/github-token \
+# App private key — the one platform git secret, harness-agnostic (root path).
+aws ssm put-parameter --name /creance/github-app-private-key \
+  --type SecureString --value file:///path/to/app.private-key.pem --region eu-west-2
+
+# Legacy PAT fallback (fine-grained: selected repos, Contents + Pull requests read/write).
+aws ssm put-parameter --name /creance/claude-code/github-token \
   --type SecureString --value '<github_pat_...>' --region eu-west-2
 ```
 
