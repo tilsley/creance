@@ -57,6 +57,19 @@ API Key," and Anthropic won't bless first-party headless-on-subscription in writ
 subscription usage draws from the same pool as interactive sessions, and a June 2026 billing split
 (programmatic use → separate metered credit) was *paused the day it launched* but is on the roadmap.
 
+> **Update 2026-07-11 — the gray zone is now a priced boundary.** Two terms changes since this
+> survey: (Feb 2026) Anthropic's terms were amended to prohibit subscription OAuth tokens "in any
+> other product, tool, or service" than Claude Code / Claude.ai; (Apr 2026) that ban was softened
+> into billing — third-party tools (Cline, aider, OpenClaw, *custom scripts* — i.e. anything that
+> isn't the genuine CLI, our inference gateway included) may use the token but bill per-token as
+> "extra usage" (~API rates, Opus/Sonnet only, no Haiku), while Claude Code and Claude.ai stay
+> flat-rate. Consequences for us: the runner's first-party lane is *confirmed* flat-rate (it spawns
+> the genuine CLI); and "route the token through our gateway" is no longer a ToS question but an
+> economics one it loses — per-token cost either way, so Bedrock (keyless, metered, full catalog)
+> dominates. The enforcement axis is **which client**, not **which human**. OpenAI is stricter
+> still: ChatGPT Plus/Pro quota covers Codex surfaces only, with no metered escape hatch at all —
+> across the industry, subscriptions buy a product, not an inference backend.
+
 ## Decision
 
 **Continue on the current architecture — the survey validates it — and adopt the upgrades the field

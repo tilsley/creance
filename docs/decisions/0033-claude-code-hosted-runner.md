@@ -63,6 +63,9 @@ A new `AgentSpec.kind: "claude-code"` selects it; nothing upstream changes.**
 - **Auth**: `CLAUDE_CODE_OAUTH_TOKEN` from `/agent-os/claude-code/oauth-token` (SSM
   SecureString, default key), injected by ECS at task start. The graduation path to keyless
   multi-tenant is env-only: `CLAUDE_CODE_USE_BEDROCK=1` + Bedrock invoke on the task role.
+  *(2026-07-11: Anthropic's Feb/Apr 2026 terms changes confirm this lane — flat rate applies
+  only to the genuine Claude Code client; the token in any other tool bills per-token. See the
+  update in [0037](0037-hosted-claude-code-landscape.md).)*
 - **Gate invariance**: authn → authz → budget → create-queued-run runs unchanged in the front
   door. R2 (budget) is *admission-only* for these runs today — subscription usage reports
   $0 cost, so there is no spend to settle. That is honest: the platform governs *whether* a
