@@ -37,24 +37,24 @@ pushes creating/updating `refs/heads/run/*`. The shim clones through it onto `ru
 the harness starts and pushes + opens a PR after (even on a crashed run); the agent container
 never holds a git credential.
 
-**Git credential — GitHub App (preferred) with PAT fallback.** The sidecar holds only the
-platform's GitHub **App private key** (one secret, `/creance/github-app-private-key`) and at
-run start mints a fresh **installation token down-scoped to JUST the run's repo** (contents +
-pull_requests write, ~1h TTL — `github-app-token.ts`). No long-lived credential ever has more
-reach than the single repo the gate authorized. Wire the App via env: `GITHUB_APP_ID`,
-`GITHUB_APP_INSTALLATION_ID` (not secret), `GITHUB_APP_PRIVATE_KEY` (SSM). If those are unset
-(or minting fails) it falls back to the legacy fine-grained PAT `GITHUB_TOKEN`
-(`/creance/claude-code/github-token`).
+**Git credential — GitHub App, per-run scoped tokens (the PAT is retired).** The sidecar holds
+only the platform's GitHub **App private key** (one secret, `/creance/github-app-private-key`)
+and at run start mints a fresh **installation token down-scoped to JUST the run's repo**
+(contents + pull_requests write, ~1h TTL — `github-app-token.ts`). No long-lived credential
+exists; nothing ever outreaches the single repo the gate authorized. Wire the App via env:
+`GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID` (not secret), `GITHUB_APP_PRIVATE_KEY` (SSM). The
+sidecar **fails closed** if the App is unconfigured or minting fails (e.g. App not installed on
+the repo) — git is denied rather than falling back to anything broader.
 
 ```sh
 # App private key — the one platform git secret, harness-agnostic (root path).
 aws ssm put-parameter --name /creance/github-app-private-key \
   --type SecureString --value file:///path/to/app.private-key.pem --region eu-west-2
-
-# Legacy PAT fallback (fine-grained: selected repos, Contents + Pull requests read/write).
-aws ssm put-parameter --name /creance/claude-code/github-token \
-  --type SecureString --value '<github_pat_...>' --region eu-west-2
 ```
+
+The App must be **installed on each repo** runs target (its installation token can only reach
+installed repos). Verify a run minted (not failed) in the `claude-code-sidecar` log:
+`minted GitHub App token for <owner>/<repo>`.
 
 ## Register the agent (PutItem, no redeploy — ADR-0031)
 

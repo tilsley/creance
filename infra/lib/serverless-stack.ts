@@ -171,7 +171,7 @@ export class ServerlessStack extends cdk.Stack {
     const otelEndpoint = this.node.tryGetContext("otelEndpoint");
     const otelHeaders = otelEndpoint
       ? ssm.StringParameter.fromSecureStringParameterAttributes(this, "OtelHeaders", {
-          parameterName: "/agent-os/otel/otlp-headers",
+          parameterName: "/creance/otel/otlp-headers",
         })
       : undefined;
 
@@ -220,7 +220,7 @@ export class ServerlessStack extends cdk.Stack {
     // written once out-of-band (see services/claude-code-runner/README.md) and only
     // REFERENCED here. ECS resolves it at task start; it never lands in the template.
     const ccToken = ssm.StringParameter.fromSecureStringParameterAttributes(this, "ClaudeCodeToken", {
-      parameterName: "/agent-os/claude-code/oauth-token",
+      parameterName: "/creance/claude-code/oauth-token",
     });
 
     const ccTaskRole = new iam.Role(this, "ClaudeCodeTaskRole", {
@@ -261,13 +261,15 @@ export class ServerlessStack extends cdk.Stack {
     });
 
     // The egress sidecar (ADR-0034): SAME image, different CMD — the git choke
-    // point. The GitHub PAT is a secret on THIS container only; the agent container
-    // reaches GitHub exclusively through localhost:8081, where the sidecar injects
-    // the credential and enforces repo allowlist + run/*-branch push policy.
+    // point. The GitHub App private key is a secret on THIS container only; from it
+    // the sidecar mints a per-run installation token down-scoped to JUST the run's
+    // repo (contents+PR, ~1h). The agent container reaches GitHub exclusively through
+    // localhost:8081, where the sidecar injects that token and enforces repo allowlist
+    // + run/*-branch push policy. The PAT is retired — no broad long-lived credential.
     // essential=false: when the runner exits the task stops; a sidecar crash alone
     // doesn't kill a run (the shim's git calls fail visibly instead).
-    const ccGithubToken = ssm.StringParameter.fromSecureStringParameterAttributes(this, "ClaudeCodeGithubToken", {
-      parameterName: "/agent-os/claude-code/github-token",
+    const ccGithubAppKey = ssm.StringParameter.fromSecureStringParameterAttributes(this, "ClaudeCodeGithubAppKey", {
+      parameterName: "/creance/github-app-private-key",
     });
     const ccSidecar = ccTaskDef.addContainer("egress-sidecar", {
       image: ecs.ContainerImage.fromDockerImageAsset(ccImage),
@@ -275,7 +277,7 @@ export class ServerlessStack extends cdk.Stack {
       essential: false,
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: "claude-code-sidecar" }),
       secrets: {
-        GITHUB_TOKEN: ecs.Secret.fromSsmParameter(ccGithubToken),
+        GITHUB_APP_PRIVATE_KEY: ecs.Secret.fromSsmParameter(ccGithubAppKey), // per-run repo-scoped tokens
         // the subscription token moved HERE from the agent container (ADR-0034
         // completed): the sidecar swaps it into remapped /v1/* inference calls.
         CLAUDE_CODE_OAUTH_TOKEN: ecs.Secret.fromSsmParameter(ccToken),
@@ -285,6 +287,9 @@ export class ServerlessStack extends cdk.Stack {
         // run's gate-authorized repo from the runs table (task role covers it).
         REGION: this.region,
         RUNS_TABLE: "agent-os-runs",
+        // GitHub App identity (not secret): the App and its install on the org.
+        GITHUB_APP_ID: "4232149",
+        GITHUB_APP_INSTALLATION_ID: "145860623",
       },
     });
     ccContainer.addContainerDependencies({

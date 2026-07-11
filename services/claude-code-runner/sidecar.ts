@@ -104,32 +104,35 @@ async function resolveAllowedRepo(): Promise<string | undefined> {
   return run?.repo;
 }
 
-/** Resolve the git credential the sidecar injects. Prefer a GitHub App
- *  installation token minted for JUST this run's repo (self-expiring, minimal
- *  scope — ADR-0034 follow-up); fall back to the long-lived PAT during the
- *  transition (or when App vars / a run repo are absent). */
+/** Resolve the git credential the sidecar injects: a GitHub App installation
+ *  token minted for JUST this run's repo — self-expiring (~1h), scoped to that one
+ *  repo, contents+PR only (ADR-0034). The PAT is retired: fail CLOSED if the App
+ *  isn't configured or minting fails (App not installed on the repo / bad key),
+ *  denying git rather than reaching for a broad long-lived credential. */
 async function resolveGitToken(allowed: string | undefined): Promise<string | undefined> {
   const appId = process.env.GITHUB_APP_ID;
   const installationId = process.env.GITHUB_APP_INSTALLATION_ID;
   const privateKeyPem = process.env.GITHUB_APP_PRIVATE_KEY;
-  const pat = process.env.GITHUB_TOKEN;
-  if (appId && installationId && privateKeyPem && allowed) {
-    try {
-      const { token, expiresAt } = await mintInstallationToken({
-        appId,
-        installationId,
-        privateKeyPem,
-        repo: allowed,
-        apiUpstream: API_UPSTREAM,
-        nowSec: Math.floor(Date.now() / 1000),
-      });
-      console.log(`egress-sidecar: minted GitHub App token for ${allowed} (App ${appId}, expires ${expiresAt ?? "~1h"})`);
-      return token;
-    } catch (e) {
-      console.error(`egress-sidecar: App token mint failed (${e}) — ${pat ? "falling back to PAT" : "no PAT fallback"}`);
-    }
+  if (!appId || !installationId || !privateKeyPem) {
+    console.error("egress-sidecar: no GitHub App configured (need GITHUB_APP_ID/INSTALLATION_ID/PRIVATE_KEY) — git disabled");
+    return undefined;
   }
-  return pat;
+  if (!allowed) return undefined; // no run repo → nothing to scope a token to
+  try {
+    const { token, expiresAt } = await mintInstallationToken({
+      appId,
+      installationId,
+      privateKeyPem,
+      repo: allowed,
+      apiUpstream: API_UPSTREAM,
+      nowSec: Math.floor(Date.now() / 1000),
+    });
+    console.log(`egress-sidecar: minted GitHub App token for ${allowed} (App ${appId}, expires ${expiresAt ?? "~1h"})`);
+    return token;
+  } catch (e) {
+    console.error(`egress-sidecar: App token mint failed (${e}) — git disabled for this run (no PAT fallback)`);
+    return undefined;
+  }
 }
 
 if (import.meta.main) {

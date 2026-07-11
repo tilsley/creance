@@ -109,8 +109,8 @@ const repo = run.repo;
 // subscription token lives there) — every run needs it up before the harness starts.
 await waitForSidecar(gitBase);
 if (repo) {
-  // Clone THROUGH the sidecar: the remote is localhost, the PAT never enters this
-  // container, and the sidecar's allowlist means this repo is the only one reachable.
+  // Clone THROUGH the sidecar: the remote is localhost, no git credential ever enters
+  // this container, and the sidecar's allowlist means this repo is the only one reachable.
   git(process.env.HOME!, "clone", `${gitBase}/${repo}.git`, workspace);
   git(workspace, "checkout", "-b", branch);
   git(workspace, "config", "user.name", "agent-os claude-code runner");
@@ -225,9 +225,9 @@ try {
   terminal = { status: "failed", error: e?.message ?? String(e) };
 }
 
-// Push the run branch (through the sidecar — the only container with the PAT
-// keeps its own policy: run/* branches only). A crashed run still pushes whatever
-// was committed, so partial work is inspectable rather than lost with the task.
+// Push the run branch (through the sidecar — the only container holding a git
+// credential keeps its own policy: run/* branches only). A crashed run still pushes
+// whatever was committed, so partial work is inspectable rather than lost with the task.
 if (repo) {
   try {
     const dirty = git(workspace, "status", "--porcelain");
