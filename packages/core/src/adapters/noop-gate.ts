@@ -42,4 +42,7 @@ export class NoopGate implements Gate {
   async refundRun(): Promise<void> {
     /* unlimited — no quota to release */
   }
+  async checkQuota(tenant: string): Promise<QuotaStatus> {
+    return unlimitedQuota(tenant);
+  }
 }

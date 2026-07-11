@@ -174,3 +174,35 @@ test("run count and dollar spend do not collide (separate namespaces)", async ()
   expect((await gate.reserveRun("teama")).ok).toBe(true); // 2/2 runs, independent of $
   expect((await gate.reserveRun("teama")).ok).toBe(false); // quota hit; $ still has room
 });
+
+test("checkQuota reports usage without reserving (showback)", async () => {
+  const gate = new LocalGate("1", { runQuota: 5 });
+  expect(await gate.checkQuota("teama")).toEqual({ tenant: "teama", limit: 5, used: 0, remaining: 5, ok: true });
+  await gate.reserveRun("teama");
+  await gate.reserveRun("teama");
+  const q = await gate.checkQuota("teama");
+  expect(q).toEqual({ tenant: "teama", limit: 5, used: 2, remaining: 3, ok: true });
+  // read-only: reading it again does not consume a slot
+  expect((await gate.checkQuota("teama")).used).toBe(2);
+});
+
+test("checkQuota reports ok:false once exhausted, remaining never negative", async () => {
+  const gate = new LocalGate("1", { runQuota: 2 });
+  await gate.reserveRun("teama");
+  await gate.reserveRun("teama");
+  const q = await gate.checkQuota("teama");
+  expect(q.ok).toBe(false);
+  expect(q.used).toBe(2);
+  expect(q.remaining).toBe(0);
+});
+
+test("checkQuota is unlimited/ok when quota is unconfigured", async () => {
+  const gate = new LocalGate("1"); // no runQuota
+  expect(await gate.checkQuota("teama")).toEqual({
+    tenant: "teama",
+    limit: Infinity,
+    used: 0,
+    remaining: Infinity,
+    ok: true,
+  });
+});

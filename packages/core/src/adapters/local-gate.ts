@@ -71,6 +71,13 @@ export class LocalGate implements Gate {
     await this.spend.add(tenant, this.runPeriod(), -1);
   }
 
+  async checkQuota(tenant: string): Promise<QuotaStatus> {
+    const limit = this.runQuota;
+    if (limit == null) return { tenant, limit: Infinity, used: 0, remaining: Infinity, ok: true }; // off
+    const used = await this.spend.get(tenant, this.runPeriod());
+    return { tenant, limit, used, remaining: Math.max(0, limit - used), ok: used < limit };
+  }
+
   async checkBudget(tenant: string): Promise<BudgetStatus> {
     const period = currentPeriod(this.now());
     return this.status(tenant, await this.spend.get(tenant, period));

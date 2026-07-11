@@ -10,7 +10,7 @@
  * dispatch) lives in router.ts; the dispatch strategy is picked by env in
  * dispatch.ts (DISPATCH=inprocess|runtask).
  */
-import { UnauthorizedError, type AgentSpec, type Principal, type Providers } from "@agent-os/core";
+import { UnauthorizedError, currentPeriod, type AgentSpec, type Principal, type Providers } from "@agent-os/core";
 import { handleA2A, buildAgentCard } from "./a2a";
 import { makeAuthorizeAndCreate } from "./router";
 import { dispatchFromEnv } from "./dispatch";
@@ -249,6 +249,16 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
     if (req.method === "GET" && budgetMatch) {
       if (!(await authenticated(req))) return unauthorized();
       return Response.json(await gate.checkBudget(budgetMatch[1]!));
+    }
+
+    // Showback (ADR-0036): the two governed lanes in one view — metered dollar spend
+    // (loop/Bedrock agents) AND run-quota consumption (claude-code/subscription runs).
+    const usageMatch = url.pathname.match(/^\/tenants\/([^/]+)\/usage$/);
+    if (req.method === "GET" && usageMatch) {
+      if (!(await authenticated(req))) return unauthorized();
+      const tenant = usageMatch[1]!;
+      const [budget, quota] = await Promise.all([gate.checkBudget(tenant), gate.checkQuota(tenant)]);
+      return Response.json({ tenant, period: currentPeriod(), budget, quota });
     }
 
     return new Response("not found", { status: 404 });

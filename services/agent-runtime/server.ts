@@ -9,6 +9,7 @@
  *     Authorization: Bearer <token>  (under GATE=local; open under the default)
  *   GET  /runs/{id}                 -> the Run { status, messages, output?, usage, costUsd }
  *   GET  /tenants/{tenant}/budget   -> { limitUsd, spentUsd, remainingUsd, ok }
+ *   GET  /tenants/{tenant}/usage    -> { period, budget:{...}, quota:{ limit, used, remaining, ok } }
  *   GET  /healthz                   -> { status: "ok" }
  *
  * The dispatch strategy is picked by env (ADR-0031): DISPATCH=inprocess runs an

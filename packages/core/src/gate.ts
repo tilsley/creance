@@ -99,6 +99,13 @@ export interface Gate {
   reserveRun(tenant: string): Promise<QuotaStatus>;
   /** Release a run reservation — e.g. the run failed to dispatch and never launched. */
   refundRun(tenant: string): Promise<void>;
+  /**
+   * Read-only: the tenant's run-quota status for the current period WITHOUT reserving
+   * — the showback mirror of `checkBudget` for the subscription/foreign-L1 lane
+   * (ADR-0036). `used` counts claude-code runs admitted this period. Unconfigured
+   * quota ⇒ unlimited/ok.
+   */
+  checkQuota(tenant: string): Promise<QuotaStatus>;
 }
 
 // --- authn: who is the caller? (ADR-0015) -----------------------------------
