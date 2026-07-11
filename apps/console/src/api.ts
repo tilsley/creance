@@ -55,6 +55,24 @@ export interface BudgetStatus {
   ok: boolean;
 }
 
+/** Run-quota lane (claude-code/subscription runs). `limit` is null when unbounded —
+ *  Infinity doesn't survive JSON, so the server's Infinity arrives as null. */
+export interface QuotaStatus {
+  tenant: string;
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  ok: boolean;
+}
+
+/** The two governed lanes in one view (GET /tenants/{t}/usage, ADR-0036). */
+export interface UsageStatus {
+  tenant: string;
+  period: string;
+  budget: BudgetStatus;
+  quota: QuotaStatus;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -95,4 +113,5 @@ export class Api {
     });
   listAgents = () => this.req<AgentSpec[]>("/agents");
   budget = (tenant: string) => this.req<BudgetStatus>(`/tenants/${encodeURIComponent(tenant)}/budget`);
+  usage = (tenant: string) => this.req<UsageStatus>(`/tenants/${encodeURIComponent(tenant)}/usage`);
 }
