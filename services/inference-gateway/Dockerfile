@@ -3,7 +3,8 @@
 #
 # POC NOTE: installs ALL workspace deps (bun resolves the whole workspace) — same
 # trade-off as the agent-runtime image. Not size-optimized.
-FROM oven/bun:1
+# Pinned to the bun that wrote bun.lock (floating :1 re-resolves and has hit yanked versions)
+FROM oven/bun:1.3.4
 
 WORKDIR /app
 

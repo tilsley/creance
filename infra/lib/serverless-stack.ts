@@ -52,6 +52,10 @@ export interface ServerlessStackProps extends cdk.StackProps {
   /** Wire the front door to a Cognito user pool (ADR-0032): AUTHN=cognito with these
    *  values. Unset ⇒ the pre-0032 static-token gate (context `-c gateTokens=...`). */
   cognito?: { issuer: string; clientId: string };
+  /** The inference gateway's URL (ADR-0039) — handed to DELEGATED agents as their only
+   *  sanctioned think-path (AGENT_GATEWAY_URL on the executor). Deliberately NOT
+   *  INFERENCE_GATEWAY_URL: that would flip the loop's own think into gateway mode. */
+  agentGatewayUrl?: string;
 }
 
 export class ServerlessStack extends cdk.Stack {
@@ -191,6 +195,9 @@ export class ServerlessStack extends cdk.Stack {
         SANDBOX_PROVIDER: "agentcore",
         TELEMETRY: "otel", // the record control (ADR-0035)
         ...(otelEndpoint ? { OTEL_EXPORTER_OTLP_ENDPOINT: String(otelEndpoint) } : {}),
+        // delegated agents' think-path (ADR-0039): sandboxed/custom runs hand this to
+        // the foreign agent; the loop's OWN think stays direct (INFERENCE_GATEWAY_URL unset)
+        ...(props?.agentGatewayUrl ? { AGENT_GATEWAY_URL: props.agentGatewayUrl } : {}),
       },
       ...(otelHeaders ? { secrets: { OTEL_EXPORTER_OTLP_HEADERS: ecs.Secret.fromSsmParameter(otelHeaders) } } : {}),
     });

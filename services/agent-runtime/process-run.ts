@@ -46,8 +46,12 @@ export async function processRun(
       // Model B (ADR-0019): a self-contained delegated agent runs IN the sandbox; its
       // inference egress is pointed at the gateway (think governed), its execution stays
       // in the sandbox (do governed). The gateway is its only sanctioned model egress.
-      const gatewayUrl = process.env.INFERENCE_GATEWAY_URL;
-      if (!gatewayUrl) throw new Error("sandboxed agents require INFERENCE_GATEWAY_URL (the gateway is their only sanctioned model egress)");
+      // AGENT_GATEWAY_URL = "where DELEGATED agents think" (ADR-0039) — distinct from
+      // INFERENCE_GATEWAY_URL, which flips THIS process's own think into gateway-client
+      // mode. On the serverless substrate the loop thinks direct while delegated agents
+      // are handed the gateway; the two envs keep those choices independent.
+      const gatewayUrl = process.env.AGENT_GATEWAY_URL ?? process.env.INFERENCE_GATEWAY_URL;
+      if (!gatewayUrl) throw new Error("sandboxed agents require AGENT_GATEWAY_URL (the gateway is their only sanctioned model egress)");
       result = await runSandboxedAgent({ session, task: existing.task, spec, gatewayUrl, token: principal.token, telemetry: providers.telemetry });
     } else {
       // Model A: the runtime drives the think/do loop. DIRECT mode assumes the tenant's

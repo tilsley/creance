@@ -12,6 +12,7 @@ import * as cdk from "aws-cdk-lib";
 import { AuthStack } from "../lib/auth-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { ConsoleStack } from "../lib/console-stack";
+import { GatewayStack } from "../lib/gateway-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
 import { PostgresStack } from "../lib/postgres-stack";
@@ -38,6 +39,14 @@ new PostgresStack(app, "AgentOsPostgres", { env });
 // token is the Bearer credential the front door verifies (AUTHN=cognito). ~$0 idle.
 const auth = new AuthStack(app, "AgentOsAuth", { env });
 
+// IMPLEMENTED — the inference gateway on the serverless substrate (ADR-0039):
+// ADR-0019's choke point as a scale-to-zero Lambda + Function URL. Delegated
+// agents (kind=sandboxed/custom) think ONLY through this; the loop stays direct.
+const gateway = new GatewayStack(app, "AgentOsGateway", {
+  env,
+  cognito: { issuer: auth.issuer, clientId: auth.clientId },
+});
+
 // IMPLEMENTED — the cheap-profile serverless compute substrate (ADR-0031): the
 // agent loop as a Fargate task-per-run + a Lambda front door. Reuses AgentOsState's
 // tables + AgentOsBedrock's invoke policy. ~$0 idle (no NAT, no ALB, zero tasks at rest).
@@ -47,6 +56,7 @@ const auth = new AuthStack(app, "AgentOsAuth", { env });
 const serverless = new ServerlessStack(app, "AgentOsServerless", {
   env,
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
+  agentGatewayUrl: gateway.gatewayUrl, // delegated agents' think-path (ADR-0039)
 });
 
 // IMPLEMENTED — the web console (ADR-0032): the built SPA on S3+CloudFront, with
