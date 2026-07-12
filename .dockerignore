@@ -14,3 +14,5 @@ node_modules
 **/*.pyc
 # Claude Code session state (worktrees hold a full stale repo copy) — never ship it
 .claude
+# runtime images need no app (console ships via BucketDeployment; doc-gardener is not an image)
+apps/

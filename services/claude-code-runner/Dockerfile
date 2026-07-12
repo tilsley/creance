@@ -26,7 +26,9 @@ WORKDIR /app
 COPY . .
 # Install as root (bun's cache hardlinking breaks as a non-root user in Docker);
 # node_modules stays root-owned + world-readable — the runtime only reads it.
-RUN bun install --frozen-lockfile
+# NOT frozen: the shared .dockerignore excludes apps/ (runtime images need no app), so
+# workspace membership differs from the committed lock; pinned bun + bun.lock keep versions stable.
+RUN bun install
 
 # NON-ROOT at runtime is load-bearing, not hygiene: `--permission-mode
 # bypassPermissions` refuses to run as root, and the whole runner depends on it

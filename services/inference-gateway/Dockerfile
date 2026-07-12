@@ -10,7 +10,9 @@ WORKDIR /app
 
 # .dockerignore strips node_modules/.git, so this is source + manifests only.
 COPY . .
-RUN bun install --frozen-lockfile
+# NOT frozen: the shared .dockerignore excludes apps/ (runtime images need no app), so
+# workspace membership differs from the committed lock; pinned bun + bun.lock keep versions stable.
+RUN bun install
 
 ENV PORT=3100
 EXPOSE 3100
