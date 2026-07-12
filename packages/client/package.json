@@ -1,0 +1,11 @@
+{
+  "name": "@agent-os/client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "agent-os client SDK — the convenience side of the trust line (ADR-0040): login (human PKCE + machine client_credentials) and the gateway wire. Carries no authority; enforcement stays in the hosted services.",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

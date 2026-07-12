@@ -74,6 +74,28 @@ export class AuthStack extends cdk.Stack {
       preventUserExistenceErrors: true,
     });
 
+    // Machine identity (ADR-0041): external agents authenticate via the OAuth2
+    // client_credentials grant — one confidential app client per service, whose
+    // tenant is a resource-server scope grant (`agent-os/tenant.<t>`). Granting
+    // the scope IS the tenant onboarding act, the machine analog of custom:tenant.
+    // The client secret is the scoped, revocable, per-service credential; retrieve
+    // it out-of-band (`aws cognito-idp describe-user-pool-client`), never store it
+    // platform-side.
+    const resourceServer = pool.addResourceServer("AgentOs", {
+      identifier: "agent-os",
+      scopes: [new cognito.ResourceServerScope({ scopeName: "tenant.teama", scopeDescription: "acts as tenant teama" })],
+    });
+    const failureAnalyst = pool.addClient("FailureAnalyst", {
+      userPoolClientName: "svc-failure-analyst",
+      generateSecret: true, // confidential client — the service's credential
+      oAuth: {
+        flows: { clientCredentials: true },
+        scopes: [cognito.OAuthScope.custom("agent-os/tenant.teama")],
+      },
+      accessTokenValidity: cdk.Duration.hours(1),
+    });
+    failureAnalyst.node.addDependency(resourceServer); // scope must exist before the grant
+
     this.issuer = `https://cognito-idp.${this.region}.amazonaws.com/${pool.userPoolId}`;
     this.clientId = client.userPoolClientId;
     this.hostedUiBaseUrl = domain.baseUrl();
@@ -82,5 +104,7 @@ export class AuthStack extends cdk.Stack {
     new cdk.CfnOutput(this, "Issuer", { value: this.issuer }); // → COGNITO_ISSUER
     new cdk.CfnOutput(this, "ClientId", { value: this.clientId }); // → COGNITO_CLIENT_ID
     new cdk.CfnOutput(this, "HostedUiBaseUrl", { value: domain.baseUrl() });
+    // → the SDK's machineLogin clientId; secret via describe-user-pool-client (ADR-0041)
+    new cdk.CfnOutput(this, "FailureAnalystClientId", { value: failureAnalyst.userPoolClientId });
   }
 }

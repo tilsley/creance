@@ -134,6 +134,10 @@
         "typescript": "^5.4.0",
       },
     },
+    "packages/client": {
+      "name": "@agent-os/client",
+      "version": "0.0.0",
+    },
     "packages/core": {
       "name": "@agent-os/core",
       "version": "0.0.0",
@@ -204,6 +208,8 @@
     "@agent-os/claims-controller": ["@agent-os/claims-controller@workspace:services/claims-controller"],
 
     "@agent-os/claude-code-runner": ["@agent-os/claude-code-runner@workspace:services/claude-code-runner"],
+
+    "@agent-os/client": ["@agent-os/client@workspace:packages/client"],
 
     "@agent-os/coding-agent-demo": ["@agent-os/coding-agent-demo@workspace:examples/coding-agent"],
 
