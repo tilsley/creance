@@ -1,6 +1,9 @@
 # ADR-0041: Machine identity — client_credentials on the same pool, tenant as a scope grant
 
-- **Status:** Proposed
+- **Status:** Accepted — deployed and verified 2026-07-12: `svc-failure-analyst`
+  authenticated via client_credentials (no browser, no human, no AWS creds on the
+  caller), generated through the gateway, and the spend settled on `agent-os-budgets`
+  under `tenant=teama` / `period=2026-07` — the scope grant became the attribution.
 - **Date:** 2026-07-12
 
 ## Context
