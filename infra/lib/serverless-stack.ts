@@ -56,6 +56,11 @@ export interface ServerlessStackProps extends cdk.StackProps {
    *  sanctioned think-path (AGENT_GATEWAY_URL on the executor). Deliberately NOT
    *  INFERENCE_GATEWAY_URL: that would flip the loop's own think into gateway mode. */
   agentGatewayUrl?: string;
+  /** The managed profile (ADR-0042): dispatch loop runs to this AgentCore Runtime
+   *  (DISPATCH=agentcore) instead of Fargate. The Fargate executor + claude-code lane
+   *  stay provisioned — cc runs ALWAYS ride Fargate, and the loop task def remains
+   *  the one-env-var rollback. Unset ⇒ the plain serverless profile (DISPATCH=runtask). */
+  agentcore?: { runtimeArn: string };
 }
 
 export class ServerlessStack extends cdk.Stack {
@@ -341,6 +346,18 @@ export class ServerlessStack extends cdk.Stack {
     routerRole.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"),
     );
+    // Managed profile (ADR-0042): the router dispatches loop runs via
+    // InvokeAgentRuntime. Session-scoped resource: Runtime authorizes the invoke
+    // against the runtime ARN and its session subresources.
+    if (props?.agentcore) {
+      routerRole.addToPolicy(
+        new iam.PolicyStatement({
+          sid: "DispatchAgentCoreRuntime",
+          actions: ["bedrock-agentcore:InvokeAgentRuntime"],
+          resources: [props.agentcore.runtimeArn, `${props.agentcore.runtimeArn}/*`],
+        }),
+      );
+    }
 
     // The front door — the SAME image asset, the lambda.ts entrypoint (a native Lambda
     // Runtime API loop; no HTTP server, no Web Adapter — ADR-0031). It runs the router:
@@ -362,7 +379,11 @@ export class ServerlessStack extends cdk.Stack {
       logGroup,
       environment: {
         REGION: this.region,
-        DISPATCH: "runtask", // the serverless seam: dispatch a task-per-run (dispatch.ts)
+        // the substrate seam (dispatch.ts): Fargate task-per-run, or — managed
+        // profile, ADR-0042 — an AgentCore Runtime session-per-run for loop runs
+        // (claude-code still rides the ECS_CC_* wiring below in BOTH modes).
+        DISPATCH: props?.agentcore ? "agentcore" : "runtask",
+        ...(props?.agentcore ? { AGENTCORE_RUNTIME_ARN: props.agentcore.runtimeArn } : {}),
         // the RunTask wiring dispatch.ts reads (runTaskConfigFromEnv):
         ECS_CLUSTER: cluster.clusterName,
         ECS_TASK_DEFINITION: taskDef.family,

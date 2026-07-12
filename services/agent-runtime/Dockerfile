@@ -18,13 +18,19 @@ RUN bun install
 ENV PORT=3000
 EXPOSE 3000
 
-# One image, THREE entrypoints (ADR-0031) — the substrate picks which by overriding
-# the command; no second build, all three share deps + adapter wiring.
-#   server.ts  (default CMD) the always-on HTTP front door         — full-k8s
-#   task.ts    the Fargate task-per-run executor (RUN_ID via env)  — serverless executor
+# One image, FOUR entrypoints (ADR-0031/0042) — the substrate picks which by overriding
+# the command OR (where the host can't override commands) the RUNTIME_ENTRYPOINT env;
+# no second build, all four share deps + adapter wiring.
+#   server.ts    (default) the always-on HTTP front door             — full-k8s
+#   task.ts      the Fargate task-per-run executor (RUN_ID via env)  — serverless executor
 #     command: ["bun", "run", "services/agent-runtime/task.ts"]
-#   lambda.ts  the front door on Lambda (Runtime API loop, no HTTP server)
-#     command: ["bun", "run", "services/agent-runtime/lambda.ts"]  — serverless front door
+#   lambda.ts    the front door on Lambda (Runtime API loop, no HTTP server)
+#     command: ["bun", "run", "services/agent-runtime/lambda.ts"]    — serverless front door
+#   agentcore.ts the executor on AgentCore Runtime (/invocations + /ping contract)
+#     env: RUNTIME_ENTRYPOINT=services/agent-runtime/agentcore.ts    — managed profile
+#     (AgentCore Runtime has no command override, so the CMD is shell-form and reads
+#      the env the CfnRuntime sets; every other consumer overrides the command as before.)
 # server.ts and lambda.ts serve the SAME handler (app.ts); only the server differs.
 # Defaults to INFERENCE_PROVIDER=bedrock / SANDBOX_PROVIDER=agentcore (override via env).
-CMD ["bun", "run", "services/agent-runtime/server.ts"]
+ENV RUNTIME_ENTRYPOINT=services/agent-runtime/server.ts
+CMD bun run ${RUNTIME_ENTRYPOINT}

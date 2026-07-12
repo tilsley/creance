@@ -9,6 +9,7 @@
  * in AWS Bedrock AgentCore (ADR-0006). Run with `bunx cdk synth`.
  */
 import * as cdk from "aws-cdk-lib";
+import { AgentCoreStack } from "../lib/agentcore-stack";
 import { AuthStack } from "../lib/auth-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { ConsoleStack } from "../lib/console-stack";
@@ -47,6 +48,16 @@ const gateway = new GatewayStack(app, "AgentOsGateway", {
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
 });
 
+// IMPLEMENTED, OPT-IN — the managed profile's loop hosting (ADR-0042 phase 1):
+// the SAME agent-runtime image as an AgentCore Runtime, session-per-run microVM,
+// active-CPU billing. Opt in via persisted context (cdk.json — never CLI -c flags):
+//   "agentcoreProfile": true
+// which also flips the front door below to DISPATCH=agentcore. The Fargate
+// executor stays provisioned in that mode: claude-code always rides it, and
+// reverting the profile is a redeploy, not a rebuild.
+const agentcoreProfile = !!app.node.tryGetContext("agentcoreProfile");
+const agentcore = agentcoreProfile ? new AgentCoreStack(app, "AgentOsAgentCore", { env }) : undefined;
+
 // IMPLEMENTED — the cheap-profile serverless compute substrate (ADR-0031): the
 // agent loop as a Fargate task-per-run + a Lambda front door. Reuses AgentOsState's
 // tables + AgentOsBedrock's invoke policy. ~$0 idle (no NAT, no ALB, zero tasks at rest).
@@ -57,6 +68,7 @@ const serverless = new ServerlessStack(app, "AgentOsServerless", {
   env,
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
   agentGatewayUrl: gateway.gatewayUrl, // delegated agents' think-path (ADR-0039)
+  ...(agentcore ? { agentcore: { runtimeArn: agentcore.runtimeArn } } : {}),
 });
 
 // IMPLEMENTED — the web console (ADR-0032): the built SPA on S3+CloudFront, with
