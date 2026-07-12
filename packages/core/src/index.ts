@@ -10,6 +10,7 @@ export * from "./sandboxed-agent"; // sandboxed-agent kind (ADR-0019, Model B)
 export * from "./config";
 export * from "./tools";
 export * from "./tool-gateway"; // #4: assemble per-run toolset from sources
+export * from "./http"; // withCors — app-owned CORS across all substrates (ADR-0043)
 export * from "./runs"; // State primitive (remember): persisted runs
 export * from "./agents"; // #5: agent control plane — the registry data model
 export * from "./gate"; // gate control: identity + budget

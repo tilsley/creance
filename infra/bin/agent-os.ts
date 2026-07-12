@@ -39,12 +39,25 @@ new PostgresStack(app, "AgentOsPostgres", { env });
 // token is the Bearer credential the front door verifies (AUTHN=cognito). ~$0 idle.
 const auth = new AuthStack(app, "AgentOsAuth", { env });
 
+// The spec-driven custom-domain edge (ADR-0043): both public APIs sit behind
+// API Gateway REST APIs generated from their PURE OpenAPI contracts, on
+// subdomains of the operator's zone. Context lives in cdk.json (never -c flags).
+const hostedZoneId = app.node.tryGetContext("hostedZoneId");
+const hostedZoneName = app.node.tryGetContext("hostedZoneName");
+const hostedZone = hostedZoneId && hostedZoneName ? { id: String(hostedZoneId), name: String(hostedZoneName) } : undefined;
+const edgeFor = (ctxKey: string) => {
+  const domainName = app.node.tryGetContext(ctxKey);
+  return hostedZone && domainName ? { domainName: String(domainName), hostedZone } : undefined;
+};
+
 // IMPLEMENTED — the inference gateway on the serverless substrate (ADR-0039):
-// ADR-0019's choke point as a scale-to-zero Lambda + Function URL. Delegated
-// agents (kind=sandboxed/custom) think ONLY through this; the loop stays direct.
+// ADR-0019's choke point as a scale-to-zero Lambda behind the spec edge
+// (ADR-0043). Delegated agents (kind=sandboxed/custom) think ONLY through
+// this; the loop stays direct.
 const gateway = new GatewayStack(app, "AgentOsGateway", {
   env,
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
+  edge: edgeFor("inferenceDomain"),
 });
 
 // IMPLEMENTED — the cheap-profile serverless compute substrate (ADR-0031): the
@@ -57,6 +70,7 @@ const serverless = new ServerlessStack(app, "AgentOsServerless", {
   env,
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
   agentGatewayUrl: gateway.gatewayUrl, // delegated agents' think-path (ADR-0039)
+  edge: edgeFor("apiDomain"), // the platform API's custom domain (ADR-0043)
 });
 
 // IMPLEMENTED — the web console (ADR-0032): the built SPA on S3+CloudFront, with

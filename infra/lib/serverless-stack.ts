@@ -9,6 +9,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as ssm from "aws-cdk-lib/aws-ssm";
+import { SpecRestApiEdge } from "./spec-rest-api";
 
 /**
  * ServerlessStack — the cheap-profile compute substrate for the agent run loop
@@ -56,6 +57,9 @@ export interface ServerlessStackProps extends cdk.StackProps {
    *  sanctioned think-path (AGENT_GATEWAY_URL on the executor). Deliberately NOT
    *  INFERENCE_GATEWAY_URL: that would flip the loop's own think into gateway mode. */
   agentGatewayUrl?: string;
+  /** The spec-driven custom-domain edge (ADR-0043). Unset ⇒ fall back to the
+   *  bare Function URL (the pre-0043 posture, kept for context-less synth). */
+  edge?: { domainName: string; hostedZone: { id: string; name: string } };
 }
 
 export class ServerlessStack extends cdk.Stack {
@@ -400,25 +404,29 @@ export class ServerlessStack extends cdk.Stack {
       },
     });
 
-    // Public Function URL — auth is enforced at the APP layer by the gate (GATE=local
-    // bearer + budget), so the URL itself is open (POC). Swap to AWS_IAM to require
-    // SigV4 in front of the app gate. CORS is answered at the URL layer so the
-    // console (a browser on a CloudFront origin) can preflight; '*' is acceptable
-    // because auth is a Bearer header, never a cookie — there's no ambient
-    // credential for a foreign origin to ride (ADR-0032).
-    const fnUrl = frontDoor.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-      cors: {
-        allowedOrigins: ["*"],
-        allowedMethods: [lambda.HttpMethod.ALL],
-        allowedHeaders: ["authorization", "content-type"],
-      },
-    });
-    this.frontDoorUrl = fnUrl.url;
+    // The edge (ADR-0043): the pure OpenAPI contract + custom domain; the raw
+    // Function URL is retired (API Gateway invokes the Lambda directly). Auth
+    // stays app-layer (ADR-0026); CORS moved into the app (withCors) so the
+    // console preflights identically on every substrate.
+    if (props?.edge) {
+      const edge = new SpecRestApiEdge(this, "Edge", {
+        specPath: path.join(__dirname, "..", "..", "services", "agent-runtime", "openapi.yaml"),
+        handler: frontDoor,
+        domainName: props.edge.domainName,
+        hostedZone: props.edge.hostedZone,
+        apiName: "agent-os-platform",
+      });
+      this.frontDoorUrl = edge.url;
+    } else {
+      // pre-0043 fallback: public Function URL, open at transport, gated at the
+      // app layer; CORS now answered by the app itself.
+      const fnUrl = frontDoor.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
+      this.frontDoorUrl = fnUrl.url;
+    }
 
     // The front door's env contract — wire these into the router (DISPATCH=runtask).
     new cdk.CfnOutput(this, "FrontDoorFunctionName", { value: frontDoor.functionName });
-    new cdk.CfnOutput(this, "FrontDoorUrl", { value: fnUrl.url });
+    new cdk.CfnOutput(this, "FrontDoorUrl", { value: this.frontDoorUrl });
     new cdk.CfnOutput(this, "EcsCluster", { value: cluster.clusterName });
     new cdk.CfnOutput(this, "EcsTaskDefinition", { value: taskDef.family });
     new cdk.CfnOutput(this, "EcsContainerName", { value: "agent-runtime-task" });

@@ -1,0 +1,263 @@
+# The inference gateway's contract (ADR-0043) — a PURE OpenAPI document, no
+# x-amazon-apigateway-* extensions: the AWS integration overlay is injected at
+# CDK synth (infra/lib/spec-rest-api.ts), so this same file describes the pod
+# (full profile) and the API Gateway deployment (cheap profile), generates the
+# SDK's types (packages/client), and drives the contract test.
+#
+# Auth is app-layer by design (ADR-0026/0039): every operation verifies the
+# Bearer itself (Cognito id token for humans, client_credentials access token
+# for machines — ADR-0041). The edge validates SHAPE, never identity.
+openapi: 3.0.1
+info:
+  title: agent-os inference gateway
+  description: >-
+    Governed think for delegated and external agents (ADR-0019/0039/0040):
+    verified identity in, metered tokens out — model credentials never leave
+    the gateway. Budget is reserved against maxTokens BEFORE invoking the
+    model and settled after (ADR-0013).
+  version: "1.0"
+paths:
+  /healthz:
+    get:
+      operationId: health
+      summary: Liveness probe (unauthenticated)
+      responses:
+        "200":
+          description: The gateway is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+  /v1/generate:
+    post:
+      operationId: generate
+      summary: One governed generate turn (the platform wire)
+      description: >-
+        The exact call a delegated agent makes from inside its box. maxTokens
+        is REQUIRED — the gateway reserves worst-case budget against it, so an
+        uncapped turn is unrepresentable on the wire.
+      security:
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+      responses:
+        "200":
+          description: The assistant's turn, with metered usage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantTurn"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Budget exceeded — the reserve step refused admission.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500": { $ref: "#/components/responses/InferenceFailed" }
+  /v1/messages:
+    post:
+      operationId: anthropicMessages
+      summary: Anthropic Messages passthrough (the compatibility wire)
+      description: >-
+        ADR-0028's second wire: unmodified Anthropic clients (Claude Code,
+        @ai-sdk) point their base URL here and get governed inference —
+        verified identity → claim → reserve → Bedrock passthrough → settle.
+        The body is the Anthropic Messages API shape; only the fields the
+        gate needs are constrained here.
+      security:
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnthropicMessagesRequest"
+      responses:
+        "200":
+          description: The Anthropic-shaped response, passed through.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Budget exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500": { $ref: "#/components/responses/InferenceFailed" }
+  /claims:
+    post:
+      operationId: createClaim
+      summary: Self-service inference-grant registration (ADR-0021)
+      description: >-
+        A service registers its own grant; tenant comes from the verified
+        identity, never the body. 404 when self-service claims are not
+        enabled on this deployment.
+      security:
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: The claim as stored.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Self-service claims not enabled here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Verified at the app layer (composite — ADR-0041): a Cognito id token
+        (human) or client_credentials access token (machine).
+  responses:
+    BadRequest:
+      description: The request shape failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or unverifiable credential (fail closed).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InferenceFailed:
+      description: The upstream model call failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        detail: { type: string }
+        reason: { type: string }
+        budget: { type: object, additionalProperties: true }
+    GenerateRequest:
+      type: object
+      required: [messages, maxTokens]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/Message" }
+        maxTokens:
+          type: integer
+          minimum: 1
+          description: Output cap — worst-case budget is reserved against this.
+        tools:
+          type: array
+          items: { $ref: "#/components/schemas/ToolDef" }
+        sessionId:
+          type: string
+          description: Groups turns under one per-session budget cap (ADR-0026).
+    Message:
+      description: One conversation turn on the platform wire.
+      oneOf:
+        - $ref: "#/components/schemas/UserMessage"
+        - $ref: "#/components/schemas/AssistantMessage"
+        - $ref: "#/components/schemas/ToolMessage"
+    UserMessage:
+      type: object
+      required: [role, text]
+      properties:
+        role: { type: string, enum: [user] }
+        text: { type: string }
+    AssistantMessage:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [assistant] }
+        text: { type: string }
+        toolCalls:
+          type: array
+          items: { $ref: "#/components/schemas/ToolCall" }
+    ToolMessage:
+      type: object
+      required: [role, results]
+      properties:
+        role: { type: string, enum: [tool] }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/ToolResult" }
+    ToolCall:
+      type: object
+      required: [id, name, input]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        input: { type: object, additionalProperties: true }
+    ToolResult:
+      type: object
+      required: [toolCallId, content]
+      properties:
+        toolCallId: { type: string }
+        content: { type: string }
+        isError: { type: boolean }
+    ToolDef:
+      type: object
+      required: [name, description, inputSchema]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        inputSchema:
+          type: object
+          additionalProperties: true
+          description: JSON Schema for the tool input.
+    TokenUsage:
+      type: object
+      required: [inputTokens, outputTokens]
+      properties:
+        inputTokens: { type: integer }
+        outputTokens: { type: integer }
+    AssistantTurn:
+      type: object
+      properties:
+        text: { type: string }
+        toolCalls:
+          type: array
+          items: { $ref: "#/components/schemas/ToolCall" }
+        usage: { $ref: "#/components/schemas/TokenUsage" }
+    AnthropicMessagesRequest:
+      type: object
+      required: [model, max_tokens, messages]
+      description: >-
+        The Anthropic Messages API request. Permissive by design — the gateway
+        passes it through; only the budget-relevant fields are required.
+      properties:
+        model: { type: string }
+        max_tokens: { type: integer, minimum: 1 }
+        messages:
+          type: array
+          items: { type: object }
+      additionalProperties: true

@@ -36,11 +36,20 @@ const app = await (async () => {
   return createGatewayApp(providers);
 })().catch(initError);
 
-/** Function URL / API Gateway HTTP API (payload format 2.0) event → Web Request. */
+/** Function URL / HTTP API (payload 2.0) OR REST API (payload 1.0, ADR-0043's
+ *  spec-driven edge) event → Web Request. Mirrors services/agent-runtime/lambda.ts. */
 function eventToRequest(event: any): Request {
   const method: string = event.requestContext?.http?.method ?? event.httpMethod ?? "GET";
-  const rawPath: string = event.rawPath ?? event.requestContext?.http?.path ?? "/";
-  const qs: string = event.rawQueryString ? `?${event.rawQueryString}` : "";
+  const rawPath: string = event.rawPath ?? event.path ?? event.requestContext?.http?.path ?? "/";
+  const qs: string = event.rawQueryString
+    ? `?${event.rawQueryString}`
+    : event.multiValueQueryStringParameters
+      ? `?${new URLSearchParams(
+          Object.entries(event.multiValueQueryStringParameters as Record<string, string[]>).flatMap(([k, vs]) =>
+            (vs ?? []).map((v) => [k, v] as [string, string]),
+          ),
+        )}`
+      : "";
   const headers = new Headers();
   for (const [k, v] of Object.entries(event.headers ?? {})) if (v != null) headers.set(k, String(v));
   let body: string | undefined = event.body ?? undefined;

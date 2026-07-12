@@ -4,43 +4,19 @@
  * the exact call a delegated agent makes from inside its box, and what an
  * external agent (ADR-0040) uses from its own infra.
  *
- * Types mirror @agent-os/core's wire (Message/ToolDef/AssistantTurn) but are
- * declared here so consumers don't inherit core's adapter dependency tree —
- * the SDK is deliberately dependency-free.
+ * Wire types come from the gateway's OpenAPI contract (ADR-0043): generated
+ * into ./generated.ts by `bun run generate` (openapi-typescript) and aliased
+ * here, so the SDK cannot drift from the spec — the spec IS the source of
+ * truth, and it's committed, so consumers never run the generator.
  */
-export type Message =
-  | { role: "user"; text: string }
-  | { role: "assistant"; text?: string; toolCalls?: ToolCall[] }
-  | { role: "tool"; results: ToolResult[] };
+import type { components } from "./generated";
 
-export interface ToolCall {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
-
-export interface ToolResult {
-  toolCallId: string;
-  content: string;
-  isError?: boolean;
-}
-
-export interface ToolDef {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
-
-export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
-
-export interface AssistantTurn {
-  text?: string;
-  toolCalls?: ToolCall[];
-  usage?: TokenUsage;
-}
+export type Message = components["schemas"]["Message"];
+export type ToolCall = components["schemas"]["ToolCall"];
+export type ToolResult = components["schemas"]["ToolResult"];
+export type ToolDef = components["schemas"]["ToolDef"];
+export type TokenUsage = components["schemas"]["TokenUsage"];
+export type AssistantTurn = components["schemas"]["AssistantTurn"];
 
 export interface GenerateOptions {
   /** Required by the wire: the gateway reserves worst-case budget against it

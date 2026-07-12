@@ -6,11 +6,15 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import { SpecRestApiEdge } from "./spec-rest-api";
 
 export interface GatewayStackProps extends cdk.StackProps {
   /** Caller authn (ADR-0032/0039): delegated agents present the run's forwarded
    *  Cognito id token; the gateway verifies it against the pool. */
   cognito: { issuer: string; clientId: string };
+  /** The spec-driven custom-domain edge (ADR-0043). Unset ⇒ fall back to the
+   *  bare Function URL (the pre-0043 posture, kept for context-less synth). */
+  edge?: { domainName: string; hostedZone: { id: string; name: string } };
 }
 
 /**
@@ -90,11 +94,25 @@ export class GatewayStack extends cdk.Stack {
       },
     });
 
-    // Open at the transport layer, gated at the app layer (same posture as the
-    // front door, ADR-0031): every route authenticates the bearer itself.
-    const fnUrl = fn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
-    this.gatewayUrl = fnUrl.url;
+    // The edge (ADR-0043): the pure OpenAPI contract + custom domain, with the
+    // raw Function URL retired — API Gateway invokes the Lambda directly, so no
+    // public URL exists besides the domain. Auth stays app-layer (ADR-0026);
+    // the edge validates shape and owns TLS/DNS.
+    if (props.edge) {
+      const edge = new SpecRestApiEdge(this, "Edge", {
+        specPath: path.join(__dirname, "..", "..", "services", "inference-gateway", "openapi.yaml"),
+        handler: fn,
+        domainName: props.edge.domainName,
+        hostedZone: props.edge.hostedZone,
+        apiName: "agent-os-inference",
+      });
+      this.gatewayUrl = edge.url;
+    } else {
+      // pre-0043 fallback: open at transport, gated at the app layer (ADR-0031)
+      const fnUrl = fn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
+      this.gatewayUrl = fnUrl.url;
+    }
 
-    new cdk.CfnOutput(this, "GatewayUrl", { value: fnUrl.url });
+    new cdk.CfnOutput(this, "GatewayUrl", { value: this.gatewayUrl });
   }
 }
