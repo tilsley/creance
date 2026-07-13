@@ -37,11 +37,16 @@ export class AgentCoreStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Same asset parameters as ServerlessStack's image ⇒ same hash ⇒ no second build.
-    const image = new ecrAssets.DockerImageAsset(this, "Image", {
+    // Field-trip finding #6: AgentCore Runtime is Graviton-only — CreateRuntime
+    // rejects amd64 images ("Supported platforms: [arm64]"). So the Runtime gets
+    // its OWN arm64 build of the same Dockerfile (QEMU cross-build on an Intel
+    // host — slow but one-time per change); Fargate + Lambda keep the amd64
+    // asset in ServerlessStack. The "one image" story survives as "one
+    // Dockerfile"; the single-build story does not.
+    const image = new ecrAssets.DockerImageAsset(this, "RuntimeImageArm64", {
       directory: path.join(__dirname, "..", ".."),
       file: "services/agent-runtime/Dockerfile",
-      platform: ecrAssets.Platform.LINUX_AMD64,
+      platform: ecrAssets.Platform.LINUX_ARM64,
     });
 
     // Reuse the durable stores from StateStack (imported by name — no new tables).
