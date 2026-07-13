@@ -15,6 +15,7 @@
     "@aws-cdk/core:newStyleStackSynthesis": true,
     "consoleCallbackUrls": "https://d1x3uwxrkjekua.cloudfront.net/,http://localhost:5173/",
     "otelEndpoint": "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp",
-    "grafanaUrl": "https://mellowhovercraft3539.grafana.net"
+    "grafanaUrl": "https://mellowhovercraft3539.grafana.net",
+    "agentcoreProfile": true
   }
 }

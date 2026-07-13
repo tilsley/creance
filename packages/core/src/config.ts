@@ -51,6 +51,7 @@ import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
 import { DynamoAgentRegistry } from "./adapters/dynamo-agent-registry";
 import { FilesMemory } from "./adapters/files-memory";
 import { VectorMemory } from "./adapters/vector-memory";
+import { AgentCoreMemory } from "./adapters/agentcore-memory";
 import { BedrockEmbeddings } from "./adapters/bedrock-embeddings";
 import type { MemoryAdapter } from "./memory";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
@@ -131,11 +132,15 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // (a durable mount in-cluster; a host dir locally) — unset disables it. MEMORY_RETRIEVAL=keyword
   // (cheap default) or =vector (Bedrock Titan embeddings, semantic recall). Writes are screened by the
   // SAME guard as the loop (ADR-0008), since a remembered note re-enters future sessions.
-  const memory: MemoryAdapter | undefined = !env.AGENT_MEMORY_DIR
-    ? undefined
-    : (env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
-      ? new VectorMemory(env.AGENT_MEMORY_DIR, new BedrockEmbeddings(undefined, region), guard)
-      : new FilesMemory(env.AGENT_MEMORY_DIR, guard);
+  // AGENTCORE_MEMORY_ID selects the managed backend instead (ADR-0042 phase 2): AgentCore Memory
+  // with per-tenant namespaces enforceable by IAM — one more adapter behind the same port.
+  const memory: MemoryAdapter | undefined = env.AGENTCORE_MEMORY_ID
+    ? new AgentCoreMemory(env.AGENTCORE_MEMORY_ID, guard, region)
+    : !env.AGENT_MEMORY_DIR
+      ? undefined
+      : (env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
+        ? new VectorMemory(env.AGENT_MEMORY_DIR, new BedrockEmbeddings(undefined, region), guard)
+        : new FilesMemory(env.AGENT_MEMORY_DIR, guard);
 
   const telemetry: TelemetrySink = (() => {
     switch (env.TELEMETRY ?? "console") {

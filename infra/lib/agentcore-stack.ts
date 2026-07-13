@@ -5,6 +5,7 @@ import * as agentcore from "aws-cdk-lib/aws-bedrockagentcore";
 import * as ecrAssets from "aws-cdk-lib/aws-ecr-assets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 
 /**
  * AgentCoreStack — the managed profile's loop hosting (ADR-0042, phase 1): the
@@ -72,6 +73,11 @@ export class AgentCoreStack extends cdk.Stack {
         resources: ["*"],
       }),
     );
+    // Runtime pulls the image with THIS role — unlike ECS there is no separate
+    // execution role, so the runtime role needs ECR pull (field-trip finding:
+    // CreateRuntime 400s naming ecr:GetAuthorizationToken/BatchGetImage/
+    // GetDownloadUrlForLayer without it).
+    image.repository.grantPull(runtimeRole);
     // Runtime writes its own service logs/telemetry to CloudWatch on our behalf.
     runtimeRole.addToPolicy(
       new iam.PolicyStatement({
@@ -80,6 +86,117 @@ export class AgentCoreStack extends cdk.Stack {
         resources: ["*"],
       }),
     );
+
+    // ---- Gateway (ADR-0042 phase 3): tools via AgentCore Gateway -----------
+    // One MORE ToolProvider adapter behind the same port — the hand-rolled
+    // tool-gateway (ADR-0011/0029) remains the preferred self-hosted answer;
+    // this exists to feel out the managed one. Inbound authorizer = AWS_IAM
+    // (keyless: the loop signs with its runtime role via sigv4Fetch). First
+    // target: a tiny utility Lambda (utc_time/echo) — credential-free, so the
+    // wire is proven before any Identity-vault credential enters the picture.
+    const toolFn = new lambda.Function(this, "GatewayToolFn", {
+      functionName: "agent-os-agentcore-gateway-tools",
+      description: "agent-os AgentCore Gateway demo target - utc_time + echo",
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: "index.handler",
+      code: lambda.Code.fromInline(
+        // Gateway lambda-target contract: tool args arrive as the event; the
+        // invoked tool's name rides in context.clientContext.custom.
+        `exports.handler = async (event, context) => {
+          const raw = context.clientContext?.custom?.bedrockAgentCoreToolName ?? "";
+          const tool = raw.split("___").pop();
+          if (tool === "utc_time") return { time: new Date().toISOString() };
+          if (tool === "echo") return { echo: event?.text ?? "" };
+          return { error: "unknown tool: " + raw };
+        };`,
+      ),
+    });
+
+    const gatewayRole = new iam.Role(this, "GatewayRole", {
+      roleName: "agent-os-agentcore-gateway",
+      description: "agent-os AgentCore Gateway - invokes its Lambda targets",
+      assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
+    });
+    toolFn.grantInvoke(gatewayRole);
+
+    // ---- Policy (ADR-0042 phase 4): Cedar at the tool boundary --------------
+    // A policy engine attached to the Gateway intercepts EVERY tool call before
+    // execution — more tool-boundary authz than the cheap profile has ever run
+    // (AllowAll). Cedar is default-deny, so the permit-all statement is what
+    // makes the demo tools callable; real per-tenant/per-tool rules replace it.
+    // Scope honesty (comparison §8): this governs the Gateway's tools only —
+    // front-door authz (run:create, agent:register) stays on OUR Authorizer port.
+    const policyEngine = new agentcore.CfnPolicyEngine(this, "PolicyEngine", {
+      name: "agent_os_policy",
+      description: "agent-os Cedar policy engine on the AgentCore Gateway (ADR-0042 phase 4)",
+    });
+    new agentcore.CfnPolicy(this, "PermitAllToolsPolicy", {
+      name: "permit_all_tools",
+      description: "POC baseline: permit every tool call (Cedar is default-deny); decisions are logged",
+      policyEngineId: policyEngine.attrPolicyEngineId,
+      definition: { cedar: { statement: "permit(principal, action, resource);" } },
+    });
+
+    const gateway = new agentcore.CfnGateway(this, "Gateway", {
+      name: "agent-os-tools",
+      description: "agent-os tools via AgentCore Gateway (ADR-0042 phase 3) - MCP, IAM inbound",
+      authorizerType: "AWS_IAM",
+      protocolType: "MCP",
+      roleArn: gatewayRole.roleArn,
+      policyEngineConfiguration: { arn: policyEngine.attrPolicyEngineArn, mode: "ENFORCE" },
+    });
+
+    new agentcore.CfnGatewayTarget(this, "UtilityTarget", {
+      gatewayIdentifier: gateway.attrGatewayIdentifier,
+      name: "utility",
+      description: "credential-free demo tools proving the Gateway wire",
+      targetConfiguration: {
+        mcp: {
+          lambda: {
+            lambdaArn: toolFn.functionArn,
+            toolSchema: {
+              inlinePayload: [
+                {
+                  name: "utc_time",
+                  description: "Current UTC time (ISO 8601).",
+                  inputSchema: { type: "object" },
+                },
+                {
+                  name: "echo",
+                  description: "Echo the given text back.",
+                  inputSchema: {
+                    type: "object",
+                    properties: { text: { type: "string", description: "Text to echo." } },
+                    required: ["text"],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      credentialProviderConfigurations: [{ credentialProviderType: "GATEWAY_IAM_ROLE" }],
+    });
+
+    // ---- Memory (ADR-0042 phase 2): the managed `remember` backend ----------
+    // One memory resource, SEMANTIC built-in strategy extracting long-term
+    // records into per-tenant namespaces (/tenants/{actorId}) — the feature no
+    // other managed memory has: isolation enforceable by IAM condition keys
+    // (bedrock-agentcore:namespace), not adapter code. Extraction is async;
+    // events expire after 30 days, extracted records persist.
+    const memory = new agentcore.CfnMemory(this, "Memory", {
+      name: "agent_os_memory",
+      description: "agent-os managed remember backend (ADR-0042 phase 2) - per-tenant IAM namespaces",
+      eventExpiryDuration: 30,
+      memoryStrategies: [
+        {
+          semanticMemoryStrategy: {
+            name: "semantic",
+            namespaces: ["/tenants/{actorId}"],
+          },
+        },
+      ],
+    });
 
     const runtime = new agentcore.CfnRuntime(this, "Runtime", {
       agentRuntimeName: "agent_os_runtime", // pattern forbids dashes
@@ -118,13 +235,54 @@ export class AgentCoreStack extends cdk.Stack {
         // an SSM SecureString — CfnRuntime env vars are plaintext, so wiring that
         // in is a follow-up (fetch-at-start via SSM read), not a template value.
         TELEMETRY: "otel",
+        // tools via the AgentCore Gateway (phase 3): the loop's McpToolProvider
+        // signs each MCP call with the runtime role (auth=sigv4) — keyless.
+        MCP_SERVERS: JSON.stringify({
+          gw: { transport: "http", url: gateway.attrGatewayUrl, auth: "sigv4", region: this.region },
+        }),
+        // remember via AgentCore Memory (phase 2): selects the managed adapter.
+        AGENTCORE_MEMORY_ID: memory.attrMemoryId,
       },
     });
+    // memory data plane: write events, list + search records — scoped to OUR
+    // memory resource. (The per-tenant namespace condition key is the next
+    // tightening: bedrock-agentcore:namespace StringEquals /tenants/<t> once
+    // per-tenant runtime roles exist; one shared loop role can't vary it.)
+    runtimeRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "AgentCoreMemoryDataPlane",
+        actions: [
+          "bedrock-agentcore:CreateEvent",
+          "bedrock-agentcore:ListMemoryRecords",
+          "bedrock-agentcore:RetrieveMemoryRecords",
+        ],
+        resources: [memory.attrMemoryArn],
+      }),
+    );
+    // the loop calls the Gateway's MCP endpoint as itself (SigV4)
+    runtimeRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "InvokeAgentCoreGateway",
+        actions: ["bedrock-agentcore:InvokeGateway"],
+        resources: [gateway.attrGatewayArn, `${gateway.attrGatewayArn}/*`],
+      }),
+    );
+
+    // CreateRuntime VALIDATES ECR pull access at create time, and referencing
+    // roleArn only orders the Runtime after the Role — not after the Role's
+    // DefaultPolicy (a separate CFN resource carrying the ECR grant). Without
+    // this, creation races the policy and 400s "Access denied while validating
+    // ECR URI" (second field-trip finding).
+    runtime.node.addDependency(runtimeRole);
 
     this.runtimeArn = runtime.attrAgentRuntimeArn;
 
     new cdk.CfnOutput(this, "RuntimeArn", { value: runtime.attrAgentRuntimeArn });
     new cdk.CfnOutput(this, "RuntimeId", { value: runtime.attrAgentRuntimeId });
     new cdk.CfnOutput(this, "RuntimeRoleArn", { value: runtimeRole.roleArn });
+    new cdk.CfnOutput(this, "GatewayUrl", { value: gateway.attrGatewayUrl });
+    new cdk.CfnOutput(this, "GatewayArn", { value: gateway.attrGatewayArn });
+    new cdk.CfnOutput(this, "MemoryId", { value: memory.attrMemoryId });
+    new cdk.CfnOutput(this, "PolicyEngineArn", { value: policyEngine.attrPolicyEngineArn });
   }
 }

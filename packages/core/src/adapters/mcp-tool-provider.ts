@@ -14,6 +14,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { sigv4Fetch } from "./sigv4-fetch";
 import type { ToolProvider, ToolSet, ToolContext } from "../tool-gateway";
 import type { AgentTool } from "../tools";
 import type { CredentialBroker } from "../credentials";
@@ -26,6 +27,11 @@ export interface McpServerConfig {
   cwd?: string;
   /** http */
   url?: string;
+  /** "sigv4" signs every HTTP request with the process's AWS identity (keyless) —
+   *  how an AgentCore Gateway with an AWS_IAM authorizer is called (ADR-0042 §3). */
+  auth?: "sigv4";
+  /** Signing region for auth=sigv4; defaults to REGION / eu-west-2. */
+  region?: string;
   /** Policy: tenants allowed to use this server. Omitted ⇒ open to all. */
   tenants?: string[];
   /** Optional broker target whose credential is injected into the server. */
@@ -81,6 +87,11 @@ export class McpToolProvider implements ToolProvider {
               requestInit: token
                 ? { headers: { [header ?? "authorization"]: scheme === "bearer" ? `Bearer ${token}` : token } }
                 : undefined,
+              // keyless caller identity (ADR-0042): sign each request instead of
+              // carrying a credential — composes with broker headers if both set.
+              ...(cfg.auth === "sigv4"
+                ? { fetch: sigv4Fetch(cfg.region ?? process.env.REGION ?? "eu-west-2") }
+                : {}),
             });
 
       const client = new Client({ name: "agent-os-runtime", version: "0.1.0" }, { capabilities: {} });

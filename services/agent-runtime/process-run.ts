@@ -63,7 +63,7 @@ export async function processRun(
       // tools alongside the resolved toolset, when memory is configured (AGENT_MEMORY_DIR). Per-tenant
       // isolation + guard-screened writes live in the adapter.
       const memoryTools = providers.memory?.tools(tenant) ?? [];
-      const systemPrompt = withMemory(spec?.systemPrompt, providers.memory?.recall(tenant) ?? "", !!providers.memory);
+      const systemPrompt = withMemory(spec?.systemPrompt, (await providers.memory?.recall(tenant)) ?? "", !!providers.memory);
       result = await runOnSession({
         inference,
         guard: providers.guard,
