@@ -130,13 +130,6 @@ export class AgentCoreStack extends cdk.Stack {
       name: "agent_os_policy",
       description: "agent-os Cedar policy engine on the AgentCore Gateway (ADR-0042 phase 4)",
     });
-    new agentcore.CfnPolicy(this, "PermitAllToolsPolicy", {
-      name: "permit_all_tools",
-      description: "POC baseline: permit every tool call (Cedar is default-deny); decisions are logged",
-      policyEngineId: policyEngine.attrPolicyEngineId,
-      definition: { cedar: { statement: "permit(principal, action, resource);" } },
-    });
-
     const gateway = new agentcore.CfnGateway(this, "Gateway", {
       name: "agent-os-tools",
       description: "agent-os tools via AgentCore Gateway (ADR-0042 phase 3) - MCP, IAM inbound",
@@ -274,6 +267,32 @@ export class AgentCoreStack extends cdk.Stack {
     // this, creation races the policy and 400s "Access denied while validating
     // ECR URI" (second field-trip finding).
     runtime.node.addDependency(runtimeRole);
+
+    // The Cedar statement, created LAST. Two field-trip findings baked in:
+    // (1) automated reasoning REJECTS unbounded statements — a bare permit-all
+    //     ("wildcard resource") and even resource-type-scoped-but-any-action
+    //     ("Overly Permissive ... Any Future Tools") both fail CreatePolicy;
+    //     the permit must name its actions (targetName___toolName) and pin the
+    //     gateway ARN. Cedar stays default-deny for anything not listed.
+    // (2) fast-failing resources wedge rollbacks: a CreatePolicy failure while
+    //     Memory/Runtime are still CREATING leaves DeleteMemory "in
+    //     transitional state" → ROLLBACK_FAILED. Depending on both makes the
+    //     flakiest resource the last one standing.
+    const toolsPolicy = new agentcore.CfnPolicy(this, "PermitUtilityToolsPolicy", {
+      name: "permit_utility_tools",
+      description: "permit IAM-authenticated callers the two utility tools; everything else default-deny",
+      policyEngineId: policyEngine.attrPolicyEngineId,
+      definition: {
+        cedar: {
+          statement:
+            `permit(principal is AgentCore::IamEntity, ` +
+            `action in [AgentCore::Action::"utility___utc_time", AgentCore::Action::"utility___echo"], ` +
+            `resource == AgentCore::Gateway::"${gateway.attrGatewayArn}");`,
+        },
+      },
+    });
+    toolsPolicy.node.addDependency(memory);
+    toolsPolicy.node.addDependency(runtime);
 
     this.runtimeArn = runtime.attrAgentRuntimeArn;
 
