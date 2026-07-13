@@ -89,13 +89,16 @@ export class AgentCoreMemory implements MemoryAdapter {
           if (!note) return "error: empty note";
           const v = await this.guard.screen(note, "output");
           if (v.blocked) return "refused: that note was blocked by content safety and was NOT saved";
+          // role USER, deliberately: the semantic strategy mines *user* turns for
+          // facts — an ASSISTANT-only event yielded no extracted records in the
+          // live smoke. A remembered note is knowledge told TO the agent anyway.
           await this.client.send(
             new CreateEventCommand({
               memoryId: this.memoryId,
               actorId: tenant,
               sessionId: this.sessionId,
               eventTimestamp: new Date(),
-              payload: [{ conversational: { role: "ASSISTANT", content: { text: v.text } } }],
+              payload: [{ conversational: { role: "USER", content: { text: v.text } } }],
             }),
           );
           return `remembered: ${v.text}`;
