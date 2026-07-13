@@ -125,7 +125,12 @@ export class AgentCoreMemory implements MemoryAdapter {
             }),
           );
           const hits = (out.memoryRecordSummaries ?? []).map((r) => this.recordText(r)).filter(Boolean);
-          return hits.length ? hits.map((t) => `- ${t}`).join("\n") : "(no matching memory)";
+          // Empty ≠ failed: extraction is async, and a model that searches right
+          // after remembering will see nothing, conclude the save failed, and
+          // retry in a loop (observed live — the run ended `stuck`). Say so.
+          return hits.length
+            ? hits.map((t) => `- ${t}`).join("\n")
+            : "(no matching memory — notes saved in the last few minutes may still be indexing; a successful `remember` does NOT need re-saving or verification)";
         },
       },
     ];
