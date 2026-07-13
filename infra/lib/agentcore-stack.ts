@@ -114,10 +114,28 @@ export class AgentCoreStack extends cdk.Stack {
 
     const gatewayRole = new iam.Role(this, "GatewayRole", {
       roleName: "agent-os-agentcore-gateway",
-      description: "agent-os AgentCore Gateway - invokes its Lambda targets",
+      description: "agent-os AgentCore Gateway - invokes its Lambda targets + evaluates Cedar",
       assumedBy: new iam.ServicePrincipal("bedrock-agentcore.amazonaws.com"),
     });
     toolFn.grantInvoke(gatewayRole);
+    // Policy evaluation (field-trip finding: attaching an engine FAILS CreateGateway
+    // without these on the EXECUTION role — "Access denied while calling
+    // GetPolicyEngine"). gateway/* because the gateway's own id doesn't exist until
+    // create; the docs' example uses the same wildcard. Tighten post-create if wanted.
+    gatewayRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "EvaluateCedarPolicies",
+        actions: [
+          "bedrock-agentcore:GetPolicyEngine",
+          "bedrock-agentcore:AuthorizeAction",
+          "bedrock-agentcore:PartiallyAuthorizeActions",
+        ],
+        resources: [
+          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:policy-engine/*`,
+          `arn:aws:bedrock-agentcore:${this.region}:${this.account}:gateway/*`,
+        ],
+      }),
+    );
 
     // ---- Policy (ADR-0042 phase 4): Cedar at the tool boundary --------------
     // A policy engine attached to the Gateway intercepts EVERY tool call before
@@ -138,6 +156,9 @@ export class AgentCoreStack extends cdk.Stack {
       roleArn: gatewayRole.roleArn,
       policyEngineConfiguration: { arn: policyEngine.attrPolicyEngineArn, mode: "ENFORCE" },
     });
+    // CreateGateway validates GetPolicyEngine with the execution role at create
+    // time — same race as the Runtime/ECR one: depend on the role's DefaultPolicy.
+    gateway.node.addDependency(gatewayRole);
 
     new agentcore.CfnGatewayTarget(this, "UtilityTarget", {
       gatewayIdentifier: gateway.attrGatewayIdentifier,
