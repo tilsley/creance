@@ -92,6 +92,19 @@ export class AgentCoreStack extends cdk.Stack {
       }),
     );
 
+    // ---- Custom Code Interpreter: PUBLIC network mode --------------------
+    // The built-in aws.codeinterpreter.v1 has NO network (field-tested: pip
+    // fails on DNS to pypi.org) — installing tools at runtime needs a custom
+    // interpreter in PUBLIC mode. Deliberately a SECOND interpreter, not the
+    // default: public = full internet (AgentCore has no domain-allowlist mode;
+    // the governed middle ground is VPC + our own egress control). Select per
+    // run/profile via CODE_INTERPRETER_ID.
+    const publicCi = new agentcore.CfnCodeInterpreterCustom(this, "PublicCodeInterpreter", {
+      name: "agent_os_ci_public",
+      description: "agent-os sandbox with internet (pip/npm installs) - PUBLIC egress, use knowingly",
+      networkConfiguration: { networkMode: "PUBLIC" },
+    });
+
     // ---- Gateway (ADR-0042 phase 3): tools via AgentCore Gateway -----------
     // One MORE ToolProvider adapter behind the same port — the hand-rolled
     // tool-gateway (ADR-0011/0029) remains the preferred self-hosted answer;
@@ -329,5 +342,6 @@ export class AgentCoreStack extends cdk.Stack {
     new cdk.CfnOutput(this, "GatewayArn", { value: gateway.attrGatewayArn });
     new cdk.CfnOutput(this, "MemoryId", { value: memory.attrMemoryId });
     new cdk.CfnOutput(this, "PolicyEngineArn", { value: policyEngine.attrPolicyEngineArn });
+    new cdk.CfnOutput(this, "PublicCodeInterpreterId", { value: publicCi.attrCodeInterpreterId });
   }
 }

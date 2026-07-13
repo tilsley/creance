@@ -2,11 +2,15 @@
 
 > **What every component of the platform looks like if we lean *into* Bedrock AgentCore,
 > vs lean *out* to self-hosted k8s.** A theoretical reference — companion to
-> [`costs.md`](costs.md) (the money view) and [`architecture.md`](architecture.md) (the AWS
-> mapping). Decisions live in [ADRs](decisions/README.md) and are cited, not re-litigated;
-> this doc maps the *option space* both ways so a posture can be chosen (and re-chosen)
-> per component. AgentCore facts verified 2026-07-03 against AWS docs — the service is
-> moving fast (three GA launches in H1 2026 alone), so re-verify before acting on a row.
+> [`costs.md`](costs.md) (the money view), [`architecture.md`](architecture.md) (the AWS
+> mapping), [`agentcore-service-comparison.md`](agentcore-service-comparison.md) (the
+> service-first ledger), and [`agentcore-profile-flow.md`](agentcore-profile-flow.md)
+> (the wire view). Decisions live in [ADRs](decisions/README.md) and are cited, not
+> re-litigated; this doc maps the *option space* both ways so a posture can be chosen
+> (and re-chosen) per component. AgentCore facts verified 2026-07-03 against AWS docs —
+> and **no longer purely theoretical: [ADR-0042](decisions/0042-agentcore-managed-profile.md)
+> deployed §4.1's shape (minus Harness, plus our front door) on 2026-07-13 and verified
+> it live**. Rows carry *Field-tested* notes with what the deploy actually taught us.
 
 ---
 
@@ -89,7 +93,7 @@ Runtime/Memory/Gateway). All consumption-priced, no minimums.
 
 | Service | Status | What it is | agent-os counterpart |
 |---|---|---|---|
-| **Runtime** | GA | per-session microVM hosting *your* agent container/code; ≤2 vCPU/8 GB, ≤8 h, scale-to-zero; serves MCP/A2A/AG-UI | `agent-runtime` pod + the loop |
+| **Runtime** | GA | per-session microVM hosting *your* agent container/code; ≤2 vCPU/8 GB, ≤8 h, scale-to-zero; serves MCP/A2A/AG-UI; **arm64-only images** (field-tested — amd64 rejected at create) | `agent-runtime` pod + the loop |
 | **Harness** | **GA Jun 2026** | *managed agent loop* — agent defined as config (model/tools/skills/prompt), AWS runs the loop; Step Functions-invokable | [`loop.ts`](../packages/core/src/loop.ts) itself |
 | **Code Interpreter** | GA | Firecracker-per-session code execution; Public/Sandbox/VPC network modes | `SandboxProvider` (Model A) |
 | **Browser** | GA | managed isolated browser sessions | — (no counterpart; net-new capability) |
@@ -98,8 +102,8 @@ Runtime/Memory/Gateway). All consumption-priced, no minimums.
 | **Memory** | GA | short-term events + long-term extraction strategies (semantic/summary/preference/**episodic**); hierarchical namespaces + IAM condition keys | `MemoryAdapter` (+ parts of `RunStore`) |
 | **Policy** | **GA Mar 2026** | **Cedar** engines on Gateways — deterministic tool-call interception outside the loop; NL→Cedar authoring w/ automated-reasoning validation | `Authorizer` (OPA) at the tool boundary |
 | **Observability** | GA | OTEL-based tracing/dashboards on CloudWatch | `TelemetrySink` → ADOT/OpenSearch |
-| **Evaluations** | **GA Mar 2026** | 13 built-in + custom evaluators, online (sampled prod traces) + batch; **works for agents outside AgentCore** | — (eval harness is a named gap) |
-| **Optimization** | GA Jun 2026 | trace-driven prompt/tool recommendations, A/B via Gateway traffic split | — |
+| **Evaluations** | **GA Mar 2026** | 16 built-in (grown from 13 at GA) + custom evaluators, online (sampled prod traces) + batch; **works for agents outside AgentCore** | — (eval harness is a named gap) |
+| **Optimization** | GA Jun 2026 (Failure Insights still preview) | trace-driven prompt/tool recommendations, A/B via Gateway traffic split | — |
 | **Registry** | Preview | governed catalog of agents/MCP servers/skills, semantic search | `agent-registry` / Agent CRDs |
 | **Payments** | Preview | lets agents *buy things* (x402 micropayments, Coinbase/Stripe wallets) — commerce spend, **not** inference budgets | — (deliberately *not* the R2 gate) |
 
@@ -160,6 +164,16 @@ near-neutral) but "whose loop is it" (rung 2 changes the platform's identity). T
 user-facing distinction: *orchestration is app code* — it composes the primitives and
 applies the controls; rung 2 gives that composition away.
 
+**Field-tested 2026-07-13** ([ADR-0042](decisions/0042-agentcore-managed-profile.md)
+phase 1, live): rung 1 works exactly as mapped — our loop container ran unchanged
+(fourth entrypoint, `/invocations` + `/ping` HealthyBusy for async runs), gate/guard/
+record all applied, spec-declared models routed (Haiku coding agent proven). Surprises
+the map missed: **images must be arm64** (Graviton-only — a QEMU cross-build on Intel
+hosts; bun runs clean under emulation); **the runtime role pulls the image itself** (no
+ECS-style execution role — grant ECR pull, and make the CFN Runtime depend on the
+role's *DefaultPolicy* or creation races it); `CreateRuntime` validates everything at
+create time, so `--no-rollback` + update-from-CREATE_FAILED is the sane iteration loop.
+
 ### 3.2 Sandbox — code execution
 
 **Today:** already leaned in — `AgentCoreSandboxProvider`
@@ -192,6 +206,27 @@ sustained utilization and on custom toolchains/images; egress governance is ours
 **Seam:** `SANDBOX_PROVIDER`. The non-negotiable in *both* postures: the sandbox's only
 sanctioned model egress is the inference gateway
 ([ADR-0020](decisions/0020-sandbox-execution-model.md)).
+
+**Field-tested 2026-07-13** — what a coding agent actually gets:
+
+- A stdlib coding task (write files, run unittest) fits Model A perfectly — Haiku wrote
+  hello.py + tests and ran them green inside a CI session, end to end on the managed
+  profile.
+- **The built-in interpreter (`aws.codeinterpreter.v1`) has NO network**: Python 3.12 +
+  pip are present, but `pip install` dies on DNS (`pypi.org: Name or service not
+  known`). Installing tools at runtime needs one of: a **custom interpreter in PUBLIC
+  mode** (full internet — provisioned as `agent_os_ci_public`, opt-in via
+  `CODE_INTERPRETER_ID`; probe confirmed pip installs from PyPI work there), **offline
+  wheels** staged via S3/inline upload + `pip install --no-index`, **VPC mode** + our
+  own repo endpoints, or baking tools into a Runtime-as-box image. Installs are
+  per-session (ephemeral) in every CI mode — persistence needs Runtime-as-box.
+- **No domain-allowlist egress mode exists** — the modes are all-internet, no-internet,
+  or your-VPC. Google's GEAP sandbox ships a built-in domain allowlist (+ 7-day
+  persistent shared workspaces); AgentCore's near-equivalent is Runtime-as-box
+  (BYO image + 14-day session storage + S3/EFS mounts) with the allowlist DIY in VPC —
+  i.e. exactly the egress control our sidecar/Squid layer hand-rolls. That gap, plus the
+  non-adjustable 2 vCPU/8 GB (no Gradle-class builds), marks the managed sandbox's
+  boundary; the comparison doc's §15 carries the full coding-agent cut.
 
 ### 3.3 Tools & outbound integration (GitHub, Jira, externals)
 
@@ -302,13 +337,23 @@ managed-adapter seat. Per-use-case adapter choice, same as everything else.
 **Stays ours in every posture:** the run *ledger* (status/usage/`costUsd`) — that's
 governance data the gate writes, not agent memory.
 
+**Field-tested 2026-07-13** (`AgentCoreMemory` adapter live, full lifecycle proven:
+remember → async extraction → next-session recall): two behaviors the docs don't
+advertise. **Extraction mines USER-role events only** — an ASSISTANT-role note produces
+a short-term event but never a long-term record, so remember-notes must be written as
+role USER (defensible: a note is knowledge told *to* the agent). And **extraction lag
+(~1–2 min) is an agent-UX trap**: a model that searches right after remembering sees
+nothing, concludes the save failed, and loops re-saving (a live run went `stuck` this
+way) — the empty search result must say "may still be indexing". Guard-at-the-write-door
+carried over unchanged.
+
 ### 3.6 Identity — three sub-components, one AgentCore service
 
 | Sub-component | Today (lean out) | Lean in |
 |---|---|---|
 | **Inbound authn** (`Authenticator`) | k8s TokenReview / mesh headers (Istio XFCC, Linkerd) — verified, keyless | AWS-signed calls (SigV4 — the caller *is* its IAM role) or a **JWT authorizer** checking bearer tokens against your IdP; resource policies tighten the door further (e.g. "only invocable from our Gateway", Jun 2026) |
 | **Outbound creds** (`CredentialBroker`, OBO vault) | `OboTokenVaultBroker` (RFC 8693) + broker-held static bearers | Identity **token vault** — stores + auto-refreshes the agent's third-party credentials: machine tokens, user-consented per-user tokens (the "allow this agent on my Jira" flow), agent-for-user-X exchange, plain API keys; can reference secrets held in our own Secrets Manager (see §3.3 for each spelled out) |
-| **Per-tenant cloud identity** (`TenantCredentials`) | STS AssumeRole chain per tenant (Pod Identity → `agentos-<tenant>`), Budget-Action backstop | unchanged — this *is* IAM; note Identity's workload-identity quota (1,000/region) vs tenant count |
+| **Per-tenant cloud identity** (`TenantCredentials`) | STS AssumeRole chain per tenant (Pod Identity → `agentos-<tenant>`), Budget-Action backstop | unchanged — this *is* IAM; note Identity's workload-identity quota (11,000/account, raised from 1,000) vs tenant count |
 
 The outbound row is where lean-in pays most: AWS shipped the exact thing
 [ADR-0016](decisions/0016-obo-token-vault.md) designed. The inbound row is where lean-out
@@ -334,6 +379,17 @@ to *every* decision point, not just tools. Cedar was already named as a possible
 **Fit note:** these compose rather than compete — OPA on our endpoints, Cedar on the
 managed tool gateway if 3.3 leans in. One policy *source* feeding both would be the
 follow-up problem (don't maintain two rulebooks by hand).
+
+**Field-tested 2026-07-13** (Cedar ENFORCEd on the live gateway): the automated-
+reasoning validation is not decorative — **it rejects permit-alls at CreatePolicy**
+(a bare wildcard fails "wildcard resource"; type-scoped-but-any-action fails "Overly
+Permissive … Any Future Tools"). A statement must name its actions
+(`AgentCore::Action::"target___tool"`) and pin the gateway ARN; principals for
+SigV4 callers are `AgentCore::IamEntity` with the assumed-role ARN as entity id. Also:
+the **gateway execution role needs `GetPolicyEngine` + `AuthorizeAction` +
+`PartiallyAuthorizeActions`** or attaching an engine fails at CreateGateway — and since
+policy validation calls the gateway, create the Cedar policy *after* the slow resources
+(a fast CreatePolicy failure while Memory is mid-create wedges CFN rollback).
 
 ### 3.8 Inference + the budget gate — the asymmetric row
 
@@ -685,10 +741,11 @@ What it costs — and this is the honest ledger:
 - **Runtime's operational envelope applies**: ≤8 h sessions, ≤2 vCPU/8 GB, memory
   GB-hours billed across idle time within a session, 100 MB payloads.
 - **It relaxes [ADR-0006](decisions/0006-agentcore-execution-environment.md)'s "the
-  agent is *not* deployed into AgentCore."** As theory this is just another point in the
-  option space; adopting it for real would be a superseding ADR — the k8s-loop stance in
-  0006 was chosen when Runtime was weaker (no direct code deploy, no session storage/EFS,
-  no resource policies), so the re-evaluation is legitimate, not heresy.
+  agent is *not* deployed into AgentCore."** That superseding ADR now exists —
+  [ADR-0042](decisions/0042-agentcore-managed-profile.md) adopted this shape as the
+  *managed profile* (deployed + verified 2026-07-13), with the serverless substrate
+  (Lambda front door + Fargate) rather than k8s as the retained control plane, and the
+  claude-code lane staying on Fargate (the box that can't lean in).
 
 ### 4.4 Max lean-out — the cost-curve endpoint
 
@@ -795,5 +852,6 @@ Verified 2026-07-03: [AgentCore overview](https://docs.aws.amazon.com/bedrock-ag
 [Evaluations GA](https://aws.amazon.com/about-aws/whats-new/2026/03/agentcore-evaluations-generally-available/) ·
 [Harness GA](https://aws.amazon.com/about-aws/whats-new/2026/06/amazon-bedrock-agentcore-harness-generally-available/) / [Step Functions integration](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-step-functions.html) ·
 inbound-pattern reference: [AWS ambient-agents sample](https://github.com/aws-samples/sample-ambient-agents-on-agentcore) ·
-security: [BeyondTrust Code Interpreter DNS exfil](https://www.beyondtrust.com/blog/entry/pwning-aws-agentcore-code-interpreter) · [Unit 42 sandbox bypass](https://unit42.paloaltonetworks.com/bypass-of-aws-sandbox-network-isolation-mode/).
-Internal: [ADR-0006](decisions/0006-agentcore-execution-environment.md) · [0011](decisions/0011-tool-mcp-gateway.md) · [0016](decisions/0016-obo-token-vault.md) · [0019](decisions/0019-inference-gateway.md) · [0020](decisions/0020-sandbox-execution-model.md) · [0022](decisions/0022-sandbox-backends-for-coding-agents.md) · [0024](decisions/0024-build-vs-buy-managed-agent-platforms.md) · [0028](decisions/0028-own-the-gateway-engine.md) · [0030](decisions/0030-memory-model.md) · [costs.md](costs.md).
+security: [BeyondTrust Code Interpreter DNS exfil](https://www.beyondtrust.com/blog/entry/pwning-aws-agentcore-code-interpreter) (remediated per Apr 2026 update) · [Unit 42 sandbox bypass](https://unit42.paloaltonetworks.com/bypass-of-aws-sandbox-network-isolation-mode/) · [VPC-mode DNS follow-up](https://haitmg.pl/blog/aws-bedrock-agentcore-network-modes/).
+Field-tested 2026-07-13 ([ADR-0042](decisions/0042-agentcore-managed-profile.md)): [Policy/Gateway IAM](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-permissions.html) · [example Cedar policies](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/example-policies.html) · managed-sandbox comparison: [Google GEAP sandbox environment](https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/managed-agents/sandbox-environment).
+Internal: [ADR-0006](decisions/0006-agentcore-execution-environment.md) · [0011](decisions/0011-tool-mcp-gateway.md) · [0016](decisions/0016-obo-token-vault.md) · [0019](decisions/0019-inference-gateway.md) · [0020](decisions/0020-sandbox-execution-model.md) · [0022](decisions/0022-sandbox-backends-for-coding-agents.md) · [0024](decisions/0024-build-vs-buy-managed-agent-platforms.md) · [0028](decisions/0028-own-the-gateway-engine.md) · [0030](decisions/0030-memory-model.md) · [0042](decisions/0042-agentcore-managed-profile.md) · [agentcore-service-comparison.md](agentcore-service-comparison.md) · [agentcore-profile-flow.md](agentcore-profile-flow.md) · [costs.md](costs.md).
