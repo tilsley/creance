@@ -58,7 +58,9 @@ export async function processRun(
       // role + budget admission (ADR-0013/0014); GATEWAY mode (INFERENCE_GATEWAY_URL) is an
       // HTTP client to the standalone gateway — this runtime then holds no model creds
       // (ADR-0019). The caller token is forwarded so the gateway re-derives the tenant.
-      const inference = await providers.inferenceForTenant(tenant, principal.token, id);
+      // spec.model (agent control plane #5): a registered agent declares its model —
+      // routed here in direct mode (the gateway routes per-claim in gateway mode).
+      const inference = await providers.inferenceForTenant(tenant, principal.token, id, spec?.model);
       // remember (ADR-0030): inject this tenant's durable memory into the prompt and offer the memory
       // tools alongside the resolved toolset, when memory is configured (AGENT_MEMORY_DIR). Per-tenant
       // isolation + guard-screened writes live in the adapter.
