@@ -1,6 +1,10 @@
 # ADR-0043: The spec-first edge — pure OpenAPI contracts, API Gateway, custom domains
 
-- **Status:** Proposed
+- **Status:** Accepted — deployed and verified 2026-07-14: `api.creance.nathantilsley.com/healthz`
+  200 and console `config.json` pointing at it; `inference.creance.nathantilsley.com` healthz 200,
+  malformed `/v1/generate` body refused **400 at the edge** (validator, no Lambda invoke),
+  spec-correct unauth body 401 from the app, and an M2M `think.ts` (client_credentials,
+  ADR-0041) metered through the custom domain. Function URLs retired; rollout notes below.
 - **Date:** 2026-07-12
 
 ## Context
@@ -97,6 +101,22 @@ and is enforced by an in-process contract test. Function URLs are retired.**
 - The front door's spec has no contract test yet (its app factory needs a fuller
   Providers mock) — the gateway's proves the pattern; port it when the front door's
   surface next changes.
+
+### Rollout notes (what the first deploy taught)
+
+- **Export deadlock.** CloudFormation refuses to delete an export another stack imports,
+  and it validates this *before* touching any resource. The Function URLs were exported
+  down a chain (Gateway → Serverless → Console), so removing them required deploying in
+  REVERSE dependency order — Console, then Serverless, then Gateway — each deploy swapping
+  its import for the custom-domain literal and releasing the export the next one deletes.
+  `cdk deploy A B C` re-orders by the dependency graph, so this took three `--exclusively`
+  runs, not one command.
+- **`security` must be stripped from the edge copy.** The contract's `security`/
+  `securitySchemes` document the app-layer bearer check (ADR-0026) — API Gateway reads
+  them as "an authorizer I wasn't given" and warns; `failOnWarnings` makes that fatal.
+  `SpecRestApiEdge` now deletes them at synth, same as it injects the integration: the
+  source contract stays pure (SDK types + docs keep the auth story), the edge copy carries
+  only what API Gateway should act on.
 
 ## Relationship
 

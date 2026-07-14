@@ -57,7 +57,14 @@ export class SpecRestApiEdge extends Construct {
     };
     for (const [path, item] of Object.entries<any>(spec.paths ?? {})) {
       for (const method of ["get", "post", "put", "patch", "delete", "options", "head"]) {
-        if (item[method]) item[method]["x-amazon-apigateway-integration"] = integration;
+        if (item[method]) {
+          item[method]["x-amazon-apigateway-integration"] = integration;
+          // `security` documents the app-layer bearer check (ADR-0026) — it is not
+          // an API Gateway authorizer. Left in, APIGW warns "specified security, but
+          // no custom authorizers were created" and failOnWarnings turns that into a
+          // deploy failure. Strip it from the edge copy; the source contract keeps it.
+          delete item[method].security;
+        }
       }
       if (!item.options) {
         item.options = {
@@ -67,6 +74,8 @@ export class SpecRestApiEdge extends Construct {
         };
       }
     }
+    delete spec.security;
+    if (spec.components) delete spec.components.securitySchemes;
     spec["x-amazon-apigateway-request-validators"] = {
       body: { validateRequestBody: true, validateRequestParameters: false },
     };
