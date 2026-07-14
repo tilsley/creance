@@ -343,5 +343,45 @@ export class AgentCoreStack extends cdk.Stack {
     new cdk.CfnOutput(this, "MemoryId", { value: memory.attrMemoryId });
     new cdk.CfnOutput(this, "PolicyEngineArn", { value: policyEngine.attrPolicyEngineArn });
     new cdk.CfnOutput(this, "PublicCodeInterpreterId", { value: publicCi.attrCodeInterpreterId });
+
+    // ---- BYO-container Runtime: the Java box (postures §4.3, proven) --------
+    // Same loop, same entrypoint, plus a JDK — deployed as a SECOND Runtime.
+    // SANDBOX_PROVIDER=local: the microVM IS the sandbox (co-located shape) —
+    // the agent compiles/tests in its own box, no per-tool-call network hop.
+    // Trust shape is Model B's (loop + code share the box): acceptable because
+    // the box holds only this run's session and the runtime role.
+    const javaImage = new ecrAssets.DockerImageAsset(this, "JavaRuntimeImageArm64", {
+      directory: path.join(__dirname, "..", ".."),
+      file: "services/agent-runtime/Dockerfile.java",
+      platform: ecrAssets.Platform.LINUX_ARM64,
+    });
+    image.repository.grantPull(runtimeRole); // same CDK assets repo either way
+    const javaRuntime = new agentcore.CfnRuntime(this, "JavaRuntime", {
+      agentRuntimeName: "agent_os_runtime_java",
+      description: "agent-os loop + JDK17 in one microVM - the BYO-container box (ADR-0042)",
+      agentRuntimeArtifact: { containerConfiguration: { containerUri: javaImage.imageUri } },
+      roleArn: runtimeRole.roleArn,
+      networkConfiguration: { networkMode: "PUBLIC" },
+      protocolConfiguration: "HTTP",
+      lifecycleConfiguration: { idleRuntimeSessionTimeout: 60 },
+      environmentVariables: {
+        PORT: "8080",
+        REGION: this.region,
+        RUN_STORE: "dynamodb",
+        RUNS_TABLE: "agent-os-runs",
+        SPEND_STORE: "dynamodb",
+        SPEND_TABLE: "agent-os-budgets",
+        AGENT_REGISTRY: "dynamodb",
+        AGENTS_TABLE: "agent-os-agents",
+        GATE: "local",
+        INFERENCE_PROVIDER: "bedrock",
+        MODEL_ID: "amazon.nova-lite-v1:0", // agents override via spec.model
+        SANDBOX_PROVIDER: "local", // the microVM is the sandbox (co-located)
+        AGENTCORE_MEMORY_ID: memory.attrMemoryId,
+        TELEMETRY: "otel",
+      },
+    });
+    javaRuntime.node.addDependency(runtimeRole);
+    new cdk.CfnOutput(this, "JavaRuntimeArn", { value: javaRuntime.attrAgentRuntimeArn });
   }
 }
