@@ -1,0 +1,12 @@
+{
+  "name": "agent-os-gcp-infra",
+  "private": true,
+  "description": "Pulumi plumbing for the GCP Agent Runtime deployment profile",
+  "devDependencies": {
+    "@types/node": "^24"
+  },
+  "dependencies": {
+    "@pulumi/gcp": "^8",
+    "@pulumi/pulumi": "^3"
+  }
+}

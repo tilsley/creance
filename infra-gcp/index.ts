@@ -1,0 +1,47 @@
+/**
+ * agent-os GCP plumbing — the "managed Agent Runtime" profile (ADR-0042's GCP sibling).
+ *
+ * Phase 1 ("Loop on Agent Runtime") needs only the durable resources AROUND the loop:
+ *   - an Artifact Registry repo to hold the agent-runtime image (the loop container),
+ *   - the service-account identity the managed Runtime session assumes.
+ * The Agent Runtime deploy itself is imperative (client.agent_engines.create with a
+ * container_spec.image_uri) — there is no clean IaC resource for it yet, the one
+ * sanctioned exception to "provision through IaC, never ad-hoc create".
+ *
+ * FUTURE REFACTOR: fold this and the AWS CDK stack under infra/gcp + infra/aws for
+ * symmetry (per the layout discussion). infra-gcp/ is the interim home.
+ */
+import * as gcp from "@pulumi/gcp";
+import * as pulumi from "@pulumi/pulumi";
+
+const gcpCfg = new pulumi.Config("gcp");
+const project = gcpCfg.require("project");
+const region = gcpCfg.get("region") ?? "us-central1";
+
+// Artifact Registry — home for the agent-runtime image (loop container) and any
+// sidecars. The Agent Runtime service agent needs Reader here to pull on deploy.
+const repo = new gcp.artifactregistry.Repository("agent-os", {
+  repositoryId: "agent-os",
+  location: region,
+  format: "DOCKER",
+  description: "agent-os loop + service images for the GCP Agent Runtime profile",
+});
+
+// The cloud principal the managed Runtime session runs as. R1 (tenancy stamped from
+// verified identity) still happens IN the loop — this is only the GCP-side identity
+// the managed runtime assumes to reach Vertex/platform APIs.
+const runtimeSa = new gcp.serviceaccount.Account("agent-runtime", {
+  accountId: "agent-runtime",
+  displayName: "agent-os Agent Runtime loop identity",
+});
+
+// The loop invokes Vertex models / platform APIs as this SA.
+new gcp.projects.IAMMember("runtime-aiplatform-user", {
+  project,
+  role: "roles/aiplatform.user",
+  member: pulumi.interpolate`serviceAccount:${runtimeSa.email}`,
+});
+
+export const artifactRepo = pulumi.interpolate`${region}-docker.pkg.dev/${project}/${repo.repositoryId}`;
+export const runtimeServiceAccount = runtimeSa.email;
+export const gcpRegion = region;

@@ -6,8 +6,13 @@
  *   - runtask:   the front door (router) launches a Fargate task-per-run that
  *     executes this run and exits (serverless / scale-to-zero). The router holds
  *     no run — it created the queued record and handed off.
+ *   - agentengine: the front door invokes a GCP Vertex **Agent Runtime**
+ *     (reasoningEngine :query) with the runId — the managed-runtime analog of
+ *     runtask, and the GCP sibling of ADR-0042's DISPATCH=agentcore. The run
+ *     executes inside the managed container (agent-engine.ts); state lives in the
+ *     store; the poller watches it. Fire-and-forget, like the others.
  * Selected by DISPATCH (default inprocess), so server.ts is the front door in
- * both profiles; only the env bundle changes (ADR-0027).
+ * every profile; only the env bundle changes (ADR-0027).
  */
 import { type AgentRegistry, type Providers, type Run, type RunStore } from "@agent-os/core";
 import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
@@ -128,7 +133,69 @@ export function runTaskDispatch(
   };
 }
 
-/** Pick the dispatch impl by env (DISPATCH=inprocess|runtask; default inprocess). */
+export interface AgentEngineConfig {
+  project: string;
+  location: string;
+  /** The deployed reasoningEngine's numeric id (Agent Runtime resource). */
+  reasoningEngineId: string;
+  /** Override the aiplatform base (defaults to the regional endpoint). */
+  endpoint?: string;
+}
+
+/** Read the Agent Runtime wiring the deploy publishes into the front door's env. */
+export function agentEngineConfigFromEnv(env: Record<string, string | undefined> = process.env): AgentEngineConfig {
+  const req = (k: string): string => {
+    const v = env[k];
+    if (!v) throw new Error(`DISPATCH=agentengine requires ${k}`);
+    return v;
+  };
+  return {
+    project: req("GCP_PROJECT"),
+    location: env.GCP_LOCATION ?? "europe-west2",
+    reasoningEngineId: req("AGENT_ENGINE_ID"),
+    endpoint: env.AGENT_ENGINE_ENDPOINT,
+  };
+}
+
+/** A GCP access token for the reasoningEngines call. Prefers an explicit
+ *  GCP_ACCESS_TOKEN (local/testing); otherwise the instance metadata server (works
+ *  when the front door runs on GCP — Cloud Run/GCE). Dependency-free on purpose:
+ *  no google-cloud SDK in the shared runtime image. Cross-cloud (front door on AWS
+ *  Lambda) will graduate to WIF here. */
+async function gcpAccessToken(): Promise<string> {
+  if (process.env.GCP_ACCESS_TOKEN) return process.env.GCP_ACCESS_TOKEN;
+  const res = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    { headers: { "Metadata-Flavor": "Google" } },
+  );
+  if (!res.ok) throw new Error(`GCP metadata token fetch failed: ${res.status}`);
+  return ((await res.json()) as { access_token: string }).access_token;
+}
+
+/** managed GCP: invoke a Vertex Agent Runtime (reasoningEngine :query) with the
+ *  runId (ADR-0042's GCP sibling). The run executes in the managed container; on a
+ *  dispatch failure mark the run failed so it can't rot in `queued`. */
+export function agentEngineDispatch(config: AgentEngineConfig, runStore: RunStore): Dispatch {
+  const base = config.endpoint ?? `https://${config.location}-aiplatform.googleapis.com/v1`;
+  const url = `${base}/projects/${config.project}/locations/${config.location}/reasoningEngines/${config.reasoningEngineId}:query`;
+  return (run) => {
+    void (async () => {
+      const token = await gcpAccessToken();
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ input: { runId: run.id } }),
+      });
+      if (!res.ok) throw new Error(`reasoningEngine :query ${res.status}: ${await res.text()}`);
+      console.log(`dispatched run ${run.id} -> reasoningEngine ${config.reasoningEngineId}`);
+    })().catch(async (e) => {
+      console.error(`agentengine dispatch failed for run ${run.id}: ${e?.message ?? e}`);
+      await runStore.update(run.id, { status: "failed", error: `dispatch failed: ${e?.message ?? e}` }).catch(() => {});
+    });
+  };
+}
+
+/** Pick the dispatch impl by env (DISPATCH=inprocess|runtask|agentengine; default inprocess). */
 export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {}): Dispatch {
   const mode = process.env.DISPATCH ?? "inprocess";
   switch (mode) {
@@ -136,7 +203,9 @@ export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {})
       return inProcessDispatch(providers, opts);
     case "runtask":
       return runTaskDispatch(runTaskConfigFromEnv(), providers.runStore, providers.agentRegistry);
+    case "agentengine":
+      return agentEngineDispatch(agentEngineConfigFromEnv(), providers.runStore);
     default:
-      throw new Error(`unknown DISPATCH: ${mode} (expected inprocess|runtask)`);
+      throw new Error(`unknown DISPATCH: ${mode} (expected inprocess|runtask|agentengine)`);
   }
 }

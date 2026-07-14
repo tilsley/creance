@@ -1,0 +1,93 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["google-cloud-aiplatform>=1.112.0"]
+# ///
+"""Deploy the agent-runtime container to GCP Vertex **Agent Runtime** and smoke it.
+
+The GCP sibling of ADR-0042's AgentCore deploy. The image is built + pushed by
+Cloud Build (cloudbuild.yaml); this creates the managed runtime from that image,
+overriding the command to the agent-engine.ts entrypoint ("fourth entrypoint, same
+image"), then runs a probe query to prove the invoke path.
+
+    # deploy (build first with cloudbuild.yaml)
+    uv run deploy/gcp-agent-engine/deploy.py deploy
+    # smoke an existing engine
+    uv run deploy/gcp-agent-engine/deploy.py query --engine <RESOURCE_NAME> --probe
+    uv run deploy/gcp-agent-engine/deploy.py query --engine <RESOURCE_NAME> --task "say hi"
+
+NOTE: the exact container_spec sub-fields (command/env/ports) for Agent Runtime BYOC
+are under-documented; the agent-engine.ts entrypoint LOGS every invocation so the
+first live deploy reveals the true contract. Adjust CONTAINER_SPEC below to match.
+"""
+import argparse
+import json
+import sys
+
+PROJECT = "decent-decker-270921"
+LOCATION = "europe-west2"
+IMAGE = "europe-west2-docker.pkg.dev/decent-decker-270921/agent-os/agent-runtime:latest"
+SERVICE_ACCOUNT = "agent-runtime@decent-decker-270921.iam.gserviceaccount.com"
+
+# Reasoning-engine container_spec takes ONLY the image (no command/env override — the
+# API exposes neither). Everything else is steered by env_vars: the CMD indirection
+# selects the agent-engine.ts entrypoint (AGENT_ENTRYPOINT), the runtime hosts the loop
+# (DISPATCH=inprocess), and the HTTP server binds the port Agent Runtime probes.
+# GATE/authn kept permissive for the phase-1 probe.
+ENV_VARS = {
+    "AGENT_ENTRYPOINT": "services/agent-runtime/agent-engine.ts",
+    "DISPATCH": "inprocess",
+    "GATE": "local",
+    "AIP_HTTP_PORT": "8080",
+}
+
+
+def client():
+    import vertexai
+
+    return vertexai.Client(project=PROJECT, location=LOCATION)
+
+
+def deploy(_args) -> None:
+    c = client()
+    print(f"creating Agent Runtime from {IMAGE} ...", file=sys.stderr)
+    engine = c.agent_engines.create(
+        config={
+            "display_name": "agent-os-loop",
+            "description": "agent-os L1 loop on Vertex Agent Runtime (ADR-0042 GCP sibling)",
+            "container_spec": {"image_uri": IMAGE},
+            "env_vars": ENV_VARS,
+            "service_account": SERVICE_ACCOUNT,
+            "min_instances": 0,  # scale to zero — the cost-sensitive win
+            "max_instances": 1,
+        }
+    )
+    name = getattr(engine, "resource_name", None) or getattr(engine, "name", None) or str(engine)
+    print(f"created: {name}")
+    print("smoke it:  uv run deploy/gcp-agent-engine/deploy.py query --engine "
+          f"{name} --probe", file=sys.stderr)
+
+
+def query(args) -> None:
+    c = client()
+    engine = c.agent_engines.get(name=args.engine)
+    payload = {"probe": True} if args.probe else {"task": args.task}
+    print(f"querying {args.engine} with {payload} ...", file=sys.stderr)
+    result = engine.query(input=payload)
+    print(json.dumps(result, indent=2, default=str))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("deploy")
+    q = sub.add_parser("query")
+    q.add_argument("--engine", required=True, help="reasoningEngine resource name")
+    q.add_argument("--probe", action="store_true", help="probe mode (no model call)")
+    q.add_argument("--task", default="say hello in five words", help="a real task to run")
+    args = ap.parse_args()
+    {"deploy": deploy, "query": query}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()

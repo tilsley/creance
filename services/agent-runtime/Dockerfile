@@ -18,13 +18,21 @@ RUN bun install
 ENV PORT=3000
 EXPOSE 3000
 
-# One image, THREE entrypoints (ADR-0031) — the substrate picks which by overriding
-# the command; no second build, all three share deps + adapter wiring.
-#   server.ts  (default CMD) the always-on HTTP front door         — full-k8s
-#   task.ts    the Fargate task-per-run executor (RUN_ID via env)  — serverless executor
+# One image, FOUR entrypoints (ADR-0031 / ADR-0042 GCP sibling) — the substrate picks
+# which; no second build, all share deps + adapter wiring.
+#   server.ts       (default) the always-on HTTP front door        — full-k8s
+#   task.ts         the Fargate task-per-run executor (RUN_ID env) — serverless executor
 #     command: ["bun", "run", "services/agent-runtime/task.ts"]
-#   lambda.ts  the front door on Lambda (Runtime API loop, no HTTP server)
-#     command: ["bun", "run", "services/agent-runtime/lambda.ts"]  — serverless front door
+#   lambda.ts       the front door on Lambda (Runtime API loop)    — serverless front door
+#     command: ["bun", "run", "services/agent-runtime/lambda.ts"]
+#   agent-engine.ts the loop on GCP Vertex Agent Runtime           — managed GCP profile
+#     AGENT_ENTRYPOINT=services/agent-runtime/agent-engine.ts  (env, not command)
 # server.ts and lambda.ts serve the SAME handler (app.ts); only the server differs.
 # Defaults to INFERENCE_PROVIDER=bedrock / SANDBOX_PROVIDER=agentcore (override via env).
-CMD ["bun", "run", "services/agent-runtime/server.ts"]
+#
+# ECS/Lambda select the entrypoint by overriding `command`. GCP Agent Runtime canNOT
+# override command (its API exposes only env) — so the CMD is an env-indirection it can
+# steer via AGENT_ENTRYPOINT. `exec` keeps bun as PID 1 (signals/telemetry-flush intact);
+# the default is unchanged (server.ts), so the command-overriding profiles are unaffected.
+ENV AGENT_ENTRYPOINT=services/agent-runtime/server.ts
+CMD ["sh", "-c", "exec bun run $AGENT_ENTRYPOINT"]

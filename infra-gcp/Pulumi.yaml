@@ -1,0 +1,18 @@
+name: agent-os-gcp
+description: >-
+  agent-os GCP plumbing — the "managed Agent Runtime" deployment profile
+  (the GCP sibling of ADR-0042's AgentCore profile). Provisions the durable
+  resources around the loop; the Agent Runtime deploy itself is the sanctioned
+  imperative step (client.agent_engines.create — no clean IaC resource yet).
+runtime:
+  name: nodejs
+  options:
+    # Honor the repo's bun-first tooling for package management. Pulumi still
+    # executes the program via node (v24 present), which is fine.
+    packagemanager: bun
+# Self-managed state in GCS (keyless / self-hosted ethos) rather than Pulumi Cloud.
+backend:
+  url: gs://creance-pulumi-state
+config:
+  gcp:project: decent-decker-270921
+  gcp:region: europe-west2 # London — mirrors the AWS eu-west-2 footprint ("matches the rest of agent-os")

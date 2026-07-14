@@ -1,0 +1,13 @@
+# Keep `gcloud builds submit` uploads lean. gcloud honors .gitignore by default, but
+# NOT .git itself or .dockerignore-only excludes — enumerate them here. The docker
+# build step inside Cloud Build still applies .dockerignore (so apps/ etc. are stripped
+# from the image COPY); this file only governs what gets uploaded as the build context.
+.git
+**/node_modules
+infra/cdk.out
+infra-gcp/bin
+**/.venv
+**/__pycache__
+.claude
+*.log
+cdk.out
