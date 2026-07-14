@@ -43,6 +43,12 @@ export class BedrockStack extends cdk.Stack {
             `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-lite-v1:0`,
             `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-pro-v1:0`,
             `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/*`,
+            // Claude via the `eu.` cross-region inference profile: invoking the profile
+            // fans the call out to the underlying foundation-model in ANY eu region
+            // (observed: eu-north-1), so the foundation-model grant needs a region
+            // wildcard — the profile ARN alone is not sufficient. Anthropic models are
+            // AWS-owned (empty account field). See the /v1/messages Anthropic wire.
+            `arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
           ],
         }),
         new iam.PolicyStatement({
