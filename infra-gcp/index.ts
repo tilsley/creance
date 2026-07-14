@@ -42,6 +42,24 @@ new gcp.projects.IAMMember("runtime-aiplatform-user", {
   member: pulumi.interpolate`serviceAccount:${runtimeSa.email}`,
 });
 
+// The Reasoning Engine service agent pulls our custom container from Artifact
+// Registry at deploy time — but roles/aiplatform.reasoningEngineServiceAgent carries
+// NO artifactregistry permissions (verified 2026-07-14), so the pull fails and the
+// deploy dies with code 13 before the container ever runs (no container logs). Grant
+// it repo-scoped reader. (The generic aiplatform.serviceAgent already has AR via its
+// project role; this covers the -re agent specifically.)
+const projectNumber = gcp.organizations.getProject({ projectId: project }).then((p) => p.number);
+const reasoningEngineAgent = pulumi
+  .output(projectNumber)
+  .apply((n) => `serviceAccount:service-${n}@gcp-sa-aiplatform-re.iam.gserviceaccount.com`);
+new gcp.artifactregistry.RepositoryIamMember("re-agent-ar-reader", {
+  project,
+  location: region,
+  repository: repo.repositoryId,
+  role: "roles/artifactregistry.reader",
+  member: reasoningEngineAgent,
+});
+
 export const artifactRepo = pulumi.interpolate`${region}-docker.pkg.dev/${project}/${repo.repositoryId}`;
 export const runtimeServiceAccount = runtimeSa.email;
 export const gcpRegion = region;

@@ -50,29 +50,32 @@ So the first live deploy is self-verifying: read the runtime logs to learn the t
 then tighten `agent-engine.ts` and `CONTAINER_SPEC` in `deploy.py`. This closes open-question #1
 in the service-comparison ledger.
 
-## Status (2026-07-14)
+## Status (2026-07-14) — ✅ LIVE INVOKE PROVEN (phase 1 done)
 
-- ✅ Plumbing live; entrypoint + dispatch written and **locally smoked** (health + probe).
-- ✅ Image builds + pushes to Artifact Registry via Cloud Build (~60s, amd64).
-- ✅ **Deploy schema learned empirically** (this was the point):
-  - `container_spec` on a reasoning engine takes **only `image_uri`** — no `command`, no `env`.
-  - There is **no command-override field anywhere** → the container's own CMD must launch the
-    entrypoint. Hence the Dockerfile CMD is now an env-indirection (`AGENT_ENTRYPOINT`), and the
-    deploy sets it via `env_vars` (the faithful "one image, env-selected entrypoint").
-  - `env_vars` (dict), `service_account`, `min_instances`/`max_instances` are top-level on
-    `AgentEngineConfig`; `agent_server_mode` is STABLE/EXPERIMENTAL (API stability, not a mode).
-  - The `create()` call **validates and begins provisioning**, then fails with **code 13
-    (INTERNAL)** at the container/health stage. Container stdout does not surface via `gcloud
-    logging` filters (engine is rolled back on failure).
-- ⏳ **NEXT — debug the code-13 provisioning failure.** Hypotheses, cheapest first:
-  1. **Port contract** — Agent Runtime likely injects its own `AIP_HTTP_PORT` / probes a
-     specific port; our `env_vars` pin `AIP_HTTP_PORT=8080` and the base image sets `PORT=3000`.
-     Confirm which port the platform probes; make `agent-engine.ts` bind exactly that.
-  2. **Service account** — the passed `agent-runtime` SA may need extra bindings (the deploy did
-     `SetIamPolicy`); retry with the **default** SA to isolate.
-  3. **Logs** — read container logs in the **Cloud Console** Agent Engine page (surfaces more
-     than `gcloud logging read`), and the [troubleshooting guide](https://docs.cloud.google.com/gemini-enterprise-agent-platform/troubleshooting/agent-deployment).
-  4. **Health contract** — confirm the health path Agent Runtime probes; `agent-engine.ts`
-     answers `/healthz`, `/`, `/ping` — widen if needed.
-  The probe/echo mode + request logging in `agent-engine.ts` are built precisely to read the
-  true contract off the first *successful* boot; closing this closes ledger open-question #1.
+`POST …/reasoningEngines/{id}:query` with `{"input":{"probe":true}}` → **HTTP 200** with our
+`{"output": <envelope>}`. The loop container runs on Agent Runtime and the invoke path,
+authorizer, and envelope are proven end-to-end.
+
+**The full deploy + runtime contract, learned empirically:**
+
+- **Deploy schema** — `container_spec` takes **only `image_uri`** (no command/env); there is **no
+  command-override field**, so the container's own CMD must launch the entrypoint → the Dockerfile
+  CMD is an `AGENT_ENTRYPOINT` env-indirection, set via `env_vars`. `env_vars`/`service_account`/
+  `min_instances`/`max_instances` are top-level on `AgentEngineConfig`.
+- **code-13 (INTERNAL) at deploy** = the **Reasoning Engine service agent**
+  (`service-<PN>@gcp-sa-aiplatform-re…`) had **no Artifact Registry read** — its role carries zero
+  `artifactregistry` perms, so the image pull failed *before* the container ran (hence no container
+  logs). Fixed in Pulumi: repo-scoped `artifactregistry.reader` for that agent (`infra-gcp/index.ts`).
+- **Runtime request contract** — Agent Runtime POSTs the `:query` body to **`POST /api/reasoning_engine`**
+  as `{"input": {...}}`, on port **`AIP_HTTP_PORT`=8080** (confirmed injected).
+- **Runtime response contract** — the `:query` REST response schema is `{"output": <value>}` and the
+  platform **relays the container's body verbatim**, so the container must itself return
+  `{"output": …}`. A bare object → platform wrapper **500**. Fixed in `agent-engine.ts` (`queryResponse`).
+- **Invoking a custom/BYOC engine** — `class_methods=None`, so the SDK has **no `.query()` helper**;
+  call the `:query` REST method directly (see `deploy.py query`).
+
+Closes ledger open-question #1.
+
+**NEXT (phase 2):** a real `--task` run needs inference reachable from GCP (loop defaults to
+Bedrock — wire `INFERENCE_GATEWAY_URL` or a Vertex/Gemini inference adapter). Then wire the
+front-door `DISPATCH=agentengine` path (set `GCP_PROJECT`/`AGENT_ENGINE_ID`).

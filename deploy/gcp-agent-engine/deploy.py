@@ -69,12 +69,27 @@ def deploy(_args) -> None:
 
 
 def query(args) -> None:
-    c = client()
-    engine = c.agent_engines.get(name=args.engine)
-    payload = {"probe": True} if args.probe else {"task": args.task}
-    print(f"querying {args.engine} with {payload} ...", file=sys.stderr)
-    result = engine.query(input=payload)
-    print(json.dumps(result, indent=2, default=str))
+    # A custom/BYOC container has class_methods=None, so the SDK exposes no .query()
+    # helper. Call the reasoningEngine :query REST method directly — the platform POSTs
+    # our `input` to the container at POST /api/reasoning_engine and relays the
+    # container's `{"output": ...}` body back as the :query response (verified 2026-07-14).
+    import urllib.request
+    import google.auth
+    import google.auth.transport.requests
+
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds.refresh(google.auth.transport.requests.Request())
+    payload = {"input": {"probe": True} if args.probe else {"task": args.task}}
+    url = f"https://{LOCATION}-aiplatform.googleapis.com/v1/{args.engine}:query"
+    print(f"POST {url}\n  {payload}", file=sys.stderr)
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        method="POST",
+        headers={"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as r:
+        print(json.dumps(json.load(r), indent=2))
 
 
 def main() -> None:

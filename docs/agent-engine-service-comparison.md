@@ -102,13 +102,13 @@ build-vs-buy curve at a fourth operating point.
 
 ## Open questions to close before ADR (the ⚠️-verify backlog)
 
-1. **Agent Runtime container HTTP contract** — exact health + query/streamQuery routes, port,
-   request/response JSON, injected env vars. Deploy **schema now known** (2026-07-14):
-   `container_spec` = image only (no command/env — the CMD must launch the entrypoint, so the
-   Dockerfile uses an `AGENT_ENTRYPOINT` env-indirection); `env_vars`/`service_account`/
-   `min_instances` are top-level. `create()` validates + provisions, then **code 13 at the
-   container/health stage** — port/health contract still to be pinned. See
-   [`deploy/gcp-agent-engine/README.md`](../deploy/gcp-agent-engine/README.md) → NEXT.
+1. ✅ **RESOLVED (2026-07-14) — live invoke proven.** Agent Runtime POSTs the `:query` body to
+   **`POST /api/reasoning_engine`** as `{"input":{…}}` on `AIP_HTTP_PORT`=8080; the container must
+   return **`{"output": <value>}`** (the platform relays the body as the `:query` response schema).
+   Deploy: `container_spec`=image only, no command override (Dockerfile `AGENT_ENTRYPOINT`
+   env-indirection); `env_vars`/`service_account`/`min_instances` top-level. **code-13** was the
+   Reasoning Engine service agent lacking Artifact Registry read (fixed in Pulumi). Full write-up:
+   [`deploy/gcp-agent-engine/README.md`](../deploy/gcp-agent-engine/README.md).
 2. **Regional availability** — assuming `us-central1`; confirm GEAP Agent Runtime + Memory Bank
    are both there.
 3. **Memory Bank per-tenant isolation** — is there an IAM-condition-key equivalent to

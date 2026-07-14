@@ -6,16 +6,17 @@
  * over HTTP instead of launching a Fargate task, but the run body (process-run.ts)
  * and provider wiring are byte-identical.
  *
- * The custom-container contract (Vertex custom-container serving, applied to Agent
- * Runtime BYOC):
- *   - Listen on 0.0.0.0:${AIP_HTTP_PORT}  (default 8080).
- *   - Health check: respond 200 within 10s on ${AIP_HEALTH_ROUTE} (and we answer a
- *     few common health paths defensively).
- *   - Query: Agent Runtime POSTs an invocation (reasoningEngines :query /
- *     :streamQuery). The exact in-container path + body shape are under-documented,
- *     so THIS entrypoint LOGS every request (method/path/body) — the first live
- *     deploy reveals the true contract, then we tighten. Body is expected as
- *     { class_method?, input: {...} }; the method's return value is the response.
+ * The custom-container contract (Vertex Agent Runtime BYOC) — VERIFIED LIVE 2026-07-14:
+ *   - Listen on 0.0.0.0:${AIP_HTTP_PORT}  (default 8080). ✓ confirmed injected.
+ *   - Health check: respond 200 on ${AIP_HEALTH_ROUTE} (we also answer /, /ping).
+ *   - Query: Agent Runtime POSTs the reasoningEngine :query body to
+ *     **`POST /api/reasoning_engine`** as `{"input": {...}}` (observed in logs).
+ *   - Response: the platform relays the container's body as the REST `:query`
+ *     response, whose schema is `{"output": <value>}` — so the CONTAINER must return
+ *     `{"output": <result>}`. Returning a bare object (no `output` key) makes the
+ *     platform's wrapper 500. Hence responseFor() below wraps every query result.
+ *   THIS entrypoint still LOGS every request (method/path/body) so any future contract
+ *   drift is visible.
  *
  * PROBE MODE (default when input has no `task`): return a runtime envelope proving
  * Agent Runtime ↔ our container works, WITHOUT a model call — so phase-1 ("prove
@@ -84,11 +85,14 @@ const server = Bun.serve({
 
     const classMethod: string = body?.class_method ?? "query";
     const input: any = body?.input ?? body ?? {};
+    // The REST :query response schema is {"output": <value>} and the platform relays
+    // our body verbatim — so every query result MUST be wrapped in `output`.
+    const queryResponse = (output: unknown) => Response.json({ output });
 
     // PROBE MODE — prove the envelope without a model call.
     const task: unknown = input?.task;
     if (input?.probe === true || typeof task !== "string" || !task.trim()) {
-      return Response.json({
+      return queryResponse({
         ok: true,
         mode: "probe",
         runtime: "agent-engine",
@@ -114,7 +118,7 @@ const server = Bun.serve({
     if (typeof input?.runId === "string") {
       const { processRun } = await import("./process-run");
       await processRun(providers, input.runId, { maxOutputTokens });
-      return Response.json(await store.get(input.runId));
+      return queryResponse(await store.get(input.runId));
     }
 
     const create = await app(
@@ -124,10 +128,10 @@ const server = Bun.serve({
         body: JSON.stringify({ task, agent: input?.agent, repo: input?.repo }),
       }),
     );
-    if (create.status !== 202) return create; // gate refusal (401/402/403/400) — surface as-is
+    if (create.status !== 202) return queryResponse({ error: await create.json() }); // gate refusal
     const { runId } = (await create.json()) as { runId: string };
     const run = await awaitRun(runId);
-    return Response.json(run ?? { runId, status: "unknown" });
+    return queryResponse(run ?? { runId, status: "unknown" });
   },
 });
 
