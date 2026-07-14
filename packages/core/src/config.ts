@@ -6,6 +6,7 @@
  * Call ONCE per process — the OTel telemetry sink registers a global provider.
  */
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
+import { VertexGeminiInferenceProvider } from "./adapters/vertex-gemini-inference";
 import { OllamaInferenceProvider } from "./adapters/ollama-inference";
 import { ScriptedInferenceProvider } from "./adapters/scripted-inference";
 import { AdmissionInferenceProvider } from "./adapters/admission-inference";
@@ -97,6 +98,18 @@ export function providersFromEnv(env: Env = process.env): Providers {
     switch (inferenceKind) {
       case "bedrock":
         return new BedrockInferenceProvider(env.MODEL_ID ?? "amazon.nova-lite-v1:0", region);
+      case "vertex": {
+        // GCP-native model path (Agent Runtime profile). Project from the standard
+        // GOOGLE_CLOUD_PROJECT (Vertex injects it) or GCP_PROJECT; ADC auth, so no key.
+        const project = env.GOOGLE_CLOUD_PROJECT ?? env.GCP_PROJECT;
+        if (!project) throw new Error("INFERENCE_PROVIDER=vertex requires GOOGLE_CLOUD_PROJECT (or GCP_PROJECT)");
+        return new VertexGeminiInferenceProvider(
+          env.VERTEX_MODEL ?? "gemini-2.5-flash",
+          project,
+          env.GCP_LOCATION ?? "europe-west2",
+          env.VERTEX_THINKING_BUDGET ? Number(env.VERTEX_THINKING_BUDGET) : 0,
+        );
+      }
       case "ollama":
         return new OllamaInferenceProvider(env.OLLAMA_MODEL ?? "llama3.1", env.OLLAMA_HOST);
       case "scripted": // deterministic demo/test driver (ADR-0017 A2A); SCRIPTED_TURNS = JSON

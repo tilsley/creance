@@ -32,12 +32,21 @@ SERVICE_ACCOUNT = "agent-runtime@decent-decker-270921.iam.gserviceaccount.com"
 # Reasoning-engine container_spec takes ONLY the image (no command/env override — the
 # API exposes neither). Everything else is steered by env_vars: the CMD indirection
 # selects the agent-engine.ts entrypoint (AGENT_ENTRYPOINT), the runtime hosts the loop
-# (DISPATCH=inprocess), and the HTTP server binds the port Agent Runtime probes.
-# GATE/authn kept permissive for the phase-1 probe.
+# (DISPATCH=inprocess), and INFERENCE_PROVIDER=vertex points the loop at Gemini on Vertex
+# (GCP-native, ADC auth via the runtime service account — no key). GATE is left unset →
+# open authn, since the :query call is already GCP-IAM-gated at the platform; per-tenant
+# gate/budget wiring (identity → tenant) is a later phase.
 ENV_VARS = {
     "AGENT_ENTRYPOINT": "services/agent-runtime/agent-engine.ts",
     "DISPATCH": "inprocess",
-    "GATE": "local",
+    "INFERENCE_PROVIDER": "vertex",
+    # GOOGLE_CLOUD_PROJECT is a RESERVED var the platform injects — config.ts reads it.
+    "GCP_LOCATION": LOCATION,
+    "VERTEX_MODEL": "gemini-2.5-flash",
+    # The default agentcore sandbox needs AWS creds (unavailable on GCP); `local` runs in
+    # the session's own microVM — fine for the spike (the demo task calls no tools). A GCP
+    # sandbox (Code Execution / Sandbox BYOC) adapter is a later phase.
+    "SANDBOX_PROVIDER": "local",
     "AIP_HTTP_PORT": "8080",
 }
 

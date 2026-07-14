@@ -47,12 +47,14 @@ function logInvocation(method: string, path: string, body: unknown): void {
 }
 
 /** Poll the run store until the run reaches a terminal state (query is synchronous).
- *  Bounded so a stuck run can't hold the invocation open forever. */
+ *  Bounded so a stuck run can't hold the invocation open forever. Terminal = every
+ *  RunStatus that won't advance on its own (completed/failed/blocked/stuck). */
+const TERMINAL = new Set(["completed", "failed", "blocked", "stuck"]);
 async function awaitRun(runId: string, timeoutMs = 110_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const run = await store.get(runId);
-    if (run && (run.status === "succeeded" || run.status === "failed")) return run;
+    if (run && TERMINAL.has(run.status)) return run;
     if (Date.now() > deadline) return run; // return whatever we have; caller sees non-terminal
     await new Promise((r) => setTimeout(r, 500));
   }

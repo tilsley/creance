@@ -76,6 +76,24 @@ authorizer, and envelope are proven end-to-end.
 
 Closes ledger open-question #1.
 
-**NEXT (phase 2):** a real `--task` run needs inference reachable from GCP (loop defaults to
-Bedrock — wire `INFERENCE_GATEWAY_URL` or a Vertex/Gemini inference adapter). Then wire the
-front-door `DISPATCH=agentengine` path (set `GCP_PROJECT`/`AGENT_ENGINE_ID`).
+## Phase 2 (2026-07-14) — ✅ REAL TASK RUNS END-TO-END
+
+A real `:query` task now runs the full loop on Agent Runtime with **Gemini on Vertex**:
+
+```
+{"input":{"task":"…"}} → {"output":{"status":"completed","output":"…","usage":{…},"costUsd":…}}
+```
+
+- **Inference** — new `VertexGeminiInferenceProvider` (`packages/core/src/adapters/vertex-gemini-inference.ts`),
+  `INFERENCE_PROVIDER=vertex`, model `gemini-2.5-flash`, europe-west2. Dependency-free REST +
+  ADC token (runtime service account), thinking disabled so `maxTokens` bounds visible output
+  (ADR-0013). Translates neutral messages/tools ↔ Gemini `generateContent` (incl. tool-call
+  round-trips; results keyed to calls by function name).
+- **Sandbox** — `SANDBOX_PROVIDER=local` (the default `agentcore` sandbox needs AWS creds,
+  unavailable on GCP; the demo task calls no tools). A GCP sandbox adapter is a later phase.
+- **Gotchas closed:** `GOOGLE_CLOUD_PROJECT` is a *reserved* env var (platform-injected — don't
+  set it); the loop's terminal RunStatus is `completed` (not `succeeded`) — fixed `awaitRun`.
+
+**NEXT (phase 3+):** front-door `DISPATCH=agentengine` path (set `GCP_PROJECT`/`AGENT_ENGINE_ID`);
+per-tenant gate/identity (map GCP IAM caller → tenant, replace open authn); managed Sessions /
+Memory Bank adapter so runs show in the Agent Engine console; a GCP sandbox (Code Execution / BYOC).
