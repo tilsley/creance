@@ -33,7 +33,8 @@ into named siblings. The mapping we care about:
 | Sandbox / code exec | Code Interpreter | **Code Execution** + **Sandbox (BYOC)** |
 | Tool endpoint | Gateway (MCP) | tool config / MCP · **⚠️ verify** GEAP MCP-gateway surface |
 | Credential custody | Identity (token vault, 2LO/3LO) | **Identity Platform** + Secret Manager + WIF |
-| Inbound authn | (custom JWT authorizer) | Identity Platform / IAM · **⚠️ verify** |
+| Inbound authn | (custom JWT authorizer) | SA **OIDC JWT** (GA) or SPIFFE **Agent Identity** (Preview) — see [Agent identity](#agent-identity-on-gcp--sa-oidc-vs-spiffe-and-the-istio-question) |
+| Workload identity | (SA + IRSA/Pod Identity chain) | **SPIFFE X.509 SVID** per agent (mTLS + DPoP) · Preview |
 | Eval | Evaluations | **Gen AI Evaluation** |
 | Registry | Registry | **⚠️ verify** (Agentspace / agent catalog) |
 
@@ -89,6 +90,49 @@ envelope, no sidecar seat for credential substitution, no domain-based egress wa
 
 ---
 
+## Agent identity on GCP — SA OIDC vs SPIFFE, and the Istio question
+
+Research (2026-07-14) into *"what identity does a GEAP agent actually present, and can an
+external Istio mesh authorize on it?"* — this resolves the Identity rows above and
+open-question #5. **Two distinct identity models are available on Agent Runtime:**
+
+| Model | What the agent presents | How an external verifier checks it | Maturity |
+|---|---|---|---|
+| **SA OIDC token** (what we mint today) | Google-signed OIDC JWT from the metadata server (`iss=accounts.google.com`, claims `email`/`sub`/`azp`/`aud`) for the runtime's service account | Istio **`RequestAuthentication`** (issuer + `jwksUri=googleapis.com/oauth2/v3/certs`) + **`AuthorizationPolicy`** on `request.auth.claims[email]` | **GA** — works now |
+| **GCP Agent Identity** | SPIFFE **X.509 SVID**, `spiffe://agents.global.org-<ORG>.system.id.goog/resources/aiplatform/…/reasoningEngines/<id>`, mTLS (+ **DPoP** across Agent Gateway), 24h auto-renewed | Istio `source.principals` on the SPIFFE ID — **but** needs SPIFFE **trust-domain federation** (import GCP's trust bundle) | **Preview / pre-GA** |
+| **Solo.io `agentgateway` + WIMSE** | SPIFFE identity carried in a **`Workload-Identity-Token`** header across egress | Istio ambient waypoint validates the WIT — mesh-native, purpose-built for this | separate product you deploy |
+
+**The findings that matter:**
+
+- The **SA OIDC token is the pragmatic path today.** It's GA, the SA **email is deterministic**
+  (`agent-runtime@<project>.iam.gserviceaccount.com`), and Istio validates it with stock
+  `RequestAuthentication`. Match on the `email` claim, *not* `sub` — the numeric `sub`/uniqueId
+  is assigned at SA creation and **changes on recreate**. A **no-service-account** deploy resolves
+  to the shared Google-managed Reasoning Engine service agent
+  (`service-<projectNumber>@gcp-sa-aiplatform-re.iam.gserviceaccount.com`) — so agents deployed
+  without a pinned SA are **indistinguishable** in the mesh. Pin a per-agent SA to get per-agent identity.
+- **GCP Agent Identity *is* SPIFFE-based** and is the more "correct" long-term model (per-agent
+  `spiffe://…/reasoningEngines/<id>`, short-lived certs, mesh-native `source.principals`). Three
+  real frictions before it works with an external Istio: (1) **trust-domain federation** — your
+  mesh CA doesn't trust `agents.global.org-….system.id.goog`; (2) the **egress-to-external-Istio
+  path is undocumented** — the docs cover mTLS to *Google Cloud APIs* and across *GCP's own Agent
+  Gateway*, not how an off-GCP verifier receives the SVID; (3) **DPoP isn't natively validated by
+  Istio**. Plus it's Preview. And its SPIFFE ID encodes the `reasoningEngines/<id>`, which — like
+  the SA `sub` — **changes per redeploy**, unlike the deterministic SA email.
+- **"Egress via agent gateway adds a SPIFFE header"** is true of **Solo.io's `agentgateway`**
+  (WIMSE `Workload-Identity-Token`), *not* GCP's Agent Gateway. The WIMSE insight is the general
+  one: mTLS/SPIFFE X.509 identity is **scoped to a single connection**, so carrying agent identity
+  across an egress hop into a mesh needs either trust federation (X.509) or an identity-in-header
+  token (WIMSE WIT / JWT-SVID).
+
+**Bottom line for the profile:** the invariant shell already stamps tenancy from the *inbound*
+identity at the gate; for mesh interop the **SA OIDC token is what we'd wire first** (GA,
+deterministic, stock Istio). GCP Agent Identity (SPIFFE) is the aspirational upgrade once it's GA
+and trust-federation is documented. *Sources: GCP Agent Identity overview & Agent Gateway codelab;
+Solo.io "Can SPIFFE work for agents"; Istio SPIRE-integration docs; IETF WIMSE.*
+
+---
+
 ## Cost shape — the pull toward this profile
 
 GEAP Agent Runtime bills **~$0.0864/vCPU-hr + $0.0090/GB-hr** while a session is active, plus
@@ -115,11 +159,17 @@ build-vs-buy curve at a fourth operating point.
    AgentCore Memory's namespace enforcement, or is isolation app-level?
 4. **Managed MCP gateway** — does GEAP expose an MCP endpoint (AgentCore Gateway analog), or is
    tool wiring purely in-agent?
-5. **Identity 2LO/3LO custody** — Identity Platform + Secret Manager + WIF vs AgentCore
-   Identity's token vault: what's the closest OBO/3LO pattern?
+5. ✅ **PARTIALLY RESOLVED (2026-07-14) — agent identity mapped.** The runtime presents a GA
+   **SA OIDC JWT** (Istio-verifiable today, deterministic email) *or* a Preview SPIFFE **Agent
+   Identity** (X.509 SVID, mTLS + DPoP). See the [Agent identity](#agent-identity-on-gcp--sa-oidc-vs-spiffe-and-the-istio-question)
+   section. Still open: the **2LO/3LO OBO custody** pattern (Identity Platform + Secret Manager +
+   WIF vs AgentCore Identity's token vault) — the *outbound* credential-vault story, distinct from
+   the inbound-identity question now answered.
 6. **Inbound events & budget admission** — confirm the two structural absences hold.
 
 ---
 
 *Sources (2026-07-14): GEAP docs — Agent Runtime / deploy-an-agent, Sandbox custom-containers,
-platform overview; Agent Builder 2026 pricing. Update this line as rows are verified.*
+platform overview; Agent Builder 2026 pricing; Agent Identity overview + Agent Gateway codelab;
+Solo.io "Can SPIFFE work for agents"; Istio SPIRE integration; IETF WIMSE. Update this line as
+rows are verified.*
