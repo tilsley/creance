@@ -228,6 +228,35 @@ sanctioned model egress is the inference gateway
   non-adjustable 2 vCPU/8 GB (no Gradle-class builds), marks the managed sandbox's
   boundary; the comparison doc's §15 carries the full coding-agent cut.
 
+**Field-tested 2026-07-14/15 — Runtime-as-box proven, and what the microVM really is:**
+
+- **BYO container works end to end.** `Dockerfile.java` bakes JDK 21 + a standalone
+  JUnit runner into the loop image, deployed as a second Runtime
+  (`agent_os_runtime_java`) with `SANDBOX_PROVIDER=local` — the §4.3 co-located shape.
+  Run `a5d8b399`: Haiku wrote `Hello.java` + `HelloTest.java`, compiled with `javac`,
+  ran the JUnit console — 1 test green, $0.0009. (Field note: `oven/bun` is Debian
+  trixie, which dropped `openjdk-17` — use `openjdk-21-jdk-headless`.)
+- **The 2 vCPU/8 GB cap is real and has no knob.** The `AWS::BedrockAgentCore::Runtime`
+  CFN schema has zero sizing properties, and in-session probes confirm the box:
+  `nproc` → 2, `MemTotal` → 8,209,720 kB. Bigger workloads change *profile*
+  (Fargate/EKS), not configuration.
+- **Inside the microVM you are a container.** The guest is AL2023 kernel 6.1 aarch64;
+  the workload runs as **root** in a containerd-managed container (overlay rootfs on
+  containerd snapshotter paths) inside the Firecracker VM. User namespaces work
+  (`unshare --map-root-user` OK), cgroup v2 controllers are visible but the tree is
+  **read-only**, `/sys` is ro, no `/dev/kvm`, no fuse device.
+- **Containers-in-the-session actually work** (probe `2629cce9`): with root + apt +
+  public egress, the agent installed podman 5.4.2 *at runtime*, pulled
+  `docker.io/library/alpine`, and ran it — default overlay storage fails (no fuse for
+  fuse-overlayfs), but `--storage-driver=vfs --cgroups=disabled --events-backend=file`
+  succeeds. So a Gradle + Testcontainers suite is *feasible* in-place (podman's
+  docker-API socket + `DOCKER_HOST`), with honest caveats: vfs storage is slow and
+  copies every layer, no cgroup limits on test containers, installs are per-session
+  ephemeral (or bake podman into the image), all inside the fixed 2 vCPU/8 GB. Fine for
+  a postgres-and-redis integration suite; heavy compose stacks belong on the
+  Fargate/EKS profiles or a remote `DOCKER_HOST` (e.g. Testcontainers Cloud) over the
+  proven public egress.
+
 ### 3.3 Tools & outbound integration (GitHub, Jira, externals)
 
 **Today:** self-hosted `tool-gateway` (Design A — callers speak neutral HTTP, the gateway
