@@ -1,8 +1,11 @@
 import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 
@@ -13,6 +16,40 @@ export interface ConsoleStackProps extends cdk.StackProps {
   auth: { hostedUiBaseUrl: string; clientId: string };
   /** Where run traces land (ADR-0035) — enables the console's per-run trace link. */
   grafana?: { url: string; tracesDatasourceUid: string };
+  /**
+   * Custom domain for the console (ADR-0043's pattern applied to the UI). The
+   * certificate comes from ConsoleCertStack — CloudFront only accepts us-east-1
+   * certs, so it can't be minted here (this stack is regional) and crosses stacks
+   * via `crossRegionReferences`. Unset ⇒ the CloudFront default domain (dev/POC).
+   */
+  edge?: { domainName: string; hostedZone: { id: string; name: string }; certificate: acm.ICertificate };
+}
+
+export interface ConsoleCertStackProps extends cdk.StackProps {
+  domainName: string;
+  hostedZone: { id: string; name: string };
+}
+
+/**
+ * ConsoleCertStack — ONLY the console's TLS certificate, pinned to us-east-1
+ * (a CloudFront requirement; the API edges' certs are regional and live inline
+ * in SpecRestApiEdge). Both this stack and the consumer set
+ * `crossRegionReferences: true` so CDK ferries the cert ARN across regions.
+ */
+export class ConsoleCertStack extends cdk.Stack {
+  readonly certificate: acm.ICertificate;
+
+  constructor(scope: Construct, id: string, props: ConsoleCertStackProps) {
+    super(scope, id, props);
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+      hostedZoneId: props.hostedZone.id,
+      zoneName: props.hostedZone.name,
+    });
+    this.certificate = new acm.Certificate(this, "Cert", {
+      domainName: props.domainName,
+      validation: acm.CertificateValidation.fromDns(zone),
+    });
+  }
 }
 
 /**
@@ -25,11 +62,10 @@ export interface ConsoleStackProps extends cdk.StackProps {
  * URL + Cognito ids), so one bundle serves any environment and a config change is
  * a redeploy of this stack, not a rebuild of the app.
  *
- * No custom domain (POC): the CloudFront default domain is the console's address —
- * no Route53 zone, no us-east-1 ACM cert. After the FIRST deploy, add the printed
- * ConsoleUrl to the user-pool client's callback URLs:
- *   cdk deploy AgentOsAuth -c consoleCallbackUrls="https://<dist>.cloudfront.net/,http://localhost:5173/"
- * (a one-time dance — the client can't know the CloudFront domain before it exists).
+ * Custom domain (ADR-0043 pattern): when `edge` is set the distribution answers on
+ * the console subdomain (cert from ConsoleCertStack in us-east-1, Route53 alias
+ * here). The domain must ALSO appear in the user-pool client's callback URLs
+ * (cdk.json `consoleCallbackUrls`) or the hosted-UI login bounces.
  */
 export class ConsoleStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ConsoleStackProps) {
@@ -44,6 +80,7 @@ export class ConsoleStack extends cdk.Stack {
     const distribution = new cloudfront.Distribution(this, "Cdn", {
       comment: "agent-os console (ADR-0032)",
       defaultRootObject: "index.html",
+      ...(props.edge ? { domainNames: [props.edge.domainName], certificate: props.edge.certificate } : {}),
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -88,6 +125,20 @@ export class ConsoleStack extends cdk.Stack {
       ],
     });
 
-    new cdk.CfnOutput(this, "ConsoleUrl", { value: `https://${distribution.distributionDomainName}/` });
+    if (props.edge) {
+      const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+        hostedZoneId: props.edge.hostedZone.id,
+        zoneName: props.edge.hostedZone.name,
+      });
+      new route53.ARecord(this, "Alias", {
+        zone,
+        recordName: props.edge.domainName,
+        target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(distribution)),
+      });
+    }
+
+    new cdk.CfnOutput(this, "ConsoleUrl", {
+      value: props.edge ? `https://${props.edge.domainName}/` : `https://${distribution.distributionDomainName}/`,
+    });
   }
 }

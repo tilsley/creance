@@ -11,7 +11,7 @@
 import * as cdk from "aws-cdk-lib";
 import { AuthStack } from "../lib/auth-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
-import { ConsoleStack } from "../lib/console-stack";
+import { ConsoleCertStack, ConsoleStack } from "../lib/console-stack";
 import { GatewayStack } from "../lib/gateway-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
@@ -79,8 +79,22 @@ const serverless = new ServerlessStack(app, "AgentOsServerless", {
 // The per-run "trace ↗" link (ADR-0035): where traces land, from persisted context
 // (cdk.json — NOT a CLI flag; those silently revert). Unset ⇒ no link rendered.
 const grafanaUrl = app.node.tryGetContext("grafanaUrl");
+// The console's custom domain (ADR-0043 pattern on the UI): CloudFront only takes
+// us-east-1 certs, so the cert is its own stack there and the ARN crosses regions
+// via crossRegionReferences (both sides must opt in).
+const consoleEdge = edgeFor("consoleDomain");
+const consoleCert = consoleEdge
+  ? new ConsoleCertStack(app, "AgentOsConsoleCert", {
+      env: { account: env.account, region: "us-east-1" },
+      crossRegionReferences: true,
+      domainName: consoleEdge.domainName,
+      hostedZone: consoleEdge.hostedZone,
+    })
+  : undefined;
 new ConsoleStack(app, "AgentOsConsole", {
   env,
+  crossRegionReferences: true,
+  ...(consoleEdge && consoleCert ? { edge: { ...consoleEdge, certificate: consoleCert.certificate } } : {}),
   apiUrl: serverless.frontDoorUrl,
   auth: { hostedUiBaseUrl: auth.hostedUiBaseUrl, clientId: auth.clientId },
   ...(grafanaUrl
