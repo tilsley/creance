@@ -11,6 +11,9 @@
 > and **no longer purely theoretical: [ADR-0042](decisions/0042-agentcore-managed-profile.md)
 > deployed §4.1's shape (minus Harness, plus our front door) on 2026-07-13 and verified
 > it live**. Rows carry *Field-tested* notes with what the deploy actually taught us.
+> For where the agent loop sits relative to the workspace sandbox (the three-ring model
+> and the mid-2026 vendor field), see
+> [ADR-0045](decisions/0045-agent-workspace-separation-three-rings.md).
 
 ---
 
