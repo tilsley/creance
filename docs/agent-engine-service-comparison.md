@@ -144,6 +144,58 @@ build-vs-buy curve at a fourth operating point.
 
 ---
 
+## Runtime-as-box — field-tested BYOC + nested-container anatomy (2026-07-18)
+
+The GCP mirror of the AWS AgentCore "what the microVM really is" probe ([ADR-0042](decisions/0042-agentcore-managed-profile.md) ·
+`docs/agentcore-postures.md`). Two proofs from one image — `services/agent-runtime/Dockerfile.gcp-probe`,
+the loop image + JDK 21 + a JUnit runner + podman, deployed as a **second** reasoningEngine
+(`agent-os-loop-java-podman`) — driven through the real front door.
+
+**BYO container is genuinely language-agnostic.** A deliberately foreign JDK-21 toolchain baked
+into the same loop image: in-session the box wrote `Hello.java` + a JUnit 5 test, `javac`-compiled
+against `/opt/junit.jar`, and ran the JUnit console — `openjdk 21.0.11`, **1 test green**. GEAP
+Agent Runtime is container-in/container-out, not tied to our Bun runtime — the same result as the
+AgentCore `Dockerfile.java` proof.
+
+**What the GCP box is — and how it differs from AgentCore's Firecracker microVM:**
+
+| | **AWS AgentCore** (postures) | **GCP Vertex Agent Runtime** (probed) |
+|---|---|---|
+| Arch | **arm64-only** (amd64 rejected at create) | **amd64** (`Linux 6.9.12 x86_64`) |
+| vCPU / mem | fixed **2 / 8 GB**, no knob | **8 vCPU / ~4 GB** observed (may be node view, not a guaranteed quota) |
+| Base / kernel | AL2023, 6.1 aarch64 | Debian 13 (trixie), 6.9 |
+| uid | root | root |
+| `/dev/kvm` | absent | absent |
+| **`/dev/fuse`** | **absent** → vfs-only storage | **present** → **overlay/fuse-overlayfs works** |
+| cgroup | **v2, read-only** | **hybrid v1+v2, writable** |
+| userns | OK | OK (`unshare --map-root-user`) |
+| egress | public (proven) | public (podman pulled docker.io) |
+
+The earlier prior ("GCP is probably gVisor / more locked down") was **wrong** — it's a permissive
+runc-style container (root, fuse, writable cgroup, userns), not a syscall sandbox. This is why we
+probe rather than assume.
+
+**Nested containers (Testcontainers-in-box) are feasible — with a different incantation than AWS.**
+podman 5.4.2 pulled `alpine` from docker.io over the proven egress and used **overlay** storage
+natively (no vfs fallback needed, because `/dev/fuse` is present — the opposite of AgentCore). Two
+obstacles, both worked around:
+- **crun refuses the box's hybrid cgroups** (`cgroups in hybrid mode not supported`), and
+  `--cgroups=disabled` doesn't help (crun checks the mode regardless; runc rejects that flag). Fix:
+  **`runc` + `--cgroup-manager=cgroupfs`** — a nested alpine then ran to completion (root inside the
+  container, alpine 3.20.10). Contrast AWS, whose pure cgroup-v2 box worked with crun + `--cgroups=disabled`.
+- bridge networking needs `nft` (netavark errors `unable to execute nft`) — install `nftables`, or
+  use `--network=host` (the pragmatic Testcontainers mode here) / `--network=none`.
+
+Recipe that works in-box: bake or `apt-get install -y runc nftables` →
+`podman run --runtime=runc --cgroup-manager=cgroupfs --network=host <image>`. Caveats mirror AWS:
+slower first pull, no cgroup limits on the test container, installs per-session ephemeral unless
+baked, all within ~8 vCPU / ~4 GB. **Fine for a postgres/redis integration suite in-box; heavy
+compose belongs on the GCP sandbox (Sandbox BYOC / Code Execution) or a remote `DOCKER_HOST`
+(Testcontainers Cloud) over the proven egress** — the same "light in-box, heavy elsewhere" split as
+the AWS profile.
+
+---
+
 ## Open questions to close before ADR (the ⚠️-verify backlog)
 
 > **[ADR-0044](decisions/0044-gcp-agent-runtime-profile.md) is now written** (Accepted,

@@ -6,15 +6,18 @@
 #
 #   gcloud builds submit --config deploy/gcp-agent-engine/cloudbuild.yaml \
 #     --substitutions=_TAG=latest .
+# The BYOC/nested-container proof image (ADR-0044) reuses this config with overrides:
+#   --substitutions=_TAG=probe,_DOCKERFILE=services/agent-runtime/Dockerfile.gcp-probe
 substitutions:
   _IMAGE: europe-west2-docker.pkg.dev/decent-decker-270921/agent-os/agent-runtime
   _TAG: latest
+  _DOCKERFILE: services/agent-runtime/Dockerfile
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
-      - services/agent-runtime/Dockerfile
+      - ${_DOCKERFILE}
       - -t
       - ${_IMAGE}:${_TAG}
       - .

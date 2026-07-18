@@ -1,0 +1,28 @@
+# agent-runtime + a Java toolchain AND podman — the GCP BYOC + nested-container
+# demonstration (ADR-0044), the GCP sibling of the AWS Dockerfile.java (ADR-0042).
+# TWO proofs baked into one image, deployed as a SECOND Vertex Agent Runtime:
+#   1. Language-agnostic BYOC — JDK 21 + a standalone JUnit runner in the SAME loop
+#      image: the agent writes/compiles/tests Java in-session, proving GEAP Agent Runtime
+#      is genuinely container-in/container-out (not tied to our Bun runtime).
+#   2. Nested containers — podman + fuse-overlayfs baked in, so the agent can pull+run a
+#      container INSIDE the session: does a Testcontainers-style suite work in-box? The
+#      GCP box (probed 2026-07-18) has /dev/fuse + a WRITABLE cgroup v1 tree + root, so
+#      unlike AWS AgentCore (no fuse → vfs-only) fuse-overlayfs/overlay should work here.
+# Runs SANDBOX_PROVIDER=local: the per-session box is itself the isolation boundary.
+# amd64 — GCP Agent Runtime is NOT arm64-only (unlike AgentCore). junit pinned at /opt.
+FROM oven/bun:1.3.4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      openjdk-21-jdk-headless podman fuse-overlayfs uidmap ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /opt/junit.jar \
+      https://repo1.maven.org/maven2/org/junit/platform/junit-platform-console-standalone/1.10.2/junit-platform-console-standalone-1.10.2.jar
+
+WORKDIR /app
+COPY . .
+RUN bun install
+
+ENV PORT=8080
+# GEAP steers the entrypoint by env, not command (see the base Dockerfile).
+ENV AGENT_ENTRYPOINT=services/agent-runtime/agent-engine.ts
+CMD ["sh", "-c", "exec bun run $AGENT_ENTRYPOINT"]

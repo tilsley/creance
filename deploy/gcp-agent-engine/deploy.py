@@ -72,14 +72,16 @@ def client():
     return vertexai.Client(project=PROJECT, location=LOCATION)
 
 
-def deploy(_args) -> None:
+def deploy(args) -> None:
     c = client()
-    print(f"creating Agent Runtime from {IMAGE} ...", file=sys.stderr)
+    image = getattr(args, "image", None) or IMAGE
+    display_name = getattr(args, "display_name", None) or "agent-os-loop"
+    print(f"creating Agent Runtime '{display_name}' from {image} ...", file=sys.stderr)
     engine = c.agent_engines.create(
         config={
-            "display_name": "agent-os-loop",
+            "display_name": display_name,
             "description": "agent-os L1 loop on Vertex Agent Runtime (ADR-0042 GCP sibling)",
-            "container_spec": {"image_uri": IMAGE},
+            "container_spec": {"image_uri": image},
             "env_vars": ENV_VARS,
             "service_account": SERVICE_ACCOUNT,
             "min_instances": 0,  # scale to zero — the cost-sensitive win
@@ -119,7 +121,12 @@ def query(args) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("deploy")
+    d = sub.add_parser("deploy")
+    # A second runtime from a different image (e.g. the BYOC/nested-container probe,
+    # services/agent-runtime/Dockerfile.gcp-probe → agent-runtime:probe) with a distinct
+    # display name, reusing the same ENV_VARS bundle.
+    d.add_argument("--image", help="override the container image_uri (default: agent-runtime:latest)")
+    d.add_argument("--display-name", dest="display_name", help="override the Agent Runtime display name")
     q = sub.add_parser("query")
     q.add_argument("--engine", required=True, help="reasoningEngine resource name")
     q.add_argument("--probe", action="store_true", help="probe mode (no model call)")
