@@ -146,6 +146,13 @@ build-vs-buy curve at a fourth operating point.
 
 ## Open questions to close before ADR (the ⚠️-verify backlog)
 
+> **[ADR-0044](decisions/0044-gcp-agent-runtime-profile.md) is now written** (Accepted,
+> 2026-07-18) on the strength of the resolved rows below — phases 1–3 (loop on Runtime →
+> Vertex Gemini → front-door dispatch via a shared Firestore ledger) are verified live. The
+> still-open items (#3 Memory Bank isolation, #4 managed MCP, #5 the 2LO/3LO OBO custody
+> pattern, #6 inbound events/budget admission) are carried into the ADR as **named open
+> phases (4–6)**, not blockers.
+
 1. ✅ **RESOLVED (2026-07-14) — live invoke proven.** Agent Runtime POSTs the `:query` body to
    **`POST /api/reasoning_engine`** as `{"input":{…}}` on `AIP_HTTP_PORT`=8080; the container must
    return **`{"output": <value>}`** (the platform relays the body as the `:query` response schema).
@@ -153,8 +160,10 @@ build-vs-buy curve at a fourth operating point.
    env-indirection); `env_vars`/`service_account`/`min_instances` top-level. **code-13** was the
    Reasoning Engine service agent lacking Artifact Registry read (fixed in Pulumi). Full write-up:
    [`deploy/gcp-agent-engine/README.md`](../deploy/gcp-agent-engine/README.md).
-2. **Regional availability** — assuming `us-central1`; confirm GEAP Agent Runtime + Memory Bank
-   are both there.
+2. ✅ **RESOLVED (2026-07-18) — region is `europe-west2` (London), not `us-central1`.** Chosen to
+   mirror the AWS primary `eu-west-2`; Agent Runtime, Firestore and Vertex Gemini (`gemini-2.5-flash`,
+   the only flash in ew2) are all confirmed there. Memory Bank availability in ew2 is the one row
+   still to confirm when that phase starts.
 3. **Memory Bank per-tenant isolation** — is there an IAM-condition-key equivalent to
    AgentCore Memory's namespace enforcement, or is isolation app-level?
 4. **Managed MCP gateway** — does GEAP expose an MCP endpoint (AgentCore Gateway analog), or is
