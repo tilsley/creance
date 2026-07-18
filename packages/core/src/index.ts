@@ -10,6 +10,7 @@ export * from "./sandboxed-agent"; // sandboxed-agent kind (ADR-0019, Model B)
 export * from "./config";
 export * from "./tools";
 export * from "./tool-gateway"; // #4: assemble per-run toolset from sources
+export * from "./http"; // withCors — app-owned CORS across all substrates (ADR-0043)
 export * from "./runs"; // State primitive (remember): persisted runs
 export * from "./agents"; // #5: agent control plane — the registry data model
 export * from "./gate"; // gate control: identity + budget
@@ -37,6 +38,7 @@ export * from "./adapters/mesh-trust-authenticator";
 export * from "./adapters/mesh-identity-authenticator"; // full-mode workload authn — Linkerd/Istio stamped identity (ADR-0028)
 export * from "./adapters/cognito-jwt-authenticator"; // verified human identity — OIDC user pool JWT (ADR-0032)
 export * from "./adapters/cognito-m2m-authenticator"; // verified machine identity — client_credentials access token (ADR-0041)
+export * from "./adapters/gcp-oidc-authenticator"; // verified machine identity on GCP — Google SA OIDC ID token (ADR-0044)
 export * from "./adapters/composite-authenticator"; // first-match-wins across credential kinds (ADR-0041)
 export * from "./adapters/noop-authenticator";
 // authz (ADR-0015): allow/deny policy seam
@@ -47,6 +49,7 @@ export * from "./adapters/kube-claim-source"; // unified claim reader: budget ca
 export * from "./adapters/dynamo-claim-source"; // the non-k8s ClaimSource — grants in DynamoDB (ADR-0021)
 export * from "./adapters/static-claim-source"; // dev/test ClaimSource from CLAIMS_STATIC (mirror of the LiteLLM hook's)
 export * from "./adapters/dynamo-spend-store"; // durable monthly spend counter (ADR-0013)
+export * from "./adapters/firestore-spend-store"; // shared monthly spend counter for the GCP split (ADR-0044 4b)
 export * from "./adapters/postgres-spend-store"; // full-mode ACID budget reserve — one conditional UPDATE (ADR-0023/0026/0028)
 export * from "./adapters/sts-tenant-credentials"; // per-tenant assume-role identity (ADR-0014)
 export * from "./adapters/local-credential-broker";
@@ -62,6 +65,7 @@ export * from "./adapters/bedrock-embeddings";
 export * from "./adapters/vector-memory";
 // remember: durable run store
 export * from "./adapters/dynamodb-run-store";
+export * from "./adapters/firestore-run-store"; // GCP managed profile: shared store for the DISPATCH=agentengine split
 // #5: agent control plane — CRD-backed registry (full mode) + DynamoDB registry (cheap mode)
 export * from "./adapters/kube-agent-registry";
 export * from "./adapters/dynamo-agent-registry"; // register agents with a PutItem, no redeploy (ADR-0031)

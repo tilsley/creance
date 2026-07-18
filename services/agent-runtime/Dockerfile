@@ -18,19 +18,25 @@ RUN bun install
 ENV PORT=3000
 EXPOSE 3000
 
-# One image, FOUR entrypoints (ADR-0031/0042) — the substrate picks which by overriding
-# the command OR (where the host can't override commands) the RUNTIME_ENTRYPOINT env;
-# no second build, all four share deps + adapter wiring.
-#   server.ts    (default) the always-on HTTP front door             — full-k8s
-#   task.ts      the Fargate task-per-run executor (RUN_ID via env)  — serverless executor
+# One image, FIVE entrypoints (ADR-0031/0042 + the GCP sibling) — the substrate picks
+# which by overriding the command OR (where the host can't override commands) an env
+# indirection; no second build, all five share deps + adapter wiring.
+#   server.ts       (default) the always-on HTTP front door        — full-k8s
+#   task.ts         the Fargate task-per-run executor (RUN_ID env) — serverless executor
 #     command: ["bun", "run", "services/agent-runtime/task.ts"]
-#   lambda.ts    the front door on Lambda (Runtime API loop, no HTTP server)
-#     command: ["bun", "run", "services/agent-runtime/lambda.ts"]    — serverless front door
-#   agentcore.ts the executor on AgentCore Runtime (/invocations + /ping contract)
-#     env: RUNTIME_ENTRYPOINT=services/agent-runtime/agentcore.ts    — managed profile
-#     (AgentCore Runtime has no command override, so the CMD is shell-form and reads
-#      the env the CfnRuntime sets; every other consumer overrides the command as before.)
+#   lambda.ts       the front door on Lambda (Runtime API loop)    — serverless front door
+#     command: ["bun", "run", "services/agent-runtime/lambda.ts"]
+#   agentcore.ts    the executor on AWS AgentCore Runtime (/invocations + /ping contract)
+#     RUNTIME_ENTRYPOINT=services/agent-runtime/agentcore.ts    (env — CfnRuntime sets it)
+#   agent-engine.ts the loop on GCP Vertex Agent Runtime           — managed GCP profile
+#     AGENT_ENTRYPOINT=services/agent-runtime/agent-engine.ts   (env — Agent Runtime sets it)
 # server.ts and lambda.ts serve the SAME handler (app.ts); only the server differs.
 # Defaults to INFERENCE_PROVIDER=bedrock / SANDBOX_PROVIDER=agentcore (override via env).
+#
+# ECS/Lambda select the entrypoint by overriding `command`. NEITHER managed runtime can
+# (their APIs expose only env), and each arrived with its own indirection var — so the
+# CMD honors both, AGENT_ENTRYPOINT winning if ever both are set. `exec` keeps bun as
+# PID 1 (signals/telemetry-flush intact); the default stays server.ts, so the
+# command-overriding profiles are unaffected.
 ENV RUNTIME_ENTRYPOINT=services/agent-runtime/server.ts
-CMD bun run ${RUNTIME_ENTRYPOINT}
+CMD ["sh", "-c", "exec bun run ${AGENT_ENTRYPOINT:-$RUNTIME_ENTRYPOINT}"]

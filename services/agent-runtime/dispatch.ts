@@ -10,6 +10,11 @@
  *     per-session microVM running OUR loop container (the agentcore.ts
  *     entrypoint). kind="claude-code" runs still go to Fargate: the foreign-L1
  *     lane cannot lean in (2vCPU/8GB, no sidecar seat — comparison §15).
+ *   - agentengine: the front door invokes a GCP Vertex **Agent Runtime**
+ *     (reasoningEngine :query) with the runId — the managed-runtime analog of
+ *     runtask, and the GCP sibling of ADR-0042's DISPATCH=agentcore. The run
+ *     executes inside the managed container (agent-engine.ts); state lives in the
+ *     store; the poller watches it. Fire-and-forget, like the others.
  * Selected by DISPATCH (default inprocess), so server.ts is the front door in
  * every profile; only the env bundle changes (ADR-0027).
  */
@@ -193,6 +198,68 @@ export function agentCoreDispatch(
   };
 }
 
+export interface AgentEngineConfig {
+  project: string;
+  location: string;
+  /** The deployed reasoningEngine's numeric id (Agent Runtime resource). */
+  reasoningEngineId: string;
+  /** Override the aiplatform base (defaults to the regional endpoint). */
+  endpoint?: string;
+}
+
+/** Read the Agent Runtime wiring the deploy publishes into the front door's env. */
+export function agentEngineConfigFromEnv(env: Record<string, string | undefined> = process.env): AgentEngineConfig {
+  const req = (k: string): string => {
+    const v = env[k];
+    if (!v) throw new Error(`DISPATCH=agentengine requires ${k}`);
+    return v;
+  };
+  return {
+    project: req("GCP_PROJECT"),
+    location: env.GCP_LOCATION ?? "europe-west2",
+    reasoningEngineId: req("AGENT_ENGINE_ID"),
+    endpoint: env.AGENT_ENGINE_ENDPOINT,
+  };
+}
+
+/** A GCP access token for the reasoningEngines call. Prefers an explicit
+ *  GCP_ACCESS_TOKEN (local/testing); otherwise the instance metadata server (works
+ *  when the front door runs on GCP — Cloud Run/GCE). Dependency-free on purpose:
+ *  no google-cloud SDK in the shared runtime image. Cross-cloud (front door on AWS
+ *  Lambda) will graduate to WIF here. */
+async function gcpAccessToken(): Promise<string> {
+  if (process.env.GCP_ACCESS_TOKEN) return process.env.GCP_ACCESS_TOKEN;
+  const res = await fetch(
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+    { headers: { "Metadata-Flavor": "Google" } },
+  );
+  if (!res.ok) throw new Error(`GCP metadata token fetch failed: ${res.status}`);
+  return ((await res.json()) as { access_token: string }).access_token;
+}
+
+/** managed GCP: invoke a Vertex Agent Runtime (reasoningEngine :query) with the
+ *  runId (ADR-0042's GCP sibling). The run executes in the managed container; on a
+ *  dispatch failure mark the run failed so it can't rot in `queued`. */
+export function agentEngineDispatch(config: AgentEngineConfig, runStore: RunStore): Dispatch {
+  const base = config.endpoint ?? `https://${config.location}-aiplatform.googleapis.com/v1`;
+  const url = `${base}/projects/${config.project}/locations/${config.location}/reasoningEngines/${config.reasoningEngineId}:query`;
+  return (run) => {
+    void (async () => {
+      const token = await gcpAccessToken();
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ input: { runId: run.id } }),
+      });
+      if (!res.ok) throw new Error(`reasoningEngine :query ${res.status}: ${await res.text()}`);
+      console.log(`dispatched run ${run.id} -> reasoningEngine ${config.reasoningEngineId}`);
+    })().catch(async (e) => {
+      console.error(`agentengine dispatch failed for run ${run.id}: ${e?.message ?? e}`);
+      await runStore.update(run.id, { status: "failed", error: `dispatch failed: ${e?.message ?? e}` }).catch(() => {});
+    });
+  };
+}
+
 /** The dispatch seam, per-run aware: `dispatch` routes each run by its stamped
  *  `run.dispatch` (falling back to the profile default), and `modes` names every
  *  substrate this deployment can execute — what the front door validates a
@@ -203,16 +270,16 @@ export interface Dispatcher {
   dispatch: Dispatch;
 }
 
-/** Build the dispatcher from env. DISPATCH (inprocess|runtask|agentcore; default
- *  inprocess) picks the DEFAULT substrate and must be fully wired (missing env is
- *  an init error, as before). Any OTHER substrate whose wiring happens to be
- *  present (ECS_TASK_DEFINITION / AGENTCORE_RUNTIME_ARN) is offered as a per-run
- *  override — except inprocess, which is never an override: a scale-to-zero front
- *  door dies with the request, taking the run with it. */
+/** Build the dispatcher from env. DISPATCH (inprocess|runtask|agentcore|agentengine;
+ *  default inprocess) picks the DEFAULT substrate and must be fully wired (missing
+ *  env is an init error, as before). Any OTHER substrate whose wiring happens to be
+ *  present (ECS_TASK_DEFINITION / AGENTCORE_RUNTIME_ARN / AGENT_ENGINE_ID+GCP_PROJECT)
+ *  is offered as a per-run override — except inprocess, which is never an override: a
+ *  scale-to-zero front door dies with the request, taking the run with it. */
 export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {}): Dispatcher {
   const defaultMode = (process.env.DISPATCH ?? "inprocess") as DispatchMode;
-  if (!["inprocess", "runtask", "agentcore"].includes(defaultMode)) {
-    throw new Error(`unknown DISPATCH: ${defaultMode} (expected inprocess|runtask|agentcore)`);
+  if (!["inprocess", "runtask", "agentcore", "agentengine"].includes(defaultMode)) {
+    throw new Error(`unknown DISPATCH: ${defaultMode} (expected inprocess|runtask|agentcore|agentengine)`);
   }
   // one RunTask dispatch serves both the runtask substrate and agentcore's cc lane
   let runTask: Dispatch | undefined;
@@ -228,6 +295,8 @@ export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {})
   if (defaultMode === "inprocess") table.set("inprocess", inProcessDispatch(providers, opts));
   if (defaultMode === "runtask" || process.env.ECS_TASK_DEFINITION) table.set("runtask", getRunTask());
   if (defaultMode === "agentcore" || process.env.AGENTCORE_RUNTIME_ARN) table.set("agentcore", getAgentCore());
+  if (defaultMode === "agentengine" || (process.env.AGENT_ENGINE_ID && process.env.GCP_PROJECT))
+    table.set("agentengine", agentEngineDispatch(agentEngineConfigFromEnv(), providers.runStore));
 
   return {
     defaultMode,

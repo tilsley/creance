@@ -10,7 +10,7 @@
  * dispatch) lives in router.ts; the dispatch strategy is picked by env in
  * dispatch.ts (DISPATCH=inprocess|runtask).
  */
-import { UnauthorizedError, currentPeriod, type AgentSpec, type Principal, type Providers } from "@agent-os/core";
+import { UnauthorizedError, currentPeriod, withCors, type AgentSpec, type Principal, type Providers } from "@agent-os/core";
 import { handleA2A, buildAgentCard } from "./a2a";
 import { makeAuthorizeAndCreate } from "./router";
 import { dispatchFromEnv } from "./dispatch";
@@ -105,7 +105,9 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
   const redact = <T extends { principal?: { token?: string } }>(run: T): T =>
     run.principal ? { ...run, principal: { ...run.principal, token: undefined } } : run;
 
-  return async function handle(req: Request): Promise<Response> {
+  // CORS is app-owned (ADR-0043): the console preflights from its CloudFront
+  // origin, and the edge (API Gateway or nothing) no longer answers for us.
+  return withCors(async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
 
     // --- A2A protocol surface (ADR-0018): discovery + JSON-RPC ---
@@ -269,5 +271,5 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
     }
 
     return new Response("not found", { status: 404 });
-  };
+  });
 }

@@ -7,7 +7,7 @@
  * Routes, authn, admission, and both wires (bespoke /v1/generate + Anthropic
  * /v1/messages, ADR-0028) are identical across substrates.
  */
-import type { Providers } from "@agent-os/core";
+import { withCors, type Providers } from "@agent-os/core";
 import { handleGenerate } from "./generate";
 import { handleCreateClaim } from "./claims";
 import { handleMessages } from "./messages";
@@ -35,7 +35,8 @@ export function createGatewayApp(providers: Providers): (req: Request) => Promis
     resolveModel,
   };
 
-  return async function handle(req: Request): Promise<Response> {
+  // CORS is app-owned (ADR-0043) — identical behavior on pod, Lambda, and edge.
+  return withCors(async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (req.method === "GET" && url.pathname === "/healthz") return Response.json({ status: "ok" });
     if (req.method === "POST" && url.pathname === "/v1/generate") {
@@ -52,5 +53,5 @@ export function createGatewayApp(providers: Providers): (req: Request) => Promis
       return handleCreateClaim(req, claimWrite);
     }
     return new Response("not found", { status: 404 });
-  };
+  });
 }

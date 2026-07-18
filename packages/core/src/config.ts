@@ -6,6 +6,7 @@
  * Call ONCE per process — the OTel telemetry sink registers a global provider.
  */
 import { BedrockInferenceProvider } from "./adapters/bedrock-inference";
+import { VertexGeminiInferenceProvider } from "./adapters/vertex-gemini-inference";
 import { OllamaInferenceProvider } from "./adapters/ollama-inference";
 import { ScriptedInferenceProvider } from "./adapters/scripted-inference";
 import { AdmissionInferenceProvider } from "./adapters/admission-inference";
@@ -26,6 +27,7 @@ import { MeshIdentityAuthenticator } from "./adapters/mesh-identity-authenticato
 import { OidcServiceAccountAuthenticator, KubeTokenReviewer } from "./adapters/oidc-sa-authenticator";
 import { CognitoJwtAuthenticator } from "./adapters/cognito-jwt-authenticator";
 import { CognitoM2mAuthenticator } from "./adapters/cognito-m2m-authenticator";
+import { GcpOidcAuthenticator } from "./adapters/gcp-oidc-authenticator";
 import { CompositeAuthenticator } from "./adapters/composite-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
@@ -35,6 +37,7 @@ import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
 import { StaticClaimSource } from "./adapters/static-claim-source";
 import type { ClaimSource, ClaimWrite } from "./claims";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
+import { FirestoreSpendStore } from "./adapters/firestore-spend-store";
 import { PostgresSpendStore } from "./adapters/postgres-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
@@ -45,6 +48,7 @@ import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
 import { GatewayToolProvider } from "./adapters/gateway-tool-provider";
 import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
 import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
+import { FirestoreRunStore } from "./adapters/firestore-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
 import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
 import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
@@ -98,6 +102,18 @@ export function providersFromEnv(env: Env = process.env): Providers {
     switch (inferenceKind) {
       case "bedrock":
         return new BedrockInferenceProvider(env.MODEL_ID ?? "amazon.nova-lite-v1:0", region);
+      case "vertex": {
+        // GCP-native model path (Agent Runtime profile). Project from the standard
+        // GOOGLE_CLOUD_PROJECT (Vertex injects it) or GCP_PROJECT; ADC auth, so no key.
+        const project = env.GOOGLE_CLOUD_PROJECT ?? env.GCP_PROJECT;
+        if (!project) throw new Error("INFERENCE_PROVIDER=vertex requires GOOGLE_CLOUD_PROJECT (or GCP_PROJECT)");
+        return new VertexGeminiInferenceProvider(
+          env.VERTEX_MODEL ?? "gemini-2.5-flash",
+          project,
+          env.GCP_LOCATION ?? "europe-west2",
+          env.VERTEX_THINKING_BUDGET ? Number(env.VERTEX_THINKING_BUDGET) : 0,
+        );
+      }
       case "ollama":
         return new OllamaInferenceProvider(env.OLLAMA_MODEL ?? "llama3.1", env.OLLAMA_HOST);
       case "scripted": // deterministic demo/test driver (ADR-0017 A2A); SCRIPTED_TURNS = JSON
@@ -211,6 +227,18 @@ export function providersFromEnv(env: Env = process.env): Providers {
     switch (env.SPEND_STORE ?? "memory") {
       case "dynamodb":
         return new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT);
+      case "firestore": {
+        // GCP managed profile (ADR-0044 4b): the front door and the engine run in
+        // different processes, so per-tenant spend must live in ONE Firestore ledger both
+        // see. Same project-ID caveat as the run store (a project NUMBER 404s).
+        const project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT;
+        if (!project) throw new Error("SPEND_STORE=firestore requires GCP_PROJECT (the project ID; a project number will not resolve)");
+        return new FirestoreSpendStore(project, {
+          database: env.FIRESTORE_DATABASE,
+          collection: env.FIRESTORE_BUDGETS_COLLECTION,
+          endpoint: env.FIRESTORE_ENDPOINT,
+        });
+      }
       case "postgres":
         if (!env.SPEND_DATABASE_URL) throw new Error("SPEND_STORE=postgres requires SPEND_DATABASE_URL");
         return new PostgresSpendStore(env.SPEND_DATABASE_URL);
@@ -271,6 +299,23 @@ export function providersFromEnv(env: Env = process.env): Providers {
             tenantScopePrefix: env.COGNITO_M2M_TENANT_SCOPE_PREFIX,
           }),
         ]);
+      }
+      case "gcp-oidc": {
+        // verified machine identity on GCP (ADR-0044, the GCP sibling of 0041's Cognito
+        // M2M): a service account presents a Google-signed OIDC ID token; subject = its
+        // verified email, tenant = an external SA→tenant grant (ID tokens can't carry a
+        // Cognito-scope analog). GCP_OIDC_AUDIENCE is the audience the caller must mint
+        // the token for (the front door's identifier); GCP_SA_TENANT_GRANTS is the
+        // JSON {email: tenant} binding map — adding an entry IS tenant onboarding.
+        if (!env.GCP_OIDC_AUDIENCE) throw new Error("AUTHN=gcp-oidc requires GCP_OIDC_AUDIENCE");
+        return new GcpOidcAuthenticator({
+          audience: env.GCP_OIDC_AUDIENCE,
+          grants: env.GCP_SA_TENANT_GRANTS ? (JSON.parse(env.GCP_SA_TENANT_GRANTS) as Record<string, string>) : {},
+          allowedEmailDomains: env.GCP_OIDC_ALLOWED_EMAIL_DOMAINS
+            ? env.GCP_OIDC_ALLOWED_EMAIL_DOMAINS.split(",").map((s) => s.trim()).filter(Boolean)
+            : undefined,
+          issuer: env.GCP_OIDC_ISSUER,
+        });
       }
       case "noop":
         return new NoopAuthenticator();
@@ -355,11 +400,31 @@ export function providersFromEnv(env: Env = process.env): Providers {
   })();
 
   // remember (State primitive): durable run store. In-memory for dev; DynamoDB
-  // (a real AWS resource) for restart-survival. RUNS_TABLE_ENDPOINT → DynamoDB Local.
-  const runStore: RunStore =
-    (env.RUN_STORE ?? "memory") === "dynamodb"
-      ? new DynamoDBRunStore(env.RUNS_TABLE ?? "agent-os-runs", region, env.RUNS_TABLE_ENDPOINT)
-      : new InMemoryRunStore();
+  // (a real AWS resource) for restart-survival; Firestore for the GCP managed profile,
+  // where the DISPATCH=agentengine split needs the front door and the engine to share
+  // one run. RUNS_TABLE_ENDPOINT → DynamoDB Local; FIRESTORE_* tune the GCP backing.
+  const runStore: RunStore = (() => {
+    switch (env.RUN_STORE) {
+      case "dynamodb":
+        return new DynamoDBRunStore(env.RUNS_TABLE ?? "agent-os-runs", region, env.RUNS_TABLE_ENDPOINT);
+      case "firestore": {
+        // Firestore REST resolves the (default) database ONLY by project ID — a project
+        // NUMBER 404s ("database (default) does not exist"). The managed runtime injects
+        // GOOGLE_CLOUD_PROJECT as the NUMBER (aiplatform tolerates it, Firestore does not),
+        // so prefer an explicit GCP_PROJECT (the ID) and treat GOOGLE_CLOUD_PROJECT as a
+        // last resort (correct only when it happens to hold the ID, e.g. local dev).
+        const project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT;
+        if (!project) throw new Error("RUN_STORE=firestore requires GCP_PROJECT (the project ID; a project number will not resolve)");
+        return new FirestoreRunStore(project, {
+          database: env.FIRESTORE_DATABASE,
+          collection: env.FIRESTORE_RUNS_COLLECTION,
+          endpoint: env.FIRESTORE_ENDPOINT,
+        });
+      }
+      default:
+        return new InMemoryRunStore();
+    }
+  })();
 
   // agent control plane (#5): the registry of agent definitions the runtime reads.
   // memory (seeded from AGENTS_JSON) for dev; dynamodb (cheap mode — edit agents with a

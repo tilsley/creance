@@ -13,7 +13,7 @@ import type { Principal } from "./gate";
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "blocked" | "stuck";
 
 /** The execution substrates behind the dispatch seam (ADR-0031/0042). */
-export type DispatchMode = "inprocess" | "runtask" | "agentcore";
+export type DispatchMode = "inprocess" | "runtask" | "agentcore" | "agentengine";
 
 export interface Run {
   id: string;

@@ -6,4 +6,6 @@
 export * from "./config"; // platform discovery via the console's config.json
 export * from "./browser-login"; // human: hosted-UI code+PKCE → id token (ADR-0032)
 export * from "./machine-login"; // service: client_credentials → access token (ADR-0041)
+export * from "./gcp-machine-login"; // service on GCP: SA → Google OIDC ID token (ADR-0044)
 export * from "./gateway"; // governed think: POST /v1/generate (ADR-0019/0039)
+export type { paths as GatewayPaths, components as GatewayComponents } from "./generated"; // the full contract (ADR-0043)

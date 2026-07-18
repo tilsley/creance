@@ -23,7 +23,7 @@ export interface Message {
   results?: ToolResult[];
 }
 
-export type DispatchMode = "inprocess" | "runtask" | "agentcore";
+export type DispatchMode = "inprocess" | "runtask" | "agentcore" | "agentengine";
 
 export interface RunSummary {
   id: string;

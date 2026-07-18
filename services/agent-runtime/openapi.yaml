@@ -1,0 +1,395 @@
+# The platform front door's contract (ADR-0043) — a PURE OpenAPI document; the
+# AWS integration overlay is injected at CDK synth (infra/lib/spec-rest-api.ts).
+# Same file, three jobs: describes the API across both deployment profiles
+# (ADR-0027), gets request-shape validation at the edge, and is the reviewable
+# record of what the platform IS (ADR-0038: the API server was the point).
+#
+# Auth is app-layer (ADR-0026): reads and writes verify the Bearer themselves
+# (composite — Cognito id token for humans, M2M access token for services,
+# ADR-0041). The edge validates shape, never identity.
+openapi: 3.0.1
+info:
+  title: agent-os platform API
+  description: >-
+    The front door (ADR-0031): run admission (authn → authz → budget → create →
+    dispatch), run/agent reads, agent onboarding (ADR-0038), tenant showback
+    (ADR-0036), and the A2A protocol surface (ADR-0018).
+  version: "1.0"
+paths:
+  /healthz:
+    get:
+      operationId: health
+      summary: Liveness probe (unauthenticated)
+      responses:
+        "200":
+          description: The front door is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+  /:
+    get:
+      operationId: root
+      summary: Service pointer (unauthenticated)
+      responses:
+        "200":
+          description: Where the UI and health live.
+          content:
+            application/json:
+              schema: { type: object }
+  /info:
+    get:
+      operationId: info
+      summary: Wiring snapshot — which adapter fills each port (unauthenticated)
+      responses:
+        "200":
+          description: Adapter names per port.
+          content:
+            application/json:
+              schema: { type: object }
+  /runs:
+    get:
+      operationId: listRuns
+      summary: List recent runs (transcripts omitted)
+      security:
+        - bearer: []
+      responses:
+        "200":
+          description: Up to 100 runs, newest first, principals redacted.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createRun
+      summary: Admit a run through the gate
+      description: >-
+        authn → authz(agent, repo) → budget/quota → create queued → dispatch
+        (task-per-run on the cheap profile). Tenant is stamped from the
+        verified identity, never the body.
+      security:
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRunRequest"
+      responses:
+        "202":
+          description: Admitted and dispatched; poll GET /runs/{id} to watch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunAccepted"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Budget or quota refused admission (R2).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Authorization denied (R1).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /runs/{id}:
+    get:
+      operationId: getRun
+      summary: Read one run (the watch primitive — poll this)
+      security:
+        - bearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The run, live transcript included, principal redacted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /agents:
+    get:
+      operationId: listAgents
+      summary: List registered agents
+      security:
+        - bearer: []
+      responses:
+        "200":
+          description: The registry's catalog.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AgentSpec" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: registerAgent
+      summary: Register or update an agent (ADR-0038 — the governed write path)
+      description: >-
+        authn → authz(agent:register, {kind}) → validate → tenant STAMPED from
+        the verified identity → upsert. An existing agent may only be
+        overwritten by its owning tenant.
+      security:
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSpecWrite"
+      responses:
+        "200":
+          description: Updated (the stamped spec as stored).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSpec" }
+        "201":
+          description: Created (the stamped spec as stored).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentSpec" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Authorization denied, or the agent is owned by another tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "501":
+          description: This deployment's registry is not writable via the API.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /agents/{name}:
+    delete:
+      operationId: deleteAgent
+      summary: Remove an agent (owning tenant only)
+      security:
+        - bearer: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Authorization denied, or owned by another tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501":
+          description: This deployment's registry is not writable via the API.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /tenants/{tenant}/budget:
+    get:
+      operationId: getBudget
+      summary: The tenant's dollar-budget status (R2)
+      security:
+        - bearer: []
+      parameters:
+        - name: tenant
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cap, spend, and remaining for the current period.
+          content:
+            application/json:
+              schema: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /tenants/{tenant}/usage:
+    get:
+      operationId: getUsage
+      summary: Showback — both governed lanes in one view (ADR-0036)
+      security:
+        - bearer: []
+      parameters:
+        - name: tenant
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Metered dollar spend AND run-quota consumption.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { type: string }
+                  period: { type: string }
+                  budget: { type: object }
+                  quota: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /a2a:
+    post:
+      operationId: a2a
+      summary: A2A JSON-RPC endpoint (ADR-0018)
+      description: >-
+        message/send, tasks/get et al. — the same gate as POST /runs behind a
+        JSON-RPC envelope. Shape kept permissive; the protocol handler owns it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc: { type: string, enum: ["2.0"] }
+                method: { type: string }
+                id: {}
+                params: { type: object }
+              additionalProperties: true
+      responses:
+        "200":
+          description: JSON-RPC response envelope.
+          content:
+            application/json:
+              schema: { type: object }
+  /.well-known/agent-card.json:
+    get:
+      operationId: agentCard
+      summary: A2A discovery document (unauthenticated)
+      responses:
+        "200":
+          description: The agent card.
+          content:
+            application/json:
+              schema: { type: object }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Verified at the app layer (composite — ADR-0041): a Cognito id token
+        (human) or client_credentials access token (machine).
+  responses:
+    BadRequest:
+      description: The request shape failed validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or unverifiable credential (fail closed).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        reason: { type: string }
+    CreateRunRequest:
+      type: object
+      required: [task]
+      properties:
+        task:
+          type: string
+          minLength: 1
+          description: What the agent should do.
+        agent:
+          type: string
+          description: Registry name; the registry's kind picks the executor.
+        repo:
+          type: string
+          pattern: "^[\\w.-]+/[\\w.-]+$"
+          description: >-
+            Target repo for coding runs (owner/name) — authorized by the gate,
+            then pinned by the egress sidecar's allowlist (ADR-0034).
+    RunAccepted:
+      type: object
+      required: [runId, status, tenant]
+      properties:
+        runId: { type: string }
+        status: { type: string }
+        agent: { type: string }
+        repo: { type: string }
+        tenant:
+          type: string
+          description: Stamped from the verified identity.
+    Run:
+      type: object
+      description: >-
+        The run record. Transcript (messages) present on single-run reads,
+        omitted from lists; principal.token always redacted.
+      required: [id, status]
+      properties:
+        id: { type: string }
+        status: { type: string }
+        agent: { type: string }
+        task: { type: string }
+        output: { type: string }
+        error: { type: string }
+        messages:
+          type: array
+          items: { type: object }
+        principal: { type: object }
+        usage: { type: object }
+      additionalProperties: true
+    AgentSpecWrite:
+      type: object
+      description: >-
+        The registerable agent shape (ADR-0038). `tenant` is deliberately NOT
+        accepted — ownership is stamped from the verified identity.
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        kind:
+          type: string
+          enum: [loop, sandboxed, claude-code]
+          default: loop
+        model: { type: string, maxLength: 128 }
+        systemPrompt: { type: string, maxLength: 8000 }
+        tools:
+          type: array
+          items: { type: string }
+        maxSteps:
+          type: integer
+          minimum: 1
+          maximum: 50
+        command:
+          type: string
+          description: kind=sandboxed only.
+    AgentSpec:
+      allOf:
+        - $ref: "#/components/schemas/AgentSpecWrite"
+        - type: object
+          properties:
+            tenant:
+              type: string
+              readOnly: true

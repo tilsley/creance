@@ -7,5 +7,12 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript ../../services/inference-gateway/openapi.yaml -o src/generated.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "^5.9.0"
   }
 }

@@ -1,0 +1,26 @@
+# Build the agent-runtime image (linux/amd64, native on Cloud Build workers) and push
+# it to the europe-west2 Artifact Registry repo the Pulumi stack created. Same image
+# as every other profile — the Agent Runtime deploy overrides the command to select the
+# agent-engine.ts entrypoint ("fourth entrypoint, same image"). Context is the repo root
+# so the Dockerfile's `COPY . .` sees the whole workspace; .dockerignore strips apps/.
+#
+#   gcloud builds submit --config deploy/gcp-agent-engine/cloudbuild.yaml \
+#     --substitutions=_TAG=latest .
+substitutions:
+  _IMAGE: europe-west2-docker.pkg.dev/decent-decker-270921/agent-os/agent-runtime
+  _TAG: latest
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - services/agent-runtime/Dockerfile
+      - -t
+      - ${_IMAGE}:${_TAG}
+      - .
+images:
+  - ${_IMAGE}:${_TAG}
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+timeout: 1800s

@@ -13,9 +13,16 @@
   },
   "context": {
     "@aws-cdk/core:newStyleStackSynthesis": true,
-    "consoleCallbackUrls": "https://d1x3uwxrkjekua.cloudfront.net/,http://localhost:5173/",
+    "consoleCallbackUrls": "https://console.creance.nathantilsley.com/,http://localhost:5173/",
     "otelEndpoint": "https://otlp-gateway-prod-gb-south-1.grafana.net/otlp",
     "grafanaUrl": "https://mellowhovercraft3539.grafana.net",
-    "agentcoreProfile": true
+    "agentcoreProfile": true,
+    "hostedZoneId": "Z082201838P6J29DPDWZW",
+    "hostedZoneName": "nathantilsley.com",
+    "apiDomain": "api.creance.nathantilsley.com",
+    "inferenceDomain": "inference.creance.nathantilsley.com",
+    "consoleDomain": "console.creance.nathantilsley.com",
+    "authDomain": "auth.creance.nathantilsley.com",
+    "rootDomain": "creance.nathantilsley.com"
   }
 }

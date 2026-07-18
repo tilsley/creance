@@ -6,6 +6,7 @@ const DISPATCH_LABELS: Record<DispatchMode, string> = {
   inprocess: "In-process (dev)",
   runtask: "Fargate task",
   agentcore: "AgentCore microVM",
+  agentengine: "Vertex Agent Runtime (GCP)",
 };
 
 export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: () => void }) {

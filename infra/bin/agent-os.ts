@@ -13,6 +13,7 @@ import { AgentCoreStack } from "../lib/agentcore-stack";
 import { AuthStack } from "../lib/auth-stack";
 import { BedrockStack } from "../lib/bedrock-stack";
 import { ConsoleStack } from "../lib/console-stack";
+import { UsEast1CertStack } from "../lib/us-east-1-cert-stack";
 import { GatewayStack } from "../lib/gateway-stack";
 import { DataLogStack } from "../lib/data-log-stack";
 import { StateStack } from "../lib/state-stack";
@@ -36,16 +37,46 @@ new BedrockStack(app, "AgentOsBedrock", { env });
 // full-mode trips (`cdk deploy AgentOsPostgres -c dbAllowedCidr=<ip>/32`); destroy cleans up.
 new PostgresStack(app, "AgentOsPostgres", { env });
 
+// The spec-driven custom-domain edge (ADR-0043): both public APIs sit behind
+// API Gateway REST APIs generated from their PURE OpenAPI contracts, on
+// subdomains of the operator's zone. Context lives in cdk.json (never -c flags).
+const hostedZoneId = app.node.tryGetContext("hostedZoneId");
+const hostedZoneName = app.node.tryGetContext("hostedZoneName");
+const hostedZone = hostedZoneId && hostedZoneName ? { id: String(hostedZoneId), name: String(hostedZoneName) } : undefined;
+const edgeFor = (ctxKey: string) => {
+  const domainName = app.node.tryGetContext(ctxKey);
+  return hostedZone && domainName ? { domainName: String(domainName), hostedZone } : undefined;
+};
+
 // IMPLEMENTED — the console's human IdP (ADR-0032): a Cognito user pool whose id
 // token is the Bearer credential the front door verifies (AUTHN=cognito). ~$0 idle.
-const auth = new AuthStack(app, "AgentOsAuth", { env });
+// The hosted UI gets its own custom domain (auth.creance.…) — Cognito fronts it
+// with CloudFront, hence another us-east-1 cert. FIRST-ROLLOUT ORDER: the console
+// stack must deploy its apex alias before Cognito will accept the custom domain
+// (parent must resolve) — see AuthStackProps.edge.
+const authEdge = edgeFor("authDomain");
+const authCert = authEdge
+  ? new UsEast1CertStack(app, "AgentOsAuthCert", {
+      env: { account: env.account, region: "us-east-1" },
+      crossRegionReferences: true,
+      domainName: authEdge.domainName,
+      hostedZone: authEdge.hostedZone,
+    })
+  : undefined;
+const auth = new AuthStack(app, "AgentOsAuth", {
+  env,
+  crossRegionReferences: true,
+  ...(authEdge && authCert ? { edge: { ...authEdge, certificate: authCert.certificate } } : {}),
+});
 
 // IMPLEMENTED — the inference gateway on the serverless substrate (ADR-0039):
-// ADR-0019's choke point as a scale-to-zero Lambda + Function URL. Delegated
-// agents (kind=sandboxed/custom) think ONLY through this; the loop stays direct.
+// ADR-0019's choke point as a scale-to-zero Lambda behind the spec edge
+// (ADR-0043). Delegated agents (kind=sandboxed/custom) think ONLY through
+// this; the loop stays direct.
 const gateway = new GatewayStack(app, "AgentOsGateway", {
   env,
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
+  edge: edgeFor("inferenceDomain"),
 });
 
 // IMPLEMENTED, OPT-IN — the managed profile's loop hosting (ADR-0042 phase 1):
@@ -69,6 +100,7 @@ const serverless = new ServerlessStack(app, "AgentOsServerless", {
   cognito: { issuer: auth.issuer, clientId: auth.clientId },
   agentGatewayUrl: gateway.gatewayUrl, // delegated agents' think-path (ADR-0039)
   ...(agentcore ? { agentcore: { runtimeArn: agentcore.runtimeArn } } : {}),
+  edge: edgeFor("apiDomain"), // the platform API's custom domain (ADR-0043)
 });
 
 // IMPLEMENTED — the web console (ADR-0032): the built SPA on S3+CloudFront, with
@@ -77,8 +109,29 @@ const serverless = new ServerlessStack(app, "AgentOsServerless", {
 // The per-run "trace ↗" link (ADR-0035): where traces land, from persisted context
 // (cdk.json — NOT a CLI flag; those silently revert). Unset ⇒ no link rendered.
 const grafanaUrl = app.node.tryGetContext("grafanaUrl");
+// The console's custom domain (ADR-0043 pattern on the UI): CloudFront only takes
+// us-east-1 certs, so the cert is its own stack there and the ARN crosses regions
+// via crossRegionReferences (both sides must opt in). The bare apex (rootDomain)
+// rides on the same cert + distribution — the canonical-host function 301s it to
+// the console, and its A record satisfies Cognito's parent-must-resolve rule.
+const consoleEdge = edgeFor("consoleDomain");
+const rootDomain = app.node.tryGetContext("rootDomain");
+const additionalDomains = rootDomain ? [String(rootDomain)] : undefined;
+const consoleCert = consoleEdge
+  ? new UsEast1CertStack(app, "AgentOsConsoleCert", {
+      env: { account: env.account, region: "us-east-1" },
+      crossRegionReferences: true,
+      domainName: consoleEdge.domainName,
+      hostedZone: consoleEdge.hostedZone,
+      subjectAlternativeNames: additionalDomains,
+    })
+  : undefined;
 new ConsoleStack(app, "AgentOsConsole", {
   env,
+  crossRegionReferences: true,
+  ...(consoleEdge && consoleCert
+    ? { edge: { ...consoleEdge, certificate: consoleCert.certificate, additionalDomains } }
+    : {}),
   apiUrl: serverless.frontDoorUrl,
   auth: { hostedUiBaseUrl: auth.hostedUiBaseUrl, clientId: auth.clientId },
   ...(grafanaUrl
