@@ -50,7 +50,7 @@ Mapping the profile's rows (cross-referenced to the AgentCore column of
 | Run ledger | DynamoDB (already the store) | **Firestore** (`RUN_STORE=firestore`) — *new*, because the split needs a shared store (see below) | **LIVE** |
 | Inference (think) | Bedrock + in-process admission | **Vertex Gemini** (`INFERENCE_PROVIDER=vertex`, `gemini-2.5-flash`) — dependency-free REST + ADC | **LIVE** |
 | Sandbox (do) | AgentCore Code Interpreter | `SANDBOX_PROVIDER=local` (GCP Sandbox BYOC is a later phase) | **open** |
-| Inbound authn | Cognito JWT authorizer | platform GCP-IAM on `:query`; per-tenant gate unset (`GATE` off) | **open** |
+| Inbound authn | Cognito JWT authorizer | **`AUTHN=gcp-oidc`** — caller's Google SA **OIDC ID token** → tenant via an SA→tenant grant; `GATE=local` gates the tenant | **LIVE** |
 | Memory | `MEMORY=agentcore` | GEAP **Memory Bank** adapter (so runs surface in the Agent Engine console) | **open** |
 | **Inference gateway + gate** | **invariant** | **invariant** — `server.ts`, same gate | **LIVE** |
 | **Front door / control plane** | **router — invariant** (calls `InvokeAgentRuntime`) | **`server.ts` — invariant** (calls `:query`) | **LIVE** |
@@ -117,8 +117,21 @@ front door — is the clearest evidence for the profile thesis this arc produced
 3. **Front-door dispatch via shared Firestore** — **✅ live 2026-07-18** ([f9a44d3](../../));
    a real task routes `server.ts` → Firestore → engine → `completed`, proving the
    invariant front door drives the managed loop.
-4. **Per-tenant identity/gate** — map a GCP-IAM caller → tenant (the GCP analog of
-   [0041](0041-machine-identity-cognito-m2m.md)), replacing open authn. **open.**
+4. **Per-tenant identity/gate** — **✅ live 2026-07-18** ([f9a44d3+](../../)); the GCP
+   analog of [0041](0041-machine-identity-cognito-m2m.md). `AUTHN=gcp-oidc`
+   (`GcpOidcAuthenticator`) verifies a caller's Google-signed **OIDC ID token** against
+   Google's JWKS (issuer + our audience), takes `subject` = the verified SA `email`, and
+   resolves `tenant` from an external **SA→tenant grant** — ID tokens can't carry a
+   Cognito-scope analog, so the binding lives outside the token (adding it IS onboarding;
+   at scale it graduates to a ClaimSource/Firestore resolver). The client SDK's
+   `gcpIdentityTokenProvider` is the machine counterpart (metadata-server mint, cache +
+   refresh). Verified live end-to-end against the front door with `GATE=local`: granted
+   identity → `202`, `tenant` stamped from the token and persisted through to engine
+   execution; no/garbage token → `401`; ungranted SA → `401`; over-budget tenant → `402`.
+   **Follow-on (4b):** the front-door `checkBudget` is coarse admission; the *metered*
+   per-token spend happens in the engine process, so a durable per-tenant budget needs a
+   **shared `FirestoreSpendStore`** (the budget twin of `FirestoreRunStore`, same
+   split-process lesson) + `GATE=local` on the engine. **open.**
 5. **Sessions / Memory Bank adapter** — so runs surface in the Agent Engine console and
    memory goes live. **open.**
 6. **GCP sandbox adapter** (Sandbox BYOC / Code Execution) — so tool-calling tasks work,
@@ -141,9 +154,11 @@ front door — is the clearest evidence for the profile thesis this arc produced
   concurrency fix DynamoDB never did. Documented, not hidden.
 - **−** **Two IaC tools** (CDK + Pulumi) until the `infra/{aws,gcp}` refactor — more to
   learn, more to keep coherent.
-- **−** **The profile is honestly partial**: identity is open (platform-IAM only, no
-  per-tenant gate), sandbox is `local`, memory is unwired. "Managed GCP" today means
-  *the loop is managed and governed by the invariant shell* — not that every row leaned in.
+- **−** **The profile is honestly partial**: identity → tenant + coarse admission are
+  live, but durable per-tenant *spend* (metered in the engine process) still needs a
+  shared `FirestoreSpendStore` (phase 4b), and sandbox is `local` / memory unwired.
+  "Managed GCP" today means *the loop is managed, the caller is identified, and the
+  invariant shell governs it* — not that every row leaned in.
 - **−** **The claude-code / foreign-L1 lane stays on Cloud Run** — the same boundary as
   every profile ([0036](0036-foreign-l1-boundary-governance.md)); managed-for-metered-agents,
   said plainly.

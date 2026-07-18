@@ -27,6 +27,7 @@ import { MeshIdentityAuthenticator } from "./adapters/mesh-identity-authenticato
 import { OidcServiceAccountAuthenticator, KubeTokenReviewer } from "./adapters/oidc-sa-authenticator";
 import { CognitoJwtAuthenticator } from "./adapters/cognito-jwt-authenticator";
 import { CognitoM2mAuthenticator } from "./adapters/cognito-m2m-authenticator";
+import { GcpOidcAuthenticator } from "./adapters/gcp-oidc-authenticator";
 import { CompositeAuthenticator } from "./adapters/composite-authenticator";
 import { NoopAuthenticator } from "./adapters/noop-authenticator";
 import { AllowAllAuthorizer } from "./adapters/allow-all-authorizer";
@@ -280,6 +281,23 @@ export function providersFromEnv(env: Env = process.env): Providers {
             tenantScopePrefix: env.COGNITO_M2M_TENANT_SCOPE_PREFIX,
           }),
         ]);
+      }
+      case "gcp-oidc": {
+        // verified machine identity on GCP (ADR-0044, the GCP sibling of 0041's Cognito
+        // M2M): a service account presents a Google-signed OIDC ID token; subject = its
+        // verified email, tenant = an external SA→tenant grant (ID tokens can't carry a
+        // Cognito-scope analog). GCP_OIDC_AUDIENCE is the audience the caller must mint
+        // the token for (the front door's identifier); GCP_SA_TENANT_GRANTS is the
+        // JSON {email: tenant} binding map — adding an entry IS tenant onboarding.
+        if (!env.GCP_OIDC_AUDIENCE) throw new Error("AUTHN=gcp-oidc requires GCP_OIDC_AUDIENCE");
+        return new GcpOidcAuthenticator({
+          audience: env.GCP_OIDC_AUDIENCE,
+          grants: env.GCP_SA_TENANT_GRANTS ? (JSON.parse(env.GCP_SA_TENANT_GRANTS) as Record<string, string>) : {},
+          allowedEmailDomains: env.GCP_OIDC_ALLOWED_EMAIL_DOMAINS
+            ? env.GCP_OIDC_ALLOWED_EMAIL_DOMAINS.split(",").map((s) => s.trim()).filter(Boolean)
+            : undefined,
+          issuer: env.GCP_OIDC_ISSUER,
+        });
       }
       case "noop":
         return new NoopAuthenticator();

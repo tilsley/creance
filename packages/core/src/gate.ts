@@ -224,6 +224,9 @@ const PRICE_PER_MTOK: Record<string, { in: number; out: number }> = {
   // ("eu.anthropic.claude-haiku-4-5-20251001-v1:0" etc.). Mirror of admission_hook.py.
   "claude-haiku": { in: 1.0, out: 5.0 },
   "claude-sonnet": { in: 3.0, out: 15.0 },
+  // Gemini on Vertex (GCP profile, ADR-0044) — substring keys match any dated form.
+  "gemini-2.5-flash": { in: 0.3, out: 2.5 },
+  "gemini-2.5-pro": { in: 1.25, out: 10.0 },
   default: { in: 0.5, out: 1.5 },
 };
 

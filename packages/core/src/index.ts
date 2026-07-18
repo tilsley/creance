@@ -38,6 +38,7 @@ export * from "./adapters/mesh-trust-authenticator";
 export * from "./adapters/mesh-identity-authenticator"; // full-mode workload authn — Linkerd/Istio stamped identity (ADR-0028)
 export * from "./adapters/cognito-jwt-authenticator"; // verified human identity — OIDC user pool JWT (ADR-0032)
 export * from "./adapters/cognito-m2m-authenticator"; // verified machine identity — client_credentials access token (ADR-0041)
+export * from "./adapters/gcp-oidc-authenticator"; // verified machine identity on GCP — Google SA OIDC ID token (ADR-0044)
 export * from "./adapters/composite-authenticator"; // first-match-wins across credential kinds (ADR-0041)
 export * from "./adapters/noop-authenticator";
 // authz (ADR-0015): allow/deny policy seam
