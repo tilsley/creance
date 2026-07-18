@@ -1,6 +1,7 @@
 # ADR-0042: The managed AgentCore profile — lean-in as a third named deployment profile
 
-- **Status:** Proposed
+- **Status:** Accepted (deployed + verified live — phases 1–4 on 2026-07-13; per-run
+  `dispatch: "agentcore"` choice verified through the production front door 2026-07-18)
 - **Date:** 2026-07-12
 
 ## Context
