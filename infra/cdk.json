@@ -20,6 +20,8 @@
     "hostedZoneName": "nathantilsley.com",
     "apiDomain": "api.creance.nathantilsley.com",
     "inferenceDomain": "inference.creance.nathantilsley.com",
-    "consoleDomain": "console.creance.nathantilsley.com"
+    "consoleDomain": "console.creance.nathantilsley.com",
+    "authDomain": "auth.creance.nathantilsley.com",
+    "rootDomain": "creance.nathantilsley.com"
   }
 }

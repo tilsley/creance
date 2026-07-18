@@ -1,6 +1,21 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cognito from "aws-cdk-lib/aws-cognito";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as targets from "aws-cdk-lib/aws-route53-targets";
+
+export interface AuthStackProps extends cdk.StackProps {
+  /**
+   * Custom domain for the hosted UI (ADR-0043's pattern on the login page).
+   * Cognito fronts a custom domain with its own CloudFront distribution, so the
+   * cert must be us-east-1 (AgentOsAuthCert, via crossRegionReferences) — and
+   * Cognito refuses the domain unless its PARENT (creance.…) resolves, which the
+   * console stack provides (apex alias on its distribution). Deploy order on
+   * first rollout: console (apex record) BEFORE auth (custom domain).
+   */
+  edge?: { domainName: string; hostedZone: { id: string; name: string }; certificate: acm.ICertificate };
+}
 
 /**
  * AuthStack — the human IdP for the web console (ADR-0032): a Cognito user pool
@@ -28,7 +43,7 @@ export class AuthStack extends cdk.Stack {
   /** The hosted UI base URL — where the console sends the login redirect (ADR-0032). */
   readonly hostedUiBaseUrl: string;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: AuthStackProps) {
     super(scope, id, props);
 
     const callbackUrls = String(
@@ -53,10 +68,28 @@ export class AuthStack extends cdk.Stack {
     });
 
     // Hosted UI domain — the login page the SPA redirects to. The prefix must be
-    // globally unique per region; scope it with the account id.
+    // globally unique per region; scope it with the account id. This domain STAYS
+    // even with the custom domain below: it is the M2M token endpoint baked into
+    // deployed service config (ADR-0041) — both serve the same /oauth2/* surface.
     const domain = pool.addDomain("HostedUi", {
       cognitoDomain: { domainPrefix: `agent-os-${this.account}` },
     });
+
+    let customDomain: cognito.UserPoolDomain | undefined;
+    if (props?.edge) {
+      customDomain = pool.addDomain("CustomHostedUi", {
+        customDomain: { domainName: props.edge.domainName, certificate: props.edge.certificate },
+      });
+      const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
+        hostedZoneId: props.edge.hostedZone.id,
+        zoneName: props.edge.hostedZone.name,
+      });
+      new route53.ARecord(this, "Alias", {
+        zone,
+        recordName: props.edge.domainName,
+        target: route53.RecordTarget.fromAlias(new targets.UserPoolDomainTarget(customDomain)),
+      });
+    }
 
     const client = pool.addClient("Console", {
       userPoolClientName: "agent-os-console",
@@ -98,12 +131,12 @@ export class AuthStack extends cdk.Stack {
 
     this.issuer = `https://cognito-idp.${this.region}.amazonaws.com/${pool.userPoolId}`;
     this.clientId = client.userPoolClientId;
-    this.hostedUiBaseUrl = domain.baseUrl();
+    this.hostedUiBaseUrl = props?.edge ? `https://${props.edge.domainName}` : domain.baseUrl();
 
     new cdk.CfnOutput(this, "UserPoolId", { value: pool.userPoolId });
     new cdk.CfnOutput(this, "Issuer", { value: this.issuer }); // → COGNITO_ISSUER
     new cdk.CfnOutput(this, "ClientId", { value: this.clientId }); // → COGNITO_CLIENT_ID
-    new cdk.CfnOutput(this, "HostedUiBaseUrl", { value: domain.baseUrl() });
+    new cdk.CfnOutput(this, "HostedUiBaseUrl", { value: this.hostedUiBaseUrl });
     // → the SDK's machineLogin clientId; secret via describe-user-pool-client (ADR-0041)
     new cdk.CfnOutput(this, "FailureAnalystClientId", { value: failureAnalyst.userPoolClientId });
   }

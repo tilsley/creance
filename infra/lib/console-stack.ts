@@ -18,38 +18,19 @@ export interface ConsoleStackProps extends cdk.StackProps {
   grafana?: { url: string; tracesDatasourceUid: string };
   /**
    * Custom domain for the console (ADR-0043's pattern applied to the UI). The
-   * certificate comes from ConsoleCertStack — CloudFront only accepts us-east-1
+   * certificate comes from a UsEast1CertStack — CloudFront only accepts us-east-1
    * certs, so it can't be minted here (this stack is regional) and crosses stacks
    * via `crossRegionReferences`. Unset ⇒ the CloudFront default domain (dev/POC).
+   * `additionalDomains` (each needs a cert SAN) also alias here and get 301'd to
+   * the canonical domain — used for the bare creance.… apex, which must resolve
+   * for Cognito's custom auth domain to accept auth.creance.… (parent A record).
    */
-  edge?: { domainName: string; hostedZone: { id: string; name: string }; certificate: acm.ICertificate };
-}
-
-export interface ConsoleCertStackProps extends cdk.StackProps {
-  domainName: string;
-  hostedZone: { id: string; name: string };
-}
-
-/**
- * ConsoleCertStack — ONLY the console's TLS certificate, pinned to us-east-1
- * (a CloudFront requirement; the API edges' certs are regional and live inline
- * in SpecRestApiEdge). Both this stack and the consumer set
- * `crossRegionReferences: true` so CDK ferries the cert ARN across regions.
- */
-export class ConsoleCertStack extends cdk.Stack {
-  readonly certificate: acm.ICertificate;
-
-  constructor(scope: Construct, id: string, props: ConsoleCertStackProps) {
-    super(scope, id, props);
-    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
-      hostedZoneId: props.hostedZone.id,
-      zoneName: props.hostedZone.name,
-    });
-    this.certificate = new acm.Certificate(this, "Cert", {
-      domainName: props.domainName,
-      validation: acm.CertificateValidation.fromDns(zone),
-    });
-  }
+  edge?: {
+    domainName: string;
+    hostedZone: { id: string; name: string };
+    certificate: acm.ICertificate;
+    additionalDomains?: string[];
+  };
 }
 
 /**
@@ -105,7 +86,12 @@ function handler(event) {
     const distribution = new cloudfront.Distribution(this, "Cdn", {
       comment: "agent-os console (ADR-0032)",
       defaultRootObject: "index.html",
-      ...(props.edge ? { domainNames: [props.edge.domainName], certificate: props.edge.certificate } : {}),
+      ...(props.edge
+        ? {
+            domainNames: [props.edge.domainName, ...(props.edge.additionalDomains ?? [])],
+            certificate: props.edge.certificate,
+          }
+        : {}),
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -163,6 +149,13 @@ function handler(event) {
         recordName: props.edge.domainName,
         target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(distribution)),
       });
+      for (const extra of props.edge.additionalDomains ?? []) {
+        new route53.ARecord(this, `Alias-${extra}`, {
+          zone,
+          recordName: extra,
+          target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(distribution)),
+        });
+      }
     }
 
     new cdk.CfnOutput(this, "ConsoleUrl", {
