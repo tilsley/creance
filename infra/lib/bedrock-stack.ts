@@ -42,6 +42,10 @@ export class BedrockStack extends cdk.Stack {
           resources: [
             `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-lite-v1:0`,
             `arn:aws:bedrock:${this.region}::foundation-model/amazon.nova-pro-v1:0`,
+            // Claude Haiku for tool-use-heavy agents (coding). Region wildcard, not
+            // eu-west-2: eu.* inference profiles fan out to ANY eu region, and the
+            // invoke needs foundation-model permission wherever the call lands.
+            `arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-*`,
             `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/*`,
             // Claude via the `eu.` cross-region inference profile: invoking the profile
             // fans the call out to the underlying foundation-model in ANY eu region

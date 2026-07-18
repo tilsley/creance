@@ -11,8 +11,10 @@ import type { AgentTool } from "./tools";
 
 export interface MemoryAdapter {
   readonly name: string;
-  /** Long-term memory to inject into the system prompt at session start ("" on the first run). */
-  recall(tenant: string): string;
+  /** Long-term memory to inject into the system prompt at session start ("" on the first run).
+   *  May be async: file-backed adapters read locally, managed backends (AgentCore Memory,
+   *  ADR-0042) fetch over the network — callers must await. */
+  recall(tenant: string): string | Promise<string>;
   /** The memory tools (`remember` / `memory_search`) the agent gets alongside its workspace tools. */
   tools(tenant: string): AgentTool[];
 }

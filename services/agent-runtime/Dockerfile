@@ -18,21 +18,25 @@ RUN bun install
 ENV PORT=3000
 EXPOSE 3000
 
-# One image, FOUR entrypoints (ADR-0031 / ADR-0042 GCP sibling) — the substrate picks
-# which; no second build, all share deps + adapter wiring.
+# One image, FIVE entrypoints (ADR-0031/0042 + the GCP sibling) — the substrate picks
+# which by overriding the command OR (where the host can't override commands) an env
+# indirection; no second build, all five share deps + adapter wiring.
 #   server.ts       (default) the always-on HTTP front door        — full-k8s
 #   task.ts         the Fargate task-per-run executor (RUN_ID env) — serverless executor
 #     command: ["bun", "run", "services/agent-runtime/task.ts"]
 #   lambda.ts       the front door on Lambda (Runtime API loop)    — serverless front door
 #     command: ["bun", "run", "services/agent-runtime/lambda.ts"]
+#   agentcore.ts    the executor on AWS AgentCore Runtime (/invocations + /ping contract)
+#     RUNTIME_ENTRYPOINT=services/agent-runtime/agentcore.ts    (env — CfnRuntime sets it)
 #   agent-engine.ts the loop on GCP Vertex Agent Runtime           — managed GCP profile
-#     AGENT_ENTRYPOINT=services/agent-runtime/agent-engine.ts  (env, not command)
+#     AGENT_ENTRYPOINT=services/agent-runtime/agent-engine.ts   (env — Agent Runtime sets it)
 # server.ts and lambda.ts serve the SAME handler (app.ts); only the server differs.
 # Defaults to INFERENCE_PROVIDER=bedrock / SANDBOX_PROVIDER=agentcore (override via env).
 #
-# ECS/Lambda select the entrypoint by overriding `command`. GCP Agent Runtime canNOT
-# override command (its API exposes only env) — so the CMD is an env-indirection it can
-# steer via AGENT_ENTRYPOINT. `exec` keeps bun as PID 1 (signals/telemetry-flush intact);
-# the default is unchanged (server.ts), so the command-overriding profiles are unaffected.
-ENV AGENT_ENTRYPOINT=services/agent-runtime/server.ts
-CMD ["sh", "-c", "exec bun run $AGENT_ENTRYPOINT"]
+# ECS/Lambda select the entrypoint by overriding `command`. NEITHER managed runtime can
+# (their APIs expose only env), and each arrived with its own indirection var — so the
+# CMD honors both, AGENT_ENTRYPOINT winning if ever both are set. `exec` keeps bun as
+# PID 1 (signals/telemetry-flush intact); the default stays server.ts, so the
+# command-overriding profiles are unaffected.
+ENV RUNTIME_ENTRYPOINT=services/agent-runtime/server.ts
+CMD ["sh", "-c", "exec bun run ${AGENT_ENTRYPOINT:-$RUNTIME_ENTRYPOINT}"]

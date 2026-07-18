@@ -116,6 +116,7 @@ export function RunDetailView({
         {run.messages.length === 0 && <div className="empty">Waiting for the first turn — the executor is starting.</div>}
         <div className={`meter${failed ? " failed" : ""}`}>
           <span>{run.agent ?? "loop"}</span>
+          {run.dispatch && <span className="tokens">{run.dispatch}</span>}
           {run.repo && <span className="tokens">{run.repo}</span>}
           {run.usage && (
             <span className="tokens">

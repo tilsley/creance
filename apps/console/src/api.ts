@@ -23,6 +23,8 @@ export interface Message {
   results?: ToolResult[];
 }
 
+export type DispatchMode = "inprocess" | "runtask" | "agentcore" | "agentengine";
+
 export interface RunSummary {
   id: string;
   status: RunStatus;
@@ -30,6 +32,8 @@ export interface RunSummary {
   agent?: string;
   /** Target repo for coding runs (ADR-0034) — the resource the gate authorized. */
   repo?: string;
+  /** Which substrate executed the run (ADR-0042) — stamped at admission. */
+  dispatch?: DispatchMode;
   principal?: { tenant: string; subject: string };
   costUsd?: number;
   createdAt: string;
@@ -106,11 +110,18 @@ export class Api {
 
   listRuns = () => this.req<RunSummary[]>("/runs");
   getRun = (id: string) => this.req<Run>(`/runs/${id}`);
-  createRun = (task: string, agent?: string, repo?: string) =>
+  createRun = (task: string, agent?: string, repo?: string, dispatch?: DispatchMode) =>
     this.req<{ runId: string; status: RunStatus; tenant: string }>("/runs", {
       method: "POST",
-      body: JSON.stringify({ task, ...(agent ? { agent } : {}), ...(repo ? { repo } : {}) }),
+      body: JSON.stringify({
+        task,
+        ...(agent ? { agent } : {}),
+        ...(repo ? { repo } : {}),
+        ...(dispatch ? { dispatch } : {}),
+      }),
     });
+  /** The runtime's adapter bundle (GET /info) — the substrate selector reads `dispatch`. */
+  info = () => this.req<{ dispatch?: { default: DispatchMode; modes: DispatchMode[] } }>("/info");
   listAgents = () => this.req<AgentSpec[]>("/agents");
   budget = (tenant: string) => this.req<BudgetStatus>(`/tenants/${encodeURIComponent(tenant)}/budget`);
   usage = (tenant: string) => this.req<UsageStatus>(`/tenants/${encodeURIComponent(tenant)}/usage`);
