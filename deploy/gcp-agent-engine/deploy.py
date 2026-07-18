@@ -40,9 +40,16 @@ ENV_VARS = {
     "AGENT_ENTRYPOINT": "services/agent-runtime/agent-engine.ts",
     "DISPATCH": "inprocess",
     "INFERENCE_PROVIDER": "vertex",
-    # GOOGLE_CLOUD_PROJECT is a RESERVED var the platform injects — config.ts reads it.
+    # GOOGLE_CLOUD_PROJECT is a RESERVED var the platform injects — config.ts reads it
+    # (both the Vertex provider and the Firestore run store resolve the project from it).
     "GCP_LOCATION": LOCATION,
     "VERTEX_MODEL": "gemini-2.5-flash",
+    # Firestore-backed run store (not in-process): the DISPATCH=agentengine front door
+    # creates the run and THIS container executes it — different processes, shared ledger.
+    # GCP_PROJECT must be the project ID: Firestore REST 404s on a project NUMBER, and the
+    # platform injects GOOGLE_CLOUD_PROJECT as the number (fine for Vertex, not Firestore).
+    "RUN_STORE": "firestore",
+    "GCP_PROJECT": PROJECT,
     # The default agentcore sandbox needs AWS creds (unavailable on GCP); `local` runs in
     # the session's own microVM — fine for the spike (the demo task calls no tools). A GCP
     # sandbox (Code Execution / Sandbox BYOC) adapter is a later phase.

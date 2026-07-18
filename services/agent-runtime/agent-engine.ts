@@ -118,9 +118,32 @@ const server = Bun.serve({
     // and run it to completion in-process. Reuses app.ts so the gate/authz path is identical.
     const authz = req.headers.get("authorization");
     if (typeof input?.runId === "string") {
-      const { processRun } = await import("./process-run");
-      await processRun(providers, input.runId, { maxOutputTokens });
-      return queryResponse(await store.get(input.runId));
+      const runId = input.runId;
+      // The front door created this run in the SHARED store and handed off; we execute it.
+      // Wrap the WHOLE path (incl. the store read): a silent failure here would leave the
+      // run rotting in `queued` forever with no signal — so turn any error into a visible
+      // `failed` state, and log the runtime's actual token scopes (a metadata token missing
+      // the datastore scope is the classic reason a shared-store read fails on GCP).
+      try {
+        const before = await store.get(runId);
+        if (!before) {
+          console.error(`agent-engine: run ${runId} NOT FOUND in store=${store.name} (shared-store mismatch?)`);
+          return queryResponse({ error: `run not found: ${runId}`, store: store.name });
+        }
+        const { processRun } = await import("./process-run");
+        await processRun(providers, runId, { maxOutputTokens });
+        return queryResponse(await store.get(runId));
+      } catch (e: any) {
+        const scopes = await fetch(
+          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes",
+          { headers: { "Metadata-Flavor": "Google" } },
+        )
+          .then((r) => r.text())
+          .catch(() => "(scope probe failed)");
+        console.error(`agent-engine: runId ${runId} path FAILED: ${e?.message ?? e} | token scopes=${scopes.replace(/\s+/g, ",")}`);
+        await store.update(runId, { status: "failed", error: `engine: ${e?.message ?? e}` }).catch(() => {});
+        return queryResponse({ error: String(e?.message ?? e) });
+      }
     }
 
     const create = await app(

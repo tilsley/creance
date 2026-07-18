@@ -46,6 +46,7 @@ import { McpToolProvider, type McpServers } from "./adapters/mcp-tool-provider";
 import { GatewayToolProvider } from "./adapters/gateway-tool-provider";
 import { BuiltinToolProvider, CompositeToolProvider, type ToolProvider } from "./tool-gateway";
 import { DynamoDBRunStore } from "./adapters/dynamodb-run-store";
+import { FirestoreRunStore } from "./adapters/firestore-run-store";
 import { InMemoryRunStore, type RunStore } from "./runs";
 import { InMemoryAgentRegistry, type AgentRegistry, type AgentSpec } from "./agents";
 import { KubeAgentRegistry } from "./adapters/kube-agent-registry";
@@ -363,11 +364,31 @@ export function providersFromEnv(env: Env = process.env): Providers {
   })();
 
   // remember (State primitive): durable run store. In-memory for dev; DynamoDB
-  // (a real AWS resource) for restart-survival. RUNS_TABLE_ENDPOINT → DynamoDB Local.
-  const runStore: RunStore =
-    (env.RUN_STORE ?? "memory") === "dynamodb"
-      ? new DynamoDBRunStore(env.RUNS_TABLE ?? "agent-os-runs", region, env.RUNS_TABLE_ENDPOINT)
-      : new InMemoryRunStore();
+  // (a real AWS resource) for restart-survival; Firestore for the GCP managed profile,
+  // where the DISPATCH=agentengine split needs the front door and the engine to share
+  // one run. RUNS_TABLE_ENDPOINT → DynamoDB Local; FIRESTORE_* tune the GCP backing.
+  const runStore: RunStore = (() => {
+    switch (env.RUN_STORE) {
+      case "dynamodb":
+        return new DynamoDBRunStore(env.RUNS_TABLE ?? "agent-os-runs", region, env.RUNS_TABLE_ENDPOINT);
+      case "firestore": {
+        // Firestore REST resolves the (default) database ONLY by project ID — a project
+        // NUMBER 404s ("database (default) does not exist"). The managed runtime injects
+        // GOOGLE_CLOUD_PROJECT as the NUMBER (aiplatform tolerates it, Firestore does not),
+        // so prefer an explicit GCP_PROJECT (the ID) and treat GOOGLE_CLOUD_PROJECT as a
+        // last resort (correct only when it happens to hold the ID, e.g. local dev).
+        const project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT;
+        if (!project) throw new Error("RUN_STORE=firestore requires GCP_PROJECT (the project ID; a project number will not resolve)");
+        return new FirestoreRunStore(project, {
+          database: env.FIRESTORE_DATABASE,
+          collection: env.FIRESTORE_RUNS_COLLECTION,
+          endpoint: env.FIRESTORE_ENDPOINT,
+        });
+      }
+      default:
+        return new InMemoryRunStore();
+    }
+  })();
 
   // agent control plane (#5): the registry of agent definitions the runtime reads.
   // memory (seeded from AGENTS_JSON) for dev; dynamodb (cheap mode — edit agents with a

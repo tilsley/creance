@@ -22,18 +22,7 @@ import type {
   AssistantTurn,
   ToolCall,
 } from "../ports";
-
-/** ADC token for generateContent — explicit override first (local/testing), else the
- *  instance metadata server (works when running on GCP as the runtime's service account). */
-async function gcpAccessToken(): Promise<string> {
-  if (process.env.GCP_ACCESS_TOKEN) return process.env.GCP_ACCESS_TOKEN;
-  const res = await fetch(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    { headers: { "Metadata-Flavor": "Google" } },
-  );
-  if (!res.ok) throw new Error(`GCP metadata token fetch failed: ${res.status}`);
-  return ((await res.json()) as { access_token: string }).access_token;
-}
+import { gcpAccessToken } from "./gcp-auth";
 
 export class VertexGeminiInferenceProvider implements InferenceProvider {
   readonly name = "vertex-gemini";

@@ -63,6 +63,7 @@ export * from "./adapters/bedrock-embeddings";
 export * from "./adapters/vector-memory";
 // remember: durable run store
 export * from "./adapters/dynamodb-run-store";
+export * from "./adapters/firestore-run-store"; // GCP managed profile: shared store for the DISPATCH=agentengine split
 // #5: agent control plane — CRD-backed registry (full mode) + DynamoDB registry (cheap mode)
 export * from "./adapters/kube-agent-registry";
 export * from "./adapters/dynamo-agent-registry"; // register agents with a PutItem, no redeploy (ADR-0031)

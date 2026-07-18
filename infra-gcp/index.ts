@@ -60,6 +60,43 @@ new gcp.artifactregistry.RepositoryIamMember("re-agent-ar-reader", {
   member: reasoningEngineAgent,
 });
 
+// Firestore — the shared run store for the DISPATCH=agentengine profile. The front
+// door creates a run (queued) and the managed Agent Runtime container executes it;
+// they are different processes, so the run ledger must live OUTSIDE either process.
+// Firestore is the GCP sibling of the serverless profile's DynamoDB run table:
+// serverless, scale-to-zero, on-demand billed → ~$0 idle (the cost-sensitive brief).
+const firestoreApi = new gcp.projects.Service("firestore-api", {
+  project,
+  service: "firestore.googleapis.com",
+  disableOnDestroy: false,
+});
+
+// The project's (default) Native-mode database, co-located with the loop's region so
+// reads/writes stay in-region. Location is permanent once set — europe-west2 mirrors
+// the AWS primary region. RunStore rows land in the `runs` collection (FirestoreRunStore).
+const runsDb = new gcp.firestore.Database(
+  "runs-db",
+  {
+    project,
+    name: "(default)",
+    locationId: region,
+    type: "FIRESTORE_NATIVE",
+    // POC: keep teardown cheap. Flip deleteProtectionState to ENABLED before this holds
+    // anything real (Firestore default-DB deletion is already heavily guarded regardless).
+    deleteProtectionState: "DELETE_PROTECTION_DISABLED",
+    deletionPolicy: "DELETE",
+  },
+  { dependsOn: [firestoreApi] },
+);
+
+// The loop reads/writes runs as its own SA (datastore.user spans Firestore Native).
+new gcp.projects.IAMMember("runtime-datastore-user", {
+  project,
+  role: "roles/datastore.user",
+  member: pulumi.interpolate`serviceAccount:${runtimeSa.email}`,
+});
+
 export const artifactRepo = pulumi.interpolate`${region}-docker.pkg.dev/${project}/${repo.repositoryId}`;
 export const runtimeServiceAccount = runtimeSa.email;
 export const gcpRegion = region;
+export const firestoreDatabase = runsDb.name;
