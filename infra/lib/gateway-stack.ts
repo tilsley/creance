@@ -90,6 +90,10 @@ export class GatewayStack extends cdk.Stack {
         // when a serverless claims table exists (ADR-0039 open)
         INFERENCE_PROVIDER: "bedrock",
         MODEL_ID: "amazon.nova-lite-v1:0",
+        // friendly model names → Bedrock ids (ADR-0028 app.ts). "claude-haiku" is the
+        // Anthropic-wire model for delegated agents; it resolves to the `eu.` cross-region
+        // inference profile (grant lives in agent-os-bedrock-invoke, region-wildcard).
+        MODEL_ALIASES: JSON.stringify({ "claude-haiku": "eu.anthropic.claude-haiku-4-5-20251001-v1:0" }),
         // this process IS the gateway — never set INFERENCE_GATEWAY_URL here
       },
     });
