@@ -77,6 +77,31 @@ export class ConsoleStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
+    // ADR-0043's "no raw URL remains", applied to the UI: CloudFront's default
+    // *.cloudfront.net hostname can't be switched off, so a viewer-request function
+    // 301s any request that didn't arrive on the custom domain. Must hang off EVERY
+    // behavior — /index.html and /config.json have their own and would bypass it.
+    const canonicalHost = props.edge
+      ? new cloudfront.Function(this, "CanonicalHost", {
+          runtime: cloudfront.FunctionRuntime.JS_2_0,
+          code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  if (request.headers.host.value !== "${props.edge.domainName}") {
+    return {
+      statusCode: 301,
+      statusDescription: "Moved Permanently",
+      headers: { location: { value: "https://${props.edge.domainName}" + request.uri } },
+    };
+  }
+  return request;
+}`),
+        })
+      : undefined;
+    const functionAssociations = canonicalHost
+      ? [{ function: canonicalHost, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }]
+      : undefined;
+
     const distribution = new cloudfront.Distribution(this, "Cdn", {
       comment: "agent-os console (ADR-0032)",
       defaultRootObject: "index.html",
@@ -86,6 +111,7 @@ export class ConsoleStack extends cdk.Stack {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         // hashed Vite assets are immutable — cache hard by default…
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        functionAssociations,
       },
       additionalBehaviors: {
         // …but the two mutable files must always revalidate: index.html names the
@@ -94,11 +120,13 @@ export class ConsoleStack extends cdk.Stack {
           origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          functionAssociations,
         },
         "/config.json": {
           origin: origins.S3BucketOrigin.withOriginAccessControl(bucket),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          functionAssociations,
         },
       },
       // SPA fallback: unknown paths (hash routes resolve client-side, but also any
