@@ -18,10 +18,15 @@
  * list can query/order server-side (single-field indexes are auto-created). This avoids a
  * full Firestore typed-value encoder for the nested messages[] / usage — honest for a POC.
  *
- * Concurrency: update() is read-modify-write (non-atomic). Safe here because a run has a
- * single writer at a time — the front door only ever creates (queued), and thereafter only
- * the executing engine mutates it. At scale, move to a Firestore transaction / field-mask
- * patch (mirrors the DynamoDB store's atomic UpdateExpression).
+ * Concurrency: update() is read-modify-write over the WHOLE doc (the Run is a single `json`
+ * blob, so field-level masks can't help — every write rewrites the blob). Two writes CAN
+ * still race within the one executing process: process-run.ts fires per-turn `update({messages})`
+ * fire-and-forget while it awaits the final `update({status:"completed"})`. If the messages
+ * write reads status=running and lands last, it reverts the terminal status — the run rots in
+ * `running` forever (observed live). DynamoDB dodges this via atomic field-level UpdateExpression;
+ * here we serialize every mutation through a per-instance FIFO chain so read-modify-write is
+ * atomic against concurrent same-process callers (the run's only writer is one process). At true
+ * multi-writer scale, graduate to a Firestore transaction.
  */
 import type { Run, RunStatus, RunStore } from "../runs";
 import { gcpAccessToken } from "./gcp-auth";
@@ -35,6 +40,21 @@ export class FirestoreRunStore implements RunStore {
   readonly name = "firestore";
   private readonly base: string;
   private readonly collection: string;
+  /** FIFO mutation chain: create/update run one-at-a-time so a fire-and-forget
+   *  `update({messages})` can't interleave with the final `update({status})` and
+   *  clobber it (see the header note). Reads (get/list) don't need it. */
+  private writeChain: Promise<unknown> = Promise.resolve();
+
+  /** Enqueue a mutation behind all prior ones; the returned promise resolves with its
+   *  result. Errors are isolated so one failed write doesn't poison the chain. */
+  private serialize<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(op, op);
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   constructor(
     project: string,
@@ -68,12 +88,14 @@ export class FirestoreRunStore implements RunStore {
   }
 
   async create(run: Run): Promise<void> {
-    const res = await fetch(`${this.base}/${this.collection}?documentId=${encodeURIComponent(run.id)}`, {
-      method: "POST",
-      headers: await this.authHeaders(),
-      body: JSON.stringify(this.encode(run)),
+    return this.serialize(async () => {
+      const res = await fetch(`${this.base}/${this.collection}?documentId=${encodeURIComponent(run.id)}`, {
+        method: "POST",
+        headers: await this.authHeaders(),
+        body: JSON.stringify(this.encode(run)),
+      });
+      if (!res.ok) throw new Error(`Firestore create ${run.id} failed ${res.status}: ${await res.text()}`);
     });
-    if (!res.ok) throw new Error(`Firestore create ${run.id} failed ${res.status}: ${await res.text()}`);
   }
 
   async get(id: string): Promise<Run | undefined> {
@@ -86,18 +108,21 @@ export class FirestoreRunStore implements RunStore {
   }
 
   async update(id: string, patch: Partial<Run>): Promise<Run> {
-    const current = await this.get(id);
-    if (!current) throw new Error(`run not found: ${id}`);
-    const next: Run = { ...current, ...patch, updatedAt: new Date().toISOString() };
-    // Full-document PATCH (no updateMask ⇒ the provided fields replace the doc). Upserts,
-    // but we've already asserted existence above to match the store's not-found contract.
-    const res = await fetch(`${this.base}/${this.collection}/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: await this.authHeaders(),
-      body: JSON.stringify(this.encode(next)),
+    // Serialized so the read-modify-write is atomic vs concurrent same-process callers.
+    return this.serialize(async () => {
+      const current = await this.get(id);
+      if (!current) throw new Error(`run not found: ${id}`);
+      const next: Run = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      // Full-document PATCH (no updateMask ⇒ the provided fields replace the doc). Upserts,
+      // but we've already asserted existence above to match the store's not-found contract.
+      const res = await fetch(`${this.base}/${this.collection}/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: await this.authHeaders(),
+        body: JSON.stringify(this.encode(next)),
+      });
+      if (!res.ok) throw new Error(`Firestore update ${id} failed ${res.status}: ${await res.text()}`);
+      return next;
     });
-    if (!res.ok) throw new Error(`Firestore update ${id} failed ${res.status}: ${await res.text()}`);
-    return next;
   }
 
   private async runQuery(structuredQuery: Record<string, unknown>): Promise<Run[]> {

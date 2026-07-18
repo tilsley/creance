@@ -90,8 +90,36 @@ const server = Bun.serve({
     // The REST :query response schema is {"output": <value>} and the platform relays
     // our body verbatim — so every query result MUST be wrapped in `output`.
     const queryResponse = (output: unknown) => Response.json({ output });
+    const authz = req.headers.get("authorization");
 
-    // PROBE MODE — prove the envelope without a model call.
+    // FRONT-DOOR HANDOFF — a runId means the front door (DISPATCH=agentengine) already
+    // created the run in the SHARED store and handed off; we execute it. This MUST be
+    // checked BEFORE the probe guard: a handoff payload is `{runId}` with no `task`, so
+    // the `typeof task !== "string"` probe test below would otherwise swallow it as a
+    // probe and the run would rot in `queued` forever (the bug that stalled phase-3).
+    if (typeof input?.runId === "string") {
+      const runId = input.runId;
+      // Wrap the WHOLE path (incl. the store read): a silent failure here would leave the
+      // run rotting in `queued` forever with no signal, so turn any error into a visible
+      // `failed` state. A missing run means the front door wrote to a DIFFERENT store than
+      // this engine reads (a shared-store misconfig) — surface that explicitly.
+      try {
+        const before = await store.get(runId);
+        if (!before) {
+          console.error(`agent-engine: run ${runId} NOT FOUND in store=${store.name} (shared-store mismatch?)`);
+          return queryResponse({ error: `run not found: ${runId}`, store: store.name });
+        }
+        const { processRun } = await import("./process-run");
+        await processRun(providers, runId, { maxOutputTokens });
+        return queryResponse(await store.get(runId));
+      } catch (e: any) {
+        console.error(`agent-engine: runId ${runId} path FAILED: ${e?.message ?? e}`);
+        await store.update(runId, { status: "failed", error: `engine: ${e?.message ?? e}` }).catch(() => {});
+        return queryResponse({ error: String(e?.message ?? e) });
+      }
+    }
+
+    // PROBE MODE — prove the envelope without a model call (no runId, no task).
     const task: unknown = input?.task;
     if (input?.probe === true || typeof task !== "string" || !task.trim()) {
       return queryResponse({
@@ -113,39 +141,8 @@ const server = Bun.serve({
       });
     }
 
-    // REAL RUN — if the front door pre-created the run (DISPATCH=agentengine passes a
-    // runId), execute that; otherwise create one inline via the shared gate (POST /runs)
-    // and run it to completion in-process. Reuses app.ts so the gate/authz path is identical.
-    const authz = req.headers.get("authorization");
-    if (typeof input?.runId === "string") {
-      const runId = input.runId;
-      // The front door created this run in the SHARED store and handed off; we execute it.
-      // Wrap the WHOLE path (incl. the store read): a silent failure here would leave the
-      // run rotting in `queued` forever with no signal — so turn any error into a visible
-      // `failed` state, and log the runtime's actual token scopes (a metadata token missing
-      // the datastore scope is the classic reason a shared-store read fails on GCP).
-      try {
-        const before = await store.get(runId);
-        if (!before) {
-          console.error(`agent-engine: run ${runId} NOT FOUND in store=${store.name} (shared-store mismatch?)`);
-          return queryResponse({ error: `run not found: ${runId}`, store: store.name });
-        }
-        const { processRun } = await import("./process-run");
-        await processRun(providers, runId, { maxOutputTokens });
-        return queryResponse(await store.get(runId));
-      } catch (e: any) {
-        const scopes = await fetch(
-          "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/scopes",
-          { headers: { "Metadata-Flavor": "Google" } },
-        )
-          .then((r) => r.text())
-          .catch(() => "(scope probe failed)");
-        console.error(`agent-engine: runId ${runId} path FAILED: ${e?.message ?? e} | token scopes=${scopes.replace(/\s+/g, ",")}`);
-        await store.update(runId, { status: "failed", error: `engine: ${e?.message ?? e}` }).catch(() => {});
-        return queryResponse({ error: String(e?.message ?? e) });
-      }
-    }
-
+    // INLINE TASK — no pre-created run: create one via the shared gate (POST /runs) and
+    // run it to completion in-process. Reuses app.ts so the gate/authz path is identical.
     const create = await app(
       new Request("https://agent-engine.local/runs", {
         method: "POST",
