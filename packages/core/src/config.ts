@@ -37,6 +37,7 @@ import { DynamoClaimSource } from "./adapters/dynamo-claim-source";
 import { StaticClaimSource } from "./adapters/static-claim-source";
 import type { ClaimSource, ClaimWrite } from "./claims";
 import { DynamoSpendStore } from "./adapters/dynamo-spend-store";
+import { FirestoreSpendStore } from "./adapters/firestore-spend-store";
 import { PostgresSpendStore } from "./adapters/postgres-spend-store";
 import { InMemorySpendStore, type SpendStore } from "./gate";
 import { KubeStsTenantCredentials, type TenantCredentials } from "./adapters/sts-tenant-credentials";
@@ -221,6 +222,18 @@ export function providersFromEnv(env: Env = process.env): Providers {
     switch (env.SPEND_STORE ?? "memory") {
       case "dynamodb":
         return new DynamoSpendStore(env.SPEND_TABLE ?? "agent-os-budgets", region, env.SPEND_TABLE_ENDPOINT);
+      case "firestore": {
+        // GCP managed profile (ADR-0044 4b): the front door and the engine run in
+        // different processes, so per-tenant spend must live in ONE Firestore ledger both
+        // see. Same project-ID caveat as the run store (a project NUMBER 404s).
+        const project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT;
+        if (!project) throw new Error("SPEND_STORE=firestore requires GCP_PROJECT (the project ID; a project number will not resolve)");
+        return new FirestoreSpendStore(project, {
+          database: env.FIRESTORE_DATABASE,
+          collection: env.FIRESTORE_BUDGETS_COLLECTION,
+          endpoint: env.FIRESTORE_ENDPOINT,
+        });
+      }
       case "postgres":
         if (!env.SPEND_DATABASE_URL) throw new Error("SPEND_STORE=postgres requires SPEND_DATABASE_URL");
         return new PostgresSpendStore(env.SPEND_DATABASE_URL);

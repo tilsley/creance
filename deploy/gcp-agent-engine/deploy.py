@@ -50,6 +50,14 @@ ENV_VARS = {
     # platform injects GOOGLE_CLOUD_PROJECT as the number (fine for Vertex, not Firestore).
     "RUN_STORE": "firestore",
     "GCP_PROJECT": PROJECT,
+    # Per-tenant budget (ADR-0044 4b): the engine meters spend per token via the
+    # AdmissionInferenceProvider (reserve→settle). GATE=local + SPEND_STORE=firestore
+    # point that at the SAME Firestore ledger the front door's checkBudget admission
+    # reads — so a run's cost recorded here is visible to the front door across the
+    # DISPATCH=agentengine process split. GATE_BUDGET_USD is the fallback per-tenant cap.
+    "GATE": "local",
+    "SPEND_STORE": "firestore",
+    "GATE_BUDGET_USD": "1.00",
     # The default agentcore sandbox needs AWS creds (unavailable on GCP); `local` runs in
     # the session's own microVM — fine for the spike (the demo task calls no tools). A GCP
     # sandbox (Code Execution / Sandbox BYOC) adapter is a later phase.

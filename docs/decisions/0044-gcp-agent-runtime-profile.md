@@ -128,10 +128,19 @@ front door — is the clearest evidence for the profile thesis this arc produced
    refresh). Verified live end-to-end against the front door with `GATE=local`: granted
    identity → `202`, `tenant` stamped from the token and persisted through to engine
    execution; no/garbage token → `401`; ungranted SA → `401`; over-budget tenant → `402`.
-   **Follow-on (4b):** the front-door `checkBudget` is coarse admission; the *metered*
-   per-token spend happens in the engine process, so a durable per-tenant budget needs a
-   **shared `FirestoreSpendStore`** (the budget twin of `FirestoreRunStore`, same
-   split-process lesson) + `GATE=local` on the engine. **open.**
+   **4b — durable per-tenant budget across the split: ✅ live 2026-07-18.**
+   `SPEND_STORE=firestore` (`FirestoreSpendStore`) is the budget twin of
+   `FirestoreRunStore`: the front-door `checkBudget` admission and the engine's per-token
+   `reserve`/`settle` (via the AdmissionInferenceProvider) hit ONE Firestore ledger, so a
+   run's cost recorded in the engine process is visible to the front door's admission —
+   the same shared-store lesson as the run store. The atomic `reserve` (add iff within
+   ceiling) can't be a DynamoDB-style single conditional write (Firestore field transforms
+   can't express the ceiling), so it's **optimistic concurrency**: read `updateTime` →
+   PATCH with a `currentDocument` precondition → retry on conflict — the multi-writer
+   analog of the run store's single-process FIFO. Verified live: run 1 admitted, its cost
+   recorded by the ENGINE process to the shared ledger; accumulated spend then crossed the
+   cap and the FRONT DOOR denied a later run with `402` — cross-process enforcement.
+   (Smoke also proved 10 parallel `reserve`s land an exact delta with no lost updates.)
 5. **Sessions / Memory Bank adapter** — so runs surface in the Agent Engine console and
    memory goes live. **open.**
 6. **GCP sandbox adapter** (Sandbox BYOC / Code Execution) — so tool-calling tasks work,
@@ -154,11 +163,11 @@ front door — is the clearest evidence for the profile thesis this arc produced
   concurrency fix DynamoDB never did. Documented, not hidden.
 - **−** **Two IaC tools** (CDK + Pulumi) until the `infra/{aws,gcp}` refactor — more to
   learn, more to keep coherent.
-- **−** **The profile is honestly partial**: identity → tenant + coarse admission are
-  live, but durable per-tenant *spend* (metered in the engine process) still needs a
-  shared `FirestoreSpendStore` (phase 4b), and sandbox is `local` / memory unwired.
-  "Managed GCP" today means *the loop is managed, the caller is identified, and the
-  invariant shell governs it* — not that every row leaned in.
+- **−** **The profile is honestly partial**: identity → tenant, coarse admission, AND
+  durable cross-process per-tenant spend are live, but sandbox is still `local` and memory
+  is unwired. "Managed GCP" today means *the loop is managed, the caller is identified, and
+  the invariant shell (identity + budget) governs it end-to-end* — not that every row
+  leaned in (Sessions/Memory Bank and the GCP sandbox remain).
 - **−** **The claude-code / foreign-L1 lane stays on Cloud Run** — the same boundary as
   every profile ([0036](0036-foreign-l1-boundary-governance.md)); managed-for-metered-agents,
   said plainly.
