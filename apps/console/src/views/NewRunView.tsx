@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
-import { Api, ApiError, type AgentSpec } from "../api";
+import { Api, ApiError, type AgentSpec, type DispatchMode } from "../api";
+
+/** Human names for the substrates behind the dispatch seam (ADR-0031/0042). */
+const DISPATCH_LABELS: Record<DispatchMode, string> = {
+  inprocess: "In-process (dev)",
+  runtask: "Fargate task",
+  agentcore: "AgentCore microVM",
+};
 
 export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: () => void }) {
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [agent, setAgent] = useState<string>("");
   const [task, setTask] = useState("");
   const [repo, setRepo] = useState("");
+  const [dispatch, setDispatch] = useState<{ default: DispatchMode; modes: DispatchMode[] } | null>(null);
+  const [substrate, setSubstrate] = useState<DispatchMode | "">("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,13 +29,23 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
       .catch((e) => {
         if (e instanceof ApiError && e.status === 401) onUnauthorized();
       });
+    // which substrates the deployment offers — hide the selector when there's no choice
+    api
+      .info()
+      .then((i) => setDispatch(i.dispatch ?? null))
+      .catch(() => setDispatch(null));
   }, [api, onUnauthorized]);
 
   const launch = async () => {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.createRun(task.trim(), agent || undefined, (isCodingAgent && repo.trim()) || undefined);
+      const r = await api.createRun(
+        task.trim(),
+        agent || undefined,
+        (isCodingAgent && repo.trim()) || undefined,
+        (!isCodingAgent && substrate) || undefined,
+      );
       window.location.hash = `#/runs/${r.runId}`;
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return onUnauthorized();
@@ -64,6 +83,22 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
             ))}
           </select>
         </label>
+        {dispatch && dispatch.modes.length > 1 && !isCodingAgent && (
+          <label>
+            Substrate{" "}
+            <span className="hint">(where the run executes — claude-code agents always ride Fargate)</span>
+            <select value={substrate} onChange={(e) => setSubstrate(e.target.value as DispatchMode | "")}>
+              <option value="">{DISPATCH_LABELS[dispatch.default] ?? dispatch.default} (default)</option>
+              {dispatch.modes
+                .filter((m) => m !== dispatch.default)
+                .map((m) => (
+                  <option key={m} value={m}>
+                    {DISPATCH_LABELS[m] ?? m}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
         {isCodingAgent && (
           <label>
             Repo <span className="hint">(optional — owner/name; the run clones it and pushes a run/&lt;id&gt; branch + PR)</span>

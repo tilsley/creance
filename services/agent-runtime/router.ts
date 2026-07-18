@@ -6,12 +6,12 @@
  * RunTask (serverless). The gate being identical is what keeps R1 (verified
  * identity) + R2 (real-time budget) invariant across profiles (ADR-0027).
  */
-import { UnauthorizedError, type Providers, type Run } from "@agent-os/core";
+import { UnauthorizedError, type DispatchMode, type Providers, type Run } from "@agent-os/core";
 import type { GateOutcome } from "./a2a";
-import type { Dispatch } from "./dispatch";
+import type { Dispatcher } from "./dispatch";
 
 /** Build the gate handler over a set of providers and a dispatch strategy. */
-export function makeAuthorizeAndCreate(providers: Providers, dispatch: Dispatch) {
+export function makeAuthorizeAndCreate(providers: Providers, dispatcher: Dispatcher) {
   const { authenticator, authorizer, gate, agentRegistry, runStore: store } = providers;
   return async function authorizeAndCreate(
     credential: string | undefined,
@@ -19,7 +19,17 @@ export function makeAuthorizeAndCreate(providers: Providers, dispatch: Dispatch)
     agent: string | undefined,
     task: string,
     repo?: string,
+    dispatchMode?: string,
   ): Promise<GateOutcome> {
+    // The substrate is a caller-chosen, run-level resource (ADR-0042): validated
+    // against what this deployment actually wires, stamped onto the run below.
+    if (dispatchMode !== undefined && !dispatcher.modes.includes(dispatchMode as DispatchMode)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `unknown dispatch '${dispatchMode}' (available: ${dispatcher.modes.join(", ")})`,
+      };
+    }
     let principal;
     try {
       principal = await authenticator.authenticate({ credential, headers });
@@ -49,9 +59,21 @@ export function makeAuthorizeAndCreate(providers: Providers, dispatch: Dispatch)
       if (!budget.ok) return { ok: false, status: 402, error: "budget exceeded" };
     }
     const now = new Date().toISOString();
-    const run: Run = { id: crypto.randomUUID(), status: "queued", task, agent, repo, principal, messages: [], createdAt: now, updatedAt: now };
+    const run: Run = {
+      id: crypto.randomUUID(),
+      status: "queued",
+      task,
+      agent,
+      repo,
+      principal,
+      // always resolved (never left blank): the record shows where the run executed
+      dispatch: (dispatchMode as DispatchMode) ?? dispatcher.defaultMode,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    };
     await store.create(run);
-    dispatch(run); // substrate seam (ADR-0031): in-process worker vs ECS RunTask
+    dispatcher.dispatch(run); // substrate seam (ADR-0031): routes by run.dispatch
     return { ok: true, run };
   };
 }

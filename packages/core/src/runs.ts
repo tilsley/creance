@@ -12,6 +12,9 @@ import type { Principal } from "./gate";
 
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "blocked" | "stuck";
 
+/** The execution substrates behind the dispatch seam (ADR-0031/0042). */
+export type DispatchMode = "inprocess" | "runtask" | "agentcore";
+
 export interface Run {
   id: string;
   status: RunStatus;
@@ -24,6 +27,10 @@ export interface Run {
   repo?: string;
   /** Who the run acts as (gate, ADR-0009). Absent under the open NoopGate. */
   principal?: Principal;
+  /** Which substrate executes this run — the caller's per-run choice or the
+   *  profile default, stamped at admission (ADR-0042: AgentCore is an opt-in
+   *  adapter, so the substrate is a run-level resource, not only a deploy flag). */
+  dispatch?: DispatchMode;
   messages: Message[];
   output?: string;
   error?: string;

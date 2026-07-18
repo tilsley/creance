@@ -79,8 +79,8 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
   // dispatch strategy picked by env (ADR-0031): DISPATCH=inprocess runs the worker
   // in this process (full-k8s); DISPATCH=runtask makes this the serverless front
   // door, launching a Fargate task-per-run.
-  const dispatch = dispatchFromEnv(providers, { maxOutputTokens: opts.maxOutputTokens });
-  const authorizeAndCreate = makeAuthorizeAndCreate(providers, dispatch);
+  const dispatcher = dispatchFromEnv(providers, { maxOutputTokens: opts.maxOutputTokens });
+  const authorizeAndCreate = makeAuthorizeAndCreate(providers, dispatcher);
 
   const bearer = (req: Request): string | undefined =>
     req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -145,6 +145,8 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
         guard: providers.guard.name,
         agentRegistry: agentRegistry.name,
         memory: providers.memory?.name ?? "off",
+        // the substrates this deployment can execute — the console's selector reads this
+        dispatch: { default: dispatcher.defaultMode, modes: dispatcher.modes },
       });
     }
 
@@ -172,10 +174,15 @@ export function createApp(providers: Providers, opts: AppOpts = {}): (req: Reque
       if (repo !== undefined && !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
         return Response.json({ error: "invalid 'repo' (expected owner/name)" }, { status: 400 });
       }
+      // per-run substrate choice (ADR-0042) — validated in the gate against what's wired
+      const dispatch = body?.dispatch != null ? String(body.dispatch) : undefined;
       // same gate as A2A: authn → authz(agent, repo) → budget → create (ADR-0015/0018)
-      const r = await authorizeAndCreate(bearer(req), headerMap(req), agent, task, repo);
+      const r = await authorizeAndCreate(bearer(req), headerMap(req), agent, task, repo, dispatch);
       if (!r.ok) return Response.json({ error: r.error, reason: r.reason }, { status: r.status });
-      return Response.json({ runId: r.run.id, status: r.run.status, agent, repo, tenant: r.run.principal!.tenant }, { status: 202 });
+      return Response.json(
+        { runId: r.run.id, status: r.run.status, agent, repo, dispatch: r.run.dispatch, tenant: r.run.principal!.tenant },
+        { status: 202 },
+      );
     }
 
     if (req.method === "GET" && url.pathname === "/agents") {

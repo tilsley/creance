@@ -52,9 +52,9 @@ const gateway = new GatewayStack(app, "AgentOsGateway", {
 // the SAME agent-runtime image as an AgentCore Runtime, session-per-run microVM,
 // active-CPU billing. Opt in via persisted context (cdk.json — never CLI -c flags):
 //   "agentcoreProfile": true
-// which also flips the front door below to DISPATCH=agentcore. The Fargate
-// executor stays provisioned in that mode: claude-code always rides it, and
-// reverting the profile is a redeploy, not a rebuild.
+// which offers `dispatch: "agentcore"` as a PER-RUN choice on the front door
+// (console selector); Fargate stays the default substrate. claude-code always
+// rides Fargate, and dropping the flag is a redeploy, not a rebuild.
 const agentcoreProfile = !!app.node.tryGetContext("agentcoreProfile");
 const agentcore = agentcoreProfile ? new AgentCoreStack(app, "AgentOsAgentCore", { env }) : undefined;
 

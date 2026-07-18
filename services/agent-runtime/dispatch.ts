@@ -13,7 +13,7 @@
  * Selected by DISPATCH (default inprocess), so server.ts is the front door in
  * every profile; only the env bundle changes (ADR-0027).
  */
-import { type AgentRegistry, type Providers, type Run, type RunStore } from "@agent-os/core";
+import { type AgentRegistry, type DispatchMode, type Providers, type Run, type RunStore } from "@agent-os/core";
 import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from "@aws-sdk/client-bedrock-agentcore";
 import { processRun, type ProcessRunOpts } from "./process-run";
@@ -193,23 +193,57 @@ export function agentCoreDispatch(
   };
 }
 
-/** Pick the dispatch impl by env (DISPATCH=inprocess|runtask|agentcore; default inprocess). */
-export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {}): Dispatch {
-  const mode = process.env.DISPATCH ?? "inprocess";
-  switch (mode) {
-    case "inprocess":
-      return inProcessDispatch(providers, opts);
-    case "runtask":
-      return runTaskDispatch(runTaskConfigFromEnv(), providers.runStore, providers.agentRegistry);
-    case "agentcore": {
-      // The cc lane rides the SAME RunTask wiring as the serverless profile when the
-      // stack provides it (ADR-0042: claude-code stays Fargate in every profile).
-      const ccFallback = process.env.ECS_CC_TASK_DEFINITION
-        ? runTaskDispatch(runTaskConfigFromEnv(), providers.runStore, providers.agentRegistry)
-        : undefined;
-      return agentCoreDispatch(agentCoreConfigFromEnv(), providers.runStore, providers.agentRegistry, ccFallback);
-    }
-    default:
-      throw new Error(`unknown DISPATCH: ${mode} (expected inprocess|runtask|agentcore)`);
+/** The dispatch seam, per-run aware: `dispatch` routes each run by its stamped
+ *  `run.dispatch` (falling back to the profile default), and `modes` names every
+ *  substrate this deployment can execute — what the front door validates a
+ *  caller's per-run choice against, and what /info advertises to the console. */
+export interface Dispatcher {
+  defaultMode: DispatchMode;
+  modes: DispatchMode[];
+  dispatch: Dispatch;
+}
+
+/** Build the dispatcher from env. DISPATCH (inprocess|runtask|agentcore; default
+ *  inprocess) picks the DEFAULT substrate and must be fully wired (missing env is
+ *  an init error, as before). Any OTHER substrate whose wiring happens to be
+ *  present (ECS_TASK_DEFINITION / AGENTCORE_RUNTIME_ARN) is offered as a per-run
+ *  override — except inprocess, which is never an override: a scale-to-zero front
+ *  door dies with the request, taking the run with it. */
+export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {}): Dispatcher {
+  const defaultMode = (process.env.DISPATCH ?? "inprocess") as DispatchMode;
+  if (!["inprocess", "runtask", "agentcore"].includes(defaultMode)) {
+    throw new Error(`unknown DISPATCH: ${defaultMode} (expected inprocess|runtask|agentcore)`);
   }
+  // one RunTask dispatch serves both the runtask substrate and agentcore's cc lane
+  let runTask: Dispatch | undefined;
+  const getRunTask = () => (runTask ??= runTaskDispatch(runTaskConfigFromEnv(), providers.runStore, providers.agentRegistry));
+  const getAgentCore = () => {
+    // The cc lane rides the SAME RunTask wiring as the serverless profile when the
+    // stack provides it (ADR-0042: claude-code stays Fargate in every profile).
+    const ccFallback = process.env.ECS_CC_TASK_DEFINITION ? getRunTask() : undefined;
+    return agentCoreDispatch(agentCoreConfigFromEnv(), providers.runStore, providers.agentRegistry, ccFallback);
+  };
+
+  const table = new Map<DispatchMode, Dispatch>();
+  if (defaultMode === "inprocess") table.set("inprocess", inProcessDispatch(providers, opts));
+  if (defaultMode === "runtask" || process.env.ECS_TASK_DEFINITION) table.set("runtask", getRunTask());
+  if (defaultMode === "agentcore" || process.env.AGENTCORE_RUNTIME_ARN) table.set("agentcore", getAgentCore());
+
+  return {
+    defaultMode,
+    modes: [defaultMode, ...[...table.keys()].filter((m) => m !== defaultMode)],
+    dispatch: (run) => {
+      // admission validated run.dispatch against `modes`, so a miss here is a bug —
+      // surface it as a terminal dispatch failure, never a silent substrate swap.
+      const impl = table.get(run.dispatch ?? defaultMode);
+      if (!impl) {
+        console.error(`no dispatch impl for '${run.dispatch}' (run ${run.id})`);
+        void providers.runStore
+          .update(run.id, { status: "failed", error: `dispatch failed: substrate '${run.dispatch}' not available` })
+          .catch(() => {});
+        return;
+      }
+      impl(run);
+    },
+  };
 }

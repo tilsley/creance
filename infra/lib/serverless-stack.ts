@@ -56,10 +56,9 @@ export interface ServerlessStackProps extends cdk.StackProps {
    *  sanctioned think-path (AGENT_GATEWAY_URL on the executor). Deliberately NOT
    *  INFERENCE_GATEWAY_URL: that would flip the loop's own think into gateway mode. */
   agentGatewayUrl?: string;
-  /** The managed profile (ADR-0042): dispatch loop runs to this AgentCore Runtime
-   *  (DISPATCH=agentcore) instead of Fargate. The Fargate executor + claude-code lane
-   *  stay provisioned — cc runs ALWAYS ride Fargate, and the loop task def remains
-   *  the one-env-var rollback. Unset ⇒ the plain serverless profile (DISPATCH=runtask). */
+  /** The managed profile (ADR-0042): offer this AgentCore Runtime as a per-run
+   *  substrate choice (`dispatch: "agentcore"` on POST /runs; Fargate stays the
+   *  default). cc runs ALWAYS ride Fargate. Unset ⇒ Fargate is the only substrate. */
   agentcore?: { runtimeArn: string };
 }
 
@@ -379,10 +378,11 @@ export class ServerlessStack extends cdk.Stack {
       logGroup,
       environment: {
         REGION: this.region,
-        // the substrate seam (dispatch.ts): Fargate task-per-run, or — managed
-        // profile, ADR-0042 — an AgentCore Runtime session-per-run for loop runs
-        // (claude-code still rides the ECS_CC_* wiring below in BOTH modes).
-        DISPATCH: props?.agentcore ? "agentcore" : "runtask",
+        // the substrate seam (dispatch.ts): Fargate task-per-run is the DEFAULT;
+        // wiring the AgentCore ARN additionally offers `dispatch: "agentcore"` as a
+        // per-run choice on POST /runs (ADR-0042 — an opt-in adapter, chosen in the
+        // console, never the silent default). claude-code always rides ECS_CC_*.
+        DISPATCH: "runtask",
         ...(props?.agentcore ? { AGENTCORE_RUNTIME_ARN: props.agentcore.runtimeArn } : {}),
         // the RunTask wiring dispatch.ts reads (runTaskConfigFromEnv):
         ECS_CLUSTER: cluster.clusterName,
