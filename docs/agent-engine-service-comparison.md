@@ -186,13 +186,18 @@ obstacles, both worked around:
 - bridge networking needs `nft` (netavark errors `unable to execute nft`) — install `nftables`, or
   use `--network=host` (the pragmatic Testcontainers mode here) / `--network=none`.
 
-Recipe that works in-box: bake or `apt-get install -y runc nftables` →
-`podman run --runtime=runc --cgroup-manager=cgroupfs --network=host <image>`. Caveats mirror AWS:
-slower first pull, no cgroup limits on the test container, installs per-session ephemeral unless
-baked, all within ~8 vCPU / ~4 GB. **Fine for a postgres/redis integration suite in-box; heavy
-compose belongs on the GCP sandbox (Sandbox BYOC / Code Execution) or a remote `DOCKER_HOST`
-(Testcontainers Cloud) over the proven egress** — the same "light in-box, heavy elsewhere" split as
-the AWS profile.
+Recipe that works in-box: bake or `apt-get install -y runc` →
+`podman run --runtime=runc --cgroup-manager=cgroupfs --network=host <image>`.
+
+**A real service-container round-trip is proven, not just theorized.** A `redis:7-alpine` container
+started this way (`--network=host` → binds `0.0.0.0:6379` in the box's netns, no `nft`/bridge needed)
+was reached from the SESSION process: a socket connect + `SET tc hi` / `GET tc` returned
+`+OK … hi` — the exact Testcontainers pattern (start a service container, connect, assert a data
+round-trip), end to end inside one Agent Runtime session. Caveats mirror AWS: slower first pull, no
+cgroup limits on the test container, installs per-session ephemeral unless baked, all within ~8 vCPU
+/ ~4 GB. **Fine for a postgres/redis integration suite in-box; heavy compose belongs on the GCP
+sandbox (Sandbox BYOC / Code Execution) or a remote `DOCKER_HOST` (Testcontainers Cloud) over the
+proven egress** — the same "light in-box, heavy elsewhere" split as the AWS profile.
 
 ---
 

@@ -158,6 +158,13 @@ front door — is the clearest evidence for the profile thesis this arc produced
   Vertex on-demand → ~$0 idle, aligned with the cost-sensitive POC.
 - **+** The `RunStore` port earned its keep: a genuinely new durability requirement
   (shared external ledger) landed behind it with zero change to the front door or the loop.
+- **+** **BYO container is field-proven** (the GCP mirror of the AgentCore `Dockerfile.java`
+  proof): a foreign JDK-21 runtime compiled + JUnit-tested Java in-session, and podman ran a
+  nested **service** container in-box — a `redis:7-alpine` on `--network=host` was reached from
+  the session with a `SET`/`GET` round-trip (a real Testcontainers-shaped test), using overlay
+  storage via `/dev/fuse` and `runc` + `--cgroup-manager=cgroupfs` around the box's hybrid
+  cgroups. The box is a permissive runc-style container, amd64 (not arm64-only like AgentCore) —
+  see the comparison doc's *Runtime-as-box* field notes.
 - **−** **A GCP-specific durability tax**: the shared store is *new surface* this profile
   alone carries (the AWS profiles reuse DynamoDB), and its whole-doc write model needed a
   concurrency fix DynamoDB never did. Documented, not hidden.
