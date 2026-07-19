@@ -57,6 +57,7 @@ import { FilesMemory } from "./adapters/files-memory";
 import { VectorMemory } from "./adapters/vector-memory";
 import { AgentCoreMemory } from "./adapters/agentcore-memory";
 import { VertexMemoryBank } from "./adapters/vertex-memory-bank";
+import { GcpSessionRecorder, type SessionRecorder } from "./adapters/gcp-session-recorder";
 import { BedrockEmbeddings } from "./adapters/bedrock-embeddings";
 import type { MemoryAdapter } from "./memory";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
@@ -91,6 +92,9 @@ export interface Providers {
   /** Durable per-tenant long-term memory (ADR-0030), when AGENT_MEMORY_DIR is set; undefined
    *  disables it (the runtime then injects no memory and offers no `remember` tools). */
   memory?: MemoryAdapter;
+  /** GCP-only observer (ADR-0044 phase 5b): mirrors a finished run into a Vertex Agent Engine
+   *  Session so it surfaces in the console. Off unless GCP_SESSION_ENGINE_ID is set. */
+  sessionRecorder?: SessionRecorder;
 }
 
 type Env = Record<string, string | undefined>;
@@ -164,6 +168,16 @@ export function providersFromEnv(env: Env = process.env): Providers {
     return (env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
       ? new VectorMemory(env.AGENT_MEMORY_DIR, new BedrockEmbeddings(undefined, region), guard)
       : new FilesMemory(env.AGENT_MEMORY_DIR, guard);
+  })();
+
+  // console visibility (ADR-0044 phase 5b): GCP_SESSION_ENGINE_ID names the reasoningEngine
+  // whose console should show our runs — the engine mirrors each finished run into a managed
+  // Vertex Session (best-effort observer, off the run's critical path). Unset ⇒ no mirroring.
+  const sessionRecorder: SessionRecorder | undefined = (() => {
+    if (!env.GCP_SESSION_ENGINE_ID) return undefined;
+    const project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT;
+    if (!project) throw new Error("GCP_SESSION_ENGINE_ID requires GCP_PROJECT (the project ID)");
+    return new GcpSessionRecorder(project, env.GCP_LOCATION ?? "europe-west2", env.GCP_SESSION_ENGINE_ID);
   })();
 
   const telemetry: TelemetrySink = (() => {
@@ -451,5 +465,5 @@ export function providersFromEnv(env: Env = process.env): Providers {
     }
   })();
 
-  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite, tenantCredentials, memory };
+  return { inference, sandbox, guard, telemetry, gate, authenticator, authorizer, credentials, toolProvider, runStore, agentRegistry, inferenceForTenant, claimSource, claimWrite, tenantCredentials, memory, sessionRecorder };
 }

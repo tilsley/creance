@@ -63,6 +63,10 @@ ENV_VARS = {
     # memories (a stable host — can be a dedicated engine; here the first loop engine), so
     # memories survive loop-engine redeploys. Per-tenant isolation is the immutable scope map.
     "MEMORY_BANK_ENGINE_ID": "2592534069086519296",
+    # Console visibility (ADR-0044 phase 5b): after each run the engine mirrors the
+    # transcript into a Vertex Agent Engine Session under this reasoningEngine, so runs
+    # surface in its console. Same stable managed-state host as the Memory Bank parent.
+    "GCP_SESSION_ENGINE_ID": "2592534069086519296",
     # The default agentcore sandbox needs AWS creds (unavailable on GCP); `local` runs in
     # the session's own microVM — fine for the spike (the demo task calls no tools). A GCP
     # sandbox (Code Execution / Sandbox BYOC) adapter is a later phase.

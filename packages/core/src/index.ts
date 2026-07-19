@@ -64,6 +64,7 @@ export * from "./adapters/files-memory";
 export * from "./adapters/bedrock-embeddings";
 export * from "./adapters/vector-memory";
 export * from "./adapters/vertex-memory-bank"; // GCP managed memory — Vertex Agent Engine Memory Bank (ADR-0044 phase 5)
+export * from "./adapters/gcp-session-recorder"; // GCP console visibility — mirror runs into Vertex Sessions (ADR-0044 phase 5b)
 // remember: durable run store
 export * from "./adapters/dynamodb-run-store";
 export * from "./adapters/firestore-run-store"; // GCP managed profile: shared store for the DISPATCH=agentengine split

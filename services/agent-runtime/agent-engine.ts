@@ -111,7 +111,15 @@ const server = Bun.serve({
         }
         const { processRun } = await import("./process-run");
         await processRun(providers, runId, { maxOutputTokens });
-        return queryResponse(await store.get(runId));
+        const done = await store.get(runId);
+        // console visibility (ADR-0044 5b): mirror the finished run into a managed Vertex
+        // Session, best-effort — a mirror failure must never fail an otherwise-good run.
+        if (done && providers.sessionRecorder) {
+          await providers.sessionRecorder
+            .record(done)
+            .catch((e) => console.error(`agent-engine: session mirror failed for ${runId}: ${e?.message ?? e}`));
+        }
+        return queryResponse(done);
       } catch (e: any) {
         console.error(`agent-engine: runId ${runId} path FAILED: ${e?.message ?? e}`);
         await store.update(runId, { status: "failed", error: `engine: ${e?.message ?? e}` }).catch(() => {});

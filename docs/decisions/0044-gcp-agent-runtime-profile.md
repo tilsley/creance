@@ -151,9 +151,15 @@ front door — is the clearest evidence for the profile thesis this arc produced
    that parents the memories — a stable host, so memory survives loop-engine redeploys).
    Verified end-to-end through the deployed loop: run 1 `remember`ed a fact, a *fresh* run 2
    had it auto-injected into the system prompt by `recall` and answered from it. 8 unit tests
-   (injected fetch) + a live adapter smoke pass. **5b — Sessions** (writing session/event
-   state so runs surface in the Agent Engine console UI) is **still open** — today the Run /
-   `RunStore` is the conversation record; nothing writes GEAP Sessions yet.
+   (injected fetch) + a live adapter smoke pass. **5b — Sessions: ✅ live 2026-07-19.**
+   `GcpSessionRecorder` (a GCP-only `SessionRecorder` observer, off the run's critical path)
+   mirrors each finished run into a Vertex **Session** (`POST .../sessions {userId}` →
+   `POST .../sessions/{id}:appendEvent {author, invocationId, timestamp, content:{role,parts}}`)
+   so runs surface in the Agent Engine console. Wired in `agent-engine.ts` after `processRun`
+   (best-effort, `.catch()`), gated by `GCP_SESSION_ENGINE_ID`; the Run/`RunStore` stays the
+   substrate-neutral record, this only reflects it. Verified live: a run appeared as a session
+   (userId = caller subject) with user + model events correlated by `invocationId`. 2 unit tests
+   + a live smoke.
 6. **GCP sandbox adapter** (Sandbox BYOC / Code Execution) — so tool-calling tasks work,
    not just no-tool demos. **open.**
 
