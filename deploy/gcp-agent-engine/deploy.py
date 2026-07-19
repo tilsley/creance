@@ -58,6 +58,11 @@ ENV_VARS = {
     "GATE": "local",
     "SPEND_STORE": "firestore",
     "GATE_BUDGET_USD": "1.00",
+    # Durable per-tenant memory (ADR-0044 phase 5): Vertex Agent Engine Memory Bank behind
+    # the MemoryAdapter port. MEMORY_BANK_ENGINE_ID is the reasoningEngine that PARENTS the
+    # memories (a stable host — can be a dedicated engine; here the first loop engine), so
+    # memories survive loop-engine redeploys. Per-tenant isolation is the immutable scope map.
+    "MEMORY_BANK_ENGINE_ID": "2592534069086519296",
     # The default agentcore sandbox needs AWS creds (unavailable on GCP); `local` runs in
     # the session's own microVM — fine for the spike (the demo task calls no tools). A GCP
     # sandbox (Code Execution / Sandbox BYOC) adapter is a later phase.

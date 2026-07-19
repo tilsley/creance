@@ -56,6 +56,7 @@ import { DynamoAgentRegistry } from "./adapters/dynamo-agent-registry";
 import { FilesMemory } from "./adapters/files-memory";
 import { VectorMemory } from "./adapters/vector-memory";
 import { AgentCoreMemory } from "./adapters/agentcore-memory";
+import { VertexMemoryBank } from "./adapters/vertex-memory-bank";
 import { BedrockEmbeddings } from "./adapters/bedrock-embeddings";
 import type { MemoryAdapter } from "./memory";
 import type { InferenceProvider, SandboxProvider, ContentGuard, TelemetrySink } from "./ports";
@@ -148,15 +149,22 @@ export function providersFromEnv(env: Env = process.env): Providers {
   // (a durable mount in-cluster; a host dir locally) — unset disables it. MEMORY_RETRIEVAL=keyword
   // (cheap default) or =vector (Bedrock Titan embeddings, semantic recall). Writes are screened by the
   // SAME guard as the loop (ADR-0008), since a remembered note re-enters future sessions.
-  // AGENTCORE_MEMORY_ID selects the managed backend instead (ADR-0042 phase 2): AgentCore Memory
-  // with per-tenant namespaces enforceable by IAM — one more adapter behind the same port.
-  const memory: MemoryAdapter | undefined = env.AGENTCORE_MEMORY_ID
-    ? new AgentCoreMemory(env.AGENTCORE_MEMORY_ID, guard, region)
-    : !env.AGENT_MEMORY_DIR
-      ? undefined
-      : (env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
-        ? new VectorMemory(env.AGENT_MEMORY_DIR, new BedrockEmbeddings(undefined, region), guard)
-        : new FilesMemory(env.AGENT_MEMORY_DIR, guard);
+  // AGENTCORE_MEMORY_ID selects the AWS managed backend (ADR-0042 phase 2): AgentCore Memory
+  // with per-tenant namespaces enforceable by IAM. MEMORY_BANK_ENGINE_ID selects the GCP managed
+  // backend (ADR-0044 phase 5): Vertex AI Agent Engine Memory Bank under a reasoningEngine parent,
+  // per-tenant isolation by the immutable `scope` map — one more adapter behind the same port.
+  const memory: MemoryAdapter | undefined = (() => {
+    if (env.MEMORY_BANK_ENGINE_ID) {
+      const project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT;
+      if (!project) throw new Error("MEMORY_BANK_ENGINE_ID requires GCP_PROJECT (the project ID)");
+      return new VertexMemoryBank(project, env.GCP_LOCATION ?? "europe-west2", env.MEMORY_BANK_ENGINE_ID, guard);
+    }
+    if (env.AGENTCORE_MEMORY_ID) return new AgentCoreMemory(env.AGENTCORE_MEMORY_ID, guard, region);
+    if (!env.AGENT_MEMORY_DIR) return undefined;
+    return (env.MEMORY_RETRIEVAL ?? "keyword") === "vector"
+      ? new VectorMemory(env.AGENT_MEMORY_DIR, new BedrockEmbeddings(undefined, region), guard)
+      : new FilesMemory(env.AGENT_MEMORY_DIR, guard);
+  })();
 
   const telemetry: TelemetrySink = (() => {
     switch (env.TELEMETRY ?? "console") {

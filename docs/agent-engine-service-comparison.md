@@ -269,8 +269,13 @@ boundary contains the blast; it does not restrict what a trusted-but-compromised
    mirror the AWS primary `eu-west-2`; Agent Runtime, Firestore and Vertex Gemini (`gemini-2.5-flash`,
    the only flash in ew2) are all confirmed there. Memory Bank availability in ew2 is the one row
    still to confirm when that phase starts.
-3. **Memory Bank per-tenant isolation** — is there an IAM-condition-key equivalent to
-   AgentCore Memory's namespace enforcement, or is isolation app-level?
+3. ✅ **RESOLVED (2026-07-19) — Memory Bank isolation is the `scope` map, matched exactly.**
+   Each memory carries an immutable `scope` (e.g. `{"tenant":"acme"}`); `memories:retrieve`
+   only returns memories whose scope matches the request's exactly, so scoping every write +
+   read to `{tenant}` isolates tenants (probed: a foreign scope returns `{}`). Today that's
+   app-enforced (the adapter always sets the scope); an IAM-condition-key equivalent to
+   AgentCore Memory's namespace enforcement is not wired — a later hardening. Adapter:
+   `VertexMemoryBank` (ADR-0044 phase 5), live end-to-end through the loop.
 4. **Managed MCP gateway** — does GEAP expose an MCP endpoint (AgentCore Gateway analog), or is
    tool wiring purely in-agent?
 5. ✅ **PARTIALLY RESOLVED (2026-07-14) — agent identity mapped.** The runtime presents a GA

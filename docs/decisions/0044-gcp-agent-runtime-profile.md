@@ -141,8 +141,19 @@ front door — is the clearest evidence for the profile thesis this arc produced
    recorded by the ENGINE process to the shared ledger; accumulated spend then crossed the
    cap and the FRONT DOOR denied a later run with `402` — cross-process enforcement.
    (Smoke also proved 10 parallel `reserve`s land an exact delta with no lost updates.)
-5. **Sessions / Memory Bank adapter** — so runs surface in the Agent Engine console and
-   memory goes live. **open.**
+5. **Memory Bank adapter** — **✅ live 2026-07-19**; durable per-tenant memory goes live.
+   `VertexMemoryBank` (behind the ADR-0030 `MemoryAdapter` port, the GCP sibling of
+   `AgentCoreMemory`) wraps Vertex AI Agent Engine **Memory Bank** REST (v1beta1,
+   dependency-free + ADC): `remember` → `CreateMemory` (guard-screened at the write door),
+   `recall`/`memory_search` → `memories:retrieve` (simple + similaritySearch). Per-tenant
+   isolation is Memory Bank's immutable `scope:{tenant}` map, matched exactly (a foreign
+   scope returns `{}` — probed). Selected by `MEMORY_BANK_ENGINE_ID` (the reasoningEngine
+   that parents the memories — a stable host, so memory survives loop-engine redeploys).
+   Verified end-to-end through the deployed loop: run 1 `remember`ed a fact, a *fresh* run 2
+   had it auto-injected into the system prompt by `recall` and answered from it. 8 unit tests
+   (injected fetch) + a live adapter smoke pass. **5b — Sessions** (writing session/event
+   state so runs surface in the Agent Engine console UI) is **still open** — today the Run /
+   `RunStore` is the conversation record; nothing writes GEAP Sessions yet.
 6. **GCP sandbox adapter** (Sandbox BYOC / Code Execution) — so tool-calling tasks work,
    not just no-tool demos. **open.**
 
