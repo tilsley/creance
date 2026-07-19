@@ -199,6 +199,54 @@ cgroup limits on the test container, installs per-session ephemeral unless baked
 sandbox (Sandbox BYOC / Code Execution) or a remote `DOCKER_HOST` (Testcontainers Cloud) over the
 proven egress** — the same "light in-box, heavy elsewhere" split as the AWS profile.
 
+### Limitations for coding agents (platform-only, not a comparison)
+
+The raw properties of the Agent Runtime surface as a place to run a coding agent — what the platform
+does and doesn't give you, independent of any governance built around it. `[obs]` = empirically
+probed 2026-07-18/19; `[model]` = inherent to the BYOC contract.
+
+**Capacity**
+- **~4 GB RAM is the binding limit** `[obs]` — a Gradle-class build / large monorepo / fat test
+  suite will hit it. CPU is ample (8 vCPU `[obs]`), but memory is the wall, and there is **no sizing
+  knob**: the reasoningEngine API takes an *image*, not a machine type `[model]`.
+- **Cold starts** `[model]` — scale-to-zero means the first invoke pays container-boot latency.
+
+**Execution model (the big structural one)**
+- **Synchronous `:query` with a request deadline** `[model]` — request→response (`{input}`→`{output}`)
+  on one port; **no native long-running / background-job model**, so a long build doesn't fit the
+  shape without bolting on your own async/polling/state.
+- **Ephemeral filesystem** `[obs]` — each session starts from the image; workspace + installs don't
+  persist across cold sessions. No warm checkout or dependency cache unless baked into the image or
+  externalized.
+- **Opaque box — no exec/SSH** `[obs]` — the only way to see inside a running instance is to have the
+  agent run commands through its own tools; in-box debugging is painful.
+
+**Runtime/container quirks** `[obs]`
+- **Hybrid cgroups (v1+v2)** break default `crun` — nested containers need `runc` +
+  `--cgroup-manager=cgroupfs`.
+- **No bridge-network tooling** (`netavark` needs `nft`, absent) — nested networking needs
+  `--network=host` or installing `nftables`.
+- **No `/dev/kvm`** — containers-in-box yes, VMs no; and **no cgroup limits** on nested containers.
+
+**Security posture (platform-inherent)**
+- **Runs your code as root with wide-open egress** `[obs]` — the platform provides **no egress /
+  network control** on the workload (it pulled `docker.io` unimpeded); no firewall or domain
+  allow-list knob on this surface.
+- **The runtime's SA credential is readable by any code in the box** `[obs]` — Agent Runtime hands
+  the container its identity via the **metadata server** (how it auths to Vertex/Firestore), so any
+  code the agent runs — including a pulled dependency — can read that token from
+  `metadata.google.internal` and **act as the runtime service account** with whatever IAM it holds.
+  The classic metadata credential-theft exposure; unblocked by default.
+- **No interior-hardening knobs** `[model]` — the reasoningEngine API won't drop the workload to
+  non-root, apply seccomp, or scope the metadata identity; bake any of that into your own image.
+
+**One-line take:** Agent Runtime is a **capable but unhardened** place to run code — ~4 GB RAM, a
+synchronous/ephemeral execution model, and it runs the agent as **root with open egress and a
+stealable SA token**. Fine for a coding agent whose code you *trust*; **not, by itself, a safe
+container for untrusted code** (no egress control, no metadata-credential isolation). The per-session
+boundary contains the blast; it does not restrict what a trusted-but-compromised workload can do
+*with* that root + egress + token.
+
 ---
 
 ## Open questions to close before ADR (the ⚠️-verify backlog)
