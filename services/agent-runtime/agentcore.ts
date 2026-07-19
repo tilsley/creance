@@ -30,10 +30,10 @@ const flushTelemetry = () =>
     new Promise((r) => setTimeout(r, 5000)),
   ]);
 
-async function executeRun(runId: string): Promise<void> {
+async function executeRun(runId: string, githubToken?: string): Promise<void> {
   activeRuns++;
   try {
-    await processRun(providers, runId, { maxOutputTokens });
+    await processRun(providers, runId, { maxOutputTokens, githubToken });
     const run = await providers.runStore.get(runId);
     console.log(`agentcore entrypoint: run ${runId} finished status=${run?.status ?? "unknown"}`);
   } catch (e: any) {
@@ -57,16 +57,19 @@ Bun.serve({
       return Response.json({ status: activeRuns > 0 ? "HealthyBusy" : "Healthy" });
     }
     if (req.method === "POST" && url.pathname === "/invocations") {
-      let runId: unknown;
+      let payload: { runId?: unknown; githubToken?: unknown };
       try {
-        runId = ((await req.json()) as { runId?: unknown })?.runId;
+        payload = (await req.json()) as { runId?: unknown; githubToken?: unknown };
       } catch {
         return Response.json({ error: "invalid JSON payload" }, { status: 400 });
       }
+      const runId = payload?.runId;
       if (typeof runId !== "string" || !runId) {
         return Response.json({ error: "payload must be {runId: string}" }, { status: 400 });
       }
-      void executeRun(runId); // fire-and-forget: the ack returns, /ping goes busy
+      // coder workspace credential (ADR-0046) — the invoke-payload leg of the dispatch envelope
+      const githubToken = typeof payload.githubToken === "string" ? payload.githubToken : undefined;
+      void executeRun(runId, githubToken); // fire-and-forget: the ack returns, /ping goes busy
       return Response.json({ accepted: true, runId }, { status: 202 });
     }
     return Response.json({ error: "not found" }, { status: 404 });

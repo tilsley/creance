@@ -48,7 +48,7 @@ export interface Run extends RunSummary {
 export interface AgentSpec {
   name: string;
   description?: string;
-  kind?: "loop" | "sandboxed" | "claude-code";
+  kind?: "loop" | "sandboxed" | "claude-code" | "coder";
 }
 
 export interface BudgetStatus {

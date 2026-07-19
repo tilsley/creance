@@ -19,9 +19,12 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // repo targeting applies to coding runs (ADR-0034): the agent is repo-agnostic,
-  // the run names the repo, the gate authorizes it.
-  const isCodingAgent = agents.find((a) => a.name === agent)?.kind === "claude-code";
+  // repo targeting applies to coding runs (ADR-0034/0046): the agent is repo-agnostic,
+  // the run names the repo, the gate authorizes it. claude-code is welded to Fargate
+  // (no substrate choice); coder is substrate-orthogonal — it keeps the selector.
+  const kind = agents.find((a) => a.name === agent)?.kind;
+  const isCodingAgent = kind === "claude-code" || kind === "coder";
+  const isSubstrateWelded = kind === "claude-code";
 
   useEffect(() => {
     api
@@ -45,7 +48,7 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
         task.trim(),
         agent || undefined,
         (isCodingAgent && repo.trim()) || undefined,
-        (!isCodingAgent && substrate) || undefined,
+        (!isSubstrateWelded && substrate) || undefined,
       );
       window.location.hash = `#/runs/${r.runId}`;
     } catch (e) {
@@ -84,7 +87,7 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
             ))}
           </select>
         </label>
-        {dispatch && dispatch.modes.length > 1 && !isCodingAgent && (
+        {dispatch && dispatch.modes.length > 1 && !isSubstrateWelded && (
           <label>
             Substrate{" "}
             <span className="hint">(where the run executes — claude-code agents always ride Fargate)</span>
@@ -102,7 +105,7 @@ export function NewRunView({ api, onUnauthorized }: { api: Api; onUnauthorized: 
         )}
         {isCodingAgent && (
           <label>
-            Repo <span className="hint">(optional — owner/name; the run clones it and pushes a run/&lt;id&gt; branch + PR)</span>
+            Repo <span className="hint">(optional — owner/name; the run clones it and pushes a run/&lt;id&gt; branch)</span>
             <input
               type="text"
               value={repo}

@@ -26,8 +26,11 @@ export interface AgentSpec {
    * "claude-code" (ADR-0033) = the run IS one headless Claude Code invocation in its own
    * Fargate task (the harness owns think+do); serverless dispatch only — it selects a
    * different task definition, everything upstream (gate, run store, polling) is unchanged.
+   * "coder" (ADR-0046) = the loop-executor specialized for coding: kind "loop"'s wiring
+   * plus the workspace lifecycle (clone Run.repo after session claim, push run/<id> at
+   * terminal). Substrate-orthogonal — unlike claude-code, it rides ANY dispatch mode.
    */
-  kind?: "loop" | "sandboxed" | "claude-code";
+  kind?: "loop" | "sandboxed" | "claude-code" | "coder";
   /** For kind="sandboxed": the command that launches the delegated agent in the sandbox. */
   command?: string;
 }

@@ -22,14 +22,22 @@ import { type AgentRegistry, type DispatchMode, type Providers, type Run, type R
 import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from "@aws-sdk/client-bedrock-agentcore";
 import { processRun, type ProcessRunOpts } from "./process-run";
+import { githubAppFromEnv } from "./github-app";
 
-export type Dispatch = (run: Run) => void;
+/** Per-run secrets minted by the control plane at dispatch (ADR-0046). Carried in
+ *  the dispatch ENVELOPE — env override / invoke payload — never on the Run record,
+ *  which every read route serves back. */
+export interface DispatchContext {
+  githubToken?: string;
+}
+
+export type Dispatch = (run: Run, ctx?: DispatchContext) => void;
 
 /** full-k8s: execute the run in this process, fire-and-forget. processRun owns its
  *  own failures (it persists status=failed), so a rejection here is truly unexpected. */
 export function inProcessDispatch(providers: Providers, opts: ProcessRunOpts = {}): Dispatch {
-  return (run) => {
-    void processRun(providers, run.id, opts).catch((e) =>
+  return (run, ctx) => {
+    void processRun(providers, run.id, { ...opts, githubToken: ctx?.githubToken }).catch((e) =>
       console.error(`in-process worker crashed for run ${run.id}: ${e?.message ?? e}`),
     );
   };
@@ -90,7 +98,7 @@ export function runTaskDispatch(
   agentRegistry?: AgentRegistry,
 ): Dispatch {
   const ecs = new ECSClient({ region: config.region ?? process.env.REGION ?? "eu-west-2" });
-  return (run) => {
+  return (run, ctx) => {
     void (async () => {
       let target: { taskDefinition: string; container: string; sidecarContainer?: string } = {
         taskDefinition: config.taskDefinition,
@@ -104,6 +112,7 @@ export function runTaskDispatch(
       }
       // RUN_ID reaches every listed container: the executor to run it, the egress
       // sidecar (ADR-0034) to resolve its per-run credential allowlist from the registry.
+      // The coder workspace token (ADR-0046) reaches ONLY the executor container.
       const overrideContainers = [target.container, ...(target.sidecarContainer ? [target.sidecarContainer] : [])];
       const res = await ecs.send(
         new RunTaskCommand({
@@ -121,7 +130,12 @@ export function runTaskDispatch(
           overrides: {
             containerOverrides: overrideContainers.map((name) => ({
               name,
-              environment: [{ name: "RUN_ID", value: run.id }],
+              environment: [
+                { name: "RUN_ID", value: run.id },
+                ...(name === target.container && ctx?.githubToken
+                  ? [{ name: "GITHUB_TOKEN", value: ctx.githubToken }]
+                  : []),
+              ],
             })),
           },
         }),
@@ -169,13 +183,13 @@ export function agentCoreDispatch(
 ): Dispatch {
   const agentcore =
     client ?? new BedrockAgentCoreClient({ region: config.region ?? process.env.REGION ?? "eu-west-2" });
-  return (run) => {
+  return (run, ctx) => {
     void (async () => {
       const spec = run.agent && agentRegistry ? await agentRegistry.get(run.agent) : undefined;
       if (spec?.kind === "claude-code") {
         if (!claudeCodeFallback)
           throw new Error(`agent '${run.agent}' is kind=claude-code but no Fargate fallback is configured (ECS_CC_TASK_DEFINITION)`);
-        claudeCodeFallback(run);
+        claudeCodeFallback(run, ctx);
         return;
       }
       const res = await agentcore.send(
@@ -185,7 +199,10 @@ export function agentCoreDispatch(
           runtimeSessionId: run.id,
           contentType: "application/json",
           accept: "application/json",
-          payload: new TextEncoder().encode(JSON.stringify({ runId: run.id })),
+          // the coder token (ADR-0046) rides the invoke payload — the microVM has no env-override seam
+          payload: new TextEncoder().encode(
+            JSON.stringify({ runId: run.id, ...(ctx?.githubToken ? { githubToken: ctx.githubToken } : {}) }),
+          ),
         }),
       );
       console.log(`dispatched run ${run.id} -> agentcore session ${run.id} (status ${res.statusCode ?? "?"})`);
@@ -243,13 +260,15 @@ async function gcpAccessToken(): Promise<string> {
 export function agentEngineDispatch(config: AgentEngineConfig, runStore: RunStore): Dispatch {
   const base = config.endpoint ?? `https://${config.location}-aiplatform.googleapis.com/v1`;
   const url = `${base}/projects/${config.project}/locations/${config.location}/reasoningEngines/${config.reasoningEngineId}:query`;
-  return (run) => {
+  return (run, ctx) => {
     void (async () => {
       const token = await gcpAccessToken();
       const res = await fetch(url, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ input: { runId: run.id } }),
+        body: JSON.stringify({
+          input: { runId: run.id, ...(ctx?.githubToken ? { githubToken: ctx.githubToken } : {}) },
+        }),
       });
       if (!res.ok) throw new Error(`reasoningEngine :query ${res.status}: ${await res.text()}`);
       console.log(`dispatched run ${run.id} -> reasoningEngine ${config.reasoningEngineId}`);
@@ -298,6 +317,11 @@ export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {})
   if (defaultMode === "agentengine" || (process.env.AGENT_ENGINE_ID && process.env.GCP_PROJECT))
     table.set("agentengine", agentEngineDispatch(agentEngineConfigFromEnv(), providers.runStore));
 
+  // ADR-0046: the control plane is the ONLY place that can mint the coder's
+  // workspace credential for every substrate (the microVM and Vertex can't reach
+  // the App key) — so minting happens here, at dispatch, per run.
+  const github = githubAppFromEnv();
+
   return {
     defaultMode,
     modes: [defaultMode, ...[...table.keys()].filter((m) => m !== defaultMode)],
@@ -312,7 +336,22 @@ export function dispatchFromEnv(providers: Providers, opts: ProcessRunOpts = {})
           .catch(() => {});
         return;
       }
-      impl(run);
+      void (async () => {
+        let ctx: DispatchContext | undefined;
+        const spec = run.agent ? await providers.agentRegistry.get(run.agent) : undefined;
+        if (spec?.kind === "coder" && run.repo) {
+          if (!github) {
+            throw new Error(`coder run targets ${run.repo} but the GitHub App is not wired (GITHUB_APP_ID/_INSTALLATION_ID/_PRIVATE_KEY[_PARAM])`);
+          }
+          ctx = { githubToken: await github.mintInstallationToken(run.repo) };
+        }
+        impl(run, ctx);
+      })().catch(async (e) => {
+        console.error(`dispatch failed for run ${run.id}: ${e?.message ?? e}`);
+        await providers.runStore
+          .update(run.id, { status: "failed", error: `dispatch failed: ${e?.message ?? e}` })
+          .catch(() => {});
+      });
     },
   };
 }

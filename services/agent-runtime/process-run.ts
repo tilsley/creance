@@ -16,10 +16,15 @@ import {
   estimateCostUsd,
   type Providers,
 } from "@agent-os/core";
+import { cloneCoderWorkspace, type CoderWorkspace } from "./coder-workspace";
 
 export interface ProcessRunOpts {
   /** Per-turn output cap (ADR-0013); undefined -> the loop's built-in default. */
   maxOutputTokens?: number;
+  /** Per-run GitHub App installation token for kind="coder" runs targeting a repo
+   *  (ADR-0046). Minted by the CONTROL PLANE at dispatch and carried in the dispatch
+   *  envelope — never persisted on the Run record. */
+  githubToken?: string;
 }
 
 /** Execute a queued run, persisting state + accounting spend. No-op if the id is unknown. */
@@ -40,7 +45,17 @@ export async function processRun(
   // resolve this run's toolset through the gateway (built-in + MCP servers,
   // per-tenant policy, broker creds injected; ADR-0011)
   const toolset = await toolProvider.resolve({ principal, session });
+  // The coder lifecycle (ADR-0046): clone the gate-authorized Run.repo into the
+  // claimed session BEFORE the loop, so the workspace tools operate on the checkout.
+  // The push half lives in the `finally` below — any terminal status, crash included.
+  let workspace: CoderWorkspace | undefined;
   try {
+    if (spec?.kind === "coder" && existing.repo) {
+      if (!opts.githubToken) {
+        throw new Error(`coder run targets ${existing.repo} but no workspace credential arrived (GITHUB_APP_* unwired at dispatch?)`);
+      }
+      workspace = await cloneCoderWorkspace(session, existing.repo, opts.githubToken, id);
+    }
     let result;
     if (spec?.kind === "sandboxed") {
       // Model B (ADR-0019): a self-contained delegated agent runs IN the sandbox; its
@@ -88,6 +103,17 @@ export async function processRun(
   } catch (e: any) {
     await store.update(id, { status: "failed", error: e?.message ?? String(e) });
   } finally {
+    // Coder push (ADR-0046): ships the workspace on EVERY terminal path — same stance
+    // as the claude-code shim. Runs before session.close (the workspace dies with it);
+    // the outcome lands on the run record so the console shows what was (not) pushed.
+    if (workspace) {
+      const note = await workspace.finalize().catch((e: any) => `workspace push FAILED: ${e?.message ?? e}`);
+      console.log(`coder run ${id}: ${note}`);
+      const run = await store.get(id).catch(() => undefined);
+      await store
+        .update(id, { output: `${run?.output ?? ""}\n\n[workspace] ${note}`.trim() })
+        .catch(() => {});
+    }
     await toolset.close().catch(() => {});
     await session.close().catch(() => {});
   }

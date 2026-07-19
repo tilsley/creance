@@ -25,6 +25,8 @@ if (!runId) {
 const providers = providersFromEnv(); // once per process (OTel registers globally)
 // per-turn output cap (ADR-0013); undefined -> the loop's built-in default
 const maxOutputTokens = process.env.MAX_OUTPUT_TOKENS ? Number(process.env.MAX_OUTPUT_TOKENS) : undefined;
+// coder workspace credential (ADR-0046) — the RunTask env-override leg of the dispatch envelope
+const githubToken = process.env.GITHUB_TOKEN;
 
 console.log(
   `agent-runtime task: processing run ${runId}  ` +
@@ -46,7 +48,7 @@ const flushTelemetry = () =>
   ]);
 
 try {
-  await processRun(providers, runId, { maxOutputTokens });
+  await processRun(providers, runId, { maxOutputTokens, githubToken });
   const run = await providers.runStore.get(runId);
   console.log(`agent-runtime task: run ${runId} finished status=${run?.status ?? "unknown"}`);
   await flushTelemetry();

@@ -40,9 +40,14 @@ const maxOutputTokens = process.env.MAX_OUTPUT_TOKENS ? Number(process.env.MAX_O
 process.env.DISPATCH = "inprocess";
 const app = createApp(providers, { maxOutputTokens, a2aAgent: process.env.A2A_AGENT });
 
-/** Redacted, bounded log of an incoming invocation — the empirical contract probe. */
+/** Redacted, bounded log of an incoming invocation — the empirical contract probe.
+ *  The coder workspace credential (ADR-0046) rides `input.githubToken`: strip it. */
 function logInvocation(method: string, path: string, body: unknown): void {
-  const preview = JSON.stringify(body ?? null).slice(0, 800);
+  const redacted =
+    body && typeof body === "object" && (body as any).input?.githubToken
+      ? { ...(body as any), input: { ...(body as any).input, githubToken: "[redacted]" } }
+      : body;
+  const preview = JSON.stringify(redacted ?? null).slice(0, 800);
   console.log(`agent-engine invoke: ${method} ${path} body=${preview}`);
 }
 
@@ -110,7 +115,9 @@ const server = Bun.serve({
           return queryResponse({ error: `run not found: ${runId}`, store: store.name });
         }
         const { processRun } = await import("./process-run");
-        await processRun(providers, runId, { maxOutputTokens });
+        // coder workspace credential (ADR-0046) — the :query-input leg of the dispatch envelope
+        const githubToken = typeof input?.githubToken === "string" ? input.githubToken : undefined;
+        await processRun(providers, runId, { maxOutputTokens, githubToken });
         const done = await store.get(runId);
         // console visibility (ADR-0044 5b): mirror the finished run into a managed Vertex
         // Session, best-effort — a mirror failure must never fail an otherwise-good run.

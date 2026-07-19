@@ -26,7 +26,7 @@ export function validateAgentSpec(body: any): { spec?: Omit<AgentSpec, "tenant">
     return { error: "invalid 'name' (lowercase slug, max 63 chars)" };
   }
   const kind = body.kind ?? "loop";
-  if (!["loop", "sandboxed", "claude-code"].includes(kind)) return { error: `unknown 'kind' '${kind}'` };
+  if (!["loop", "sandboxed", "claude-code", "coder"].includes(kind)) return { error: `unknown 'kind' '${kind}'` };
   if (body.systemPrompt != null && (typeof body.systemPrompt !== "string" || body.systemPrompt.length > 8000)) {
     return { error: "invalid 'systemPrompt' (string, max 8000 chars)" };
   }

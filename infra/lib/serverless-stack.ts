@@ -349,6 +349,12 @@ export class ServerlessStack extends cdk.Stack {
     routerRole.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"),
     );
+    // The coder loop (ADR-0046): at dispatch the front door mints a per-run GitHub
+    // App installation token for kind="coder" runs targeting a repo — the SAME App
+    // the egress sidecar uses (ADR-0034), read from the SAME SSM key. The control
+    // plane is the only place that can mint for every substrate (the microVM and
+    // Vertex can't reach the key); only the ~1h repo-scoped token enters the workspace.
+    ccGithubAppKey.grantRead(routerRole);
     // Managed profile (ADR-0042): the router dispatches loop runs via
     // InvokeAgentRuntime. Session-scoped resource: Runtime authorizes the invoke
     // against the runtime ARN and its session subresources.
@@ -400,6 +406,11 @@ export class ServerlessStack extends cdk.Stack {
         ECS_CC_TASK_DEFINITION: ccTaskDef.family,
         ECS_CC_CONTAINER_NAME: "claude-code-runner",
         ECS_CC_SIDECAR_CONTAINER_NAME: "egress-sidecar",
+        // coder workspace credentials (ADR-0046): same App identity as the sidecar;
+        // the key stays in SSM and is read at mint time, never baked into env.
+        GITHUB_APP_ID: "4232149",
+        GITHUB_APP_INSTALLATION_ID: "145860623",
+        GITHUB_APP_PRIVATE_KEY_PARAM: "/creance/github-app-private-key",
         // the front door's own adapter bundle: durable stores + offline gate. It does
         // NOT run the loop, so inference/sandbox default and stay unused (no network).
         RUN_STORE: "dynamodb",

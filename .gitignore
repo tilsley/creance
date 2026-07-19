@@ -26,3 +26,4 @@ apps/console/public/config.json
 .DS_Store
 .idea/
 .vscode/
+__pycache__/
