@@ -1,6 +1,6 @@
 # ADR-0040: Running coded agents — enforcement lives in services, convenience lives in libraries
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-12
 
 ## Context

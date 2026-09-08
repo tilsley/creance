@@ -1,6 +1,6 @@
 # ADR-0038: Agent onboarding behind the gate — registry writes via the platform API, GitOps as a client
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-06
 
 ## Context
